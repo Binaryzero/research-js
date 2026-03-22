@@ -2,24 +2,49 @@
   "version": "1",
   "main": {
     "id": "main",
-    "label": "Main",
+    "label": "Main Model",
     "enabled": true,
     "provider": "ollama",
-    "model": "llama3.2",
+    "model": "qwen3-coder:480b-cloud",
     "baseUrl": "http://localhost:11434",
     "apiStyle": "auto",
     "timeout": 180000,
-    "maxTokens": 32000,
-    "temperature": 0.3,
+    "maxTokens": 65000,
+    "temperature": 0,
     "promptProfile": "default"
   },
-  "judges": [],
+  "judges": [
+    {
+      "id": "judge1",
+      "label": "Judge 1",
+      "enabled": true,
+      "provider": "ollama",
+      "model": "cogito-2.1:671b-cloud",
+      "baseUrl": "http://localhost:11434",
+      "apiStyle": "auto",
+      "timeout": 180000,
+      "maxTokens": 65000,
+      "temperature": 0
+    },
+    {
+      "id": "judge2",
+      "label": "Judge 2",
+      "enabled": true,
+      "provider": "ollama",
+      "model": "nemotron-3-super:cloud",
+      "baseUrl": "http://localhost:11434",
+      "apiStyle": "auto",
+      "timeout": 180000,
+      "maxTokens": 65000,
+      "temperature": 0
+    }
+  ],
   "consensus": {
     "judgesValidateAllFindings": false
   },
   "assessmentMode": "strategic",
   "promptProfile": "default",
-  "concurrency": 10,
+  "concurrency": 40,
   "defaultNoLlm": false,
-  "defaultFull": false
+  "defaultFull": true
 }
