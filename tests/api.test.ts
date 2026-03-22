@@ -1,4 +1,14 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
+
+// Mock saveAppConfig so POST /api/config doesn't overwrite the real config.json
+vi.mock('../src/config.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/config.js')>();
+  return {
+    ...actual,
+    saveAppConfig: vi.fn(),
+  };
+});
+
 import { createServer } from '../src/index.js';
 import type { FastifyInstance } from 'fastify';
 import { join, dirname } from 'path';
