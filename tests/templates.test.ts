@@ -80,22 +80,43 @@ describe('HTML Templates', () => {
 
 describe('Template Rendering', () => {
   it('should render index page with request data', () => {
-    expect(true).toBe(true);
+    const content = readFileSync(join(TEMPLATES_DIR, 'index.html'), 'utf-8');
+    // Index page should have scan form and report display logic
+    expect(content).toContain('showReport');
+    expect(content).toContain('startScan');
+    expect(content).toContain('/api/scan');
   });
-  
+
   it('should render batch page with categories', () => {
-    expect(true).toBe(true);
+    const content = readFileSync(join(TEMPLATES_DIR, 'batch.html'), 'utf-8');
+    // Batch page should have search form and result filtering
+    expect(content).toContain('search-form');
+    expect(content).toContain('search_text');
+    expect(content).toContain('doSearch');
   });
-  
+
   it('should render history page with scans', () => {
-    expect(true).toBe(true);
+    const content = readFileSync(join(TEMPLATES_DIR, 'history.html'), 'utf-8');
+    // History page should have table and search for scans
+    expect(content).toContain('history-search');
+    expect(content).toContain('Scan History');
+    expect(content).toContain('/api/history');
   });
-  
+
   it('should render settings page', () => {
-    expect(true).toBe(true);
+    const content = readFileSync(join(TEMPLATES_DIR, 'settings.html'), 'utf-8');
+    // Settings page should have model configuration elements
+    expect(content).toContain('Settings');
+    expect(content).toContain('model');
+    expect(content).toContain('baseUrl');
+    expect(content).toContain('temperature');
   });
-  
+
   it('should render report page with report name', () => {
-    expect(true).toBe(true);
+    const content = readFileSync(join(TEMPLATES_DIR, 'report.html'), 'utf-8');
+    // Report page should have report display and markdown rendering logic
+    expect(content).toContain('report_name');
+    expect(content).toContain('report-content');
+    expect(content).toContain('markdown');
   });
 });

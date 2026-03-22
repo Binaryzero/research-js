@@ -293,6 +293,8 @@ export class StaticAnalyzer {
   private verbose: boolean;
   private patterns: PatternsConfig;
   private compiledPatterns: ReturnType<typeof getAllPatterns>;
+  // Maps "file:lineRange" → dependency name for bundled code regions
+  private bundleRegions: Map<string, string> = new Map();
   
   constructor(extensionPath: string, options: StaticAnalyzerOptions = {}) {
     this.extensionPath = extensionPath;
@@ -306,7 +308,7 @@ export class StaticAnalyzer {
   /**
    * Run complete static analysis
    */
-  analyze(): AnalysisResult {
+  async analyze(): Promise<AnalysisResult> {
     const startTime = Date.now();
     
     // Collect all files
@@ -318,9 +320,23 @@ export class StaticAnalyzer {
     // Categorize files
     const fileTypes = files.map(f => this.analyzeFile(f));
     
+    // Detect bundled dependencies (populates this.bundleRegions)
+    const bundledDependencies = this.detectBundledDependencies(files);
+
     // Run pattern matching
     const findings = this.runPatternMatching(files);
-    
+
+    // Enrich findings: override probableOrigin when location falls in a bundle region
+    for (const f of findings) {
+      const [relPath, lineStr] = f.location.split(':');
+      const lineNum = parseInt(lineStr, 10);
+      const dep = this.getBundledDepForLocation(relPath, lineNum);
+      if (dep) {
+        f.probableOrigin = 'bundled_dependency';
+        f.context = f.context ? `${f.context} [bundled: ${dep}]` : `[bundled: ${dep}]`;
+      }
+    }
+
     // Extract endpoints
     const endpoints = this.extractAllEndpoints(files);
     
@@ -332,6 +348,35 @@ export class StaticAnalyzer {
     // Build file stats
     const fileStats = this.buildFileStats(fileTypes);
     
+    // Verify repository URL accessibility
+    const repoUrl = packageJson.repository?.url;
+    if (repoUrl) {
+      const repoFinding = await this.verifyRepositoryUrl(repoUrl);
+      if (repoFinding) findings.push(repoFinding);
+    }
+
+    // Version consistency check: compare package.json vs VSIX manifest
+    const vsixManifestPath = join(this.extensionPath, '..', 'extension.vsixmanifest');
+    if (existsSync(vsixManifestPath)) {
+      try {
+        const xml = readFileSync(vsixManifestPath, 'utf-8');
+        const versionMatch = xml.match(/Version="([^"]+)"/);
+        if (versionMatch && packageJson.version && versionMatch[1] !== packageJson.version) {
+          findings.push({
+            category: 'supply_chain',
+            title: 'Version Mismatch Between Package And VSIX Manifest',
+            location: 'package.json vs extension.vsixmanifest',
+            observation: `package.json declares version "${packageJson.version}" but VSIX manifest declares "${versionMatch[1]}". This inconsistency could indicate post-build tampering.`,
+            evidence: `package.json: ${packageJson.version}\nextension.vsixmanifest: ${versionMatch[1]}`,
+            lineStart: 0, lineEnd: 0, context: '', isFalsePositive: false, falsePositiveReason: '',
+            riskLevel: 'high',
+          });
+        }
+      } catch {
+        // Ignore parse errors
+      }
+    }
+
     const elapsed = Date.now() - startTime;
     if (this.verbose) {
       console.log(`[Static] Analysis complete in ${elapsed}ms`);
@@ -360,6 +405,7 @@ export class StaticAnalyzer {
       fileTypes,
       totalSize: fileTypes.reduce((sum, f) => sum + f.size, 0),
       permissions: packageJson.contributes || {},
+      bundledDependencies,
       dependencies: packageJson.dependencies || {},
       notableDependencies: this.findNotableDependencies(packageJson.dependencies || {}),
       telemetryConfig: this.extractTelemetryConfig(packageJson),
@@ -545,6 +591,185 @@ export class StaticAnalyzer {
   }
 
   /**
+   * Pre-scan JS files for bundled dependency markers (webpack banners, JSON.parse
+   * package metadata, esbuild/rollup regions). Populates this.bundleRegions and
+   * returns deduplicated list of detected dependency names.
+   */
+  private detectBundledDependencies(files: string[]): string[] {
+    const deps = new Set<string>();
+    const jsFiles = files.filter(f => ['.js', '.mjs'].includes(extname(f)));
+    const CHUNK_SIZE = 512 * 1024;
+
+    // Patterns for webpack banner comments: /*! lodash 4.17.21 */ or /** @license React */
+    const webpackBanner = /\/\*[!*]\s+([a-z@][a-z0-9_./@-]+?)(?:\s+v?[\d.]+)?\s*\*\//gi;
+    // JSON.parse('{"name":"axios",...}') — common in bundled metadata
+    const jsonParseMeta = /JSON\.parse\s*\(\s*'(\{[^']*?"name"\s*:\s*"([^"]+)"[^']*?\})'\s*\)/g;
+    // Webpack module comment: /***/ "./node_modules/lodash/lodash.js":
+    const webpackModule = /\/\*{3}\/ +"\.\/node_modules\/([^/]+)/g;
+    // esbuild banner: // node_modules/axios/lib/axios.js
+    const esbuildBanner = /^\/\/ node_modules\/([a-z@][a-z0-9_./@-]*?)\/(?:lib|dist|src|index)/gm;
+
+    for (const filePath of jsFiles) {
+      try {
+        const stats = statSync(filePath);
+        const relativePath = relative(this.extensionPath, filePath);
+
+        // Only scan the first 1MB for dependency markers (they appear early in bundles)
+        const content = stats.size <= CHUNK_SIZE
+          ? readFileSync(filePath, 'utf-8')
+          : readFileSync(filePath, { encoding: 'utf-8', flag: 'r' }).slice(0, 1024 * 1024);
+
+        const lines = content.split('\n');
+        let currentDep: string | null = null;
+        let regionStart = 0;
+
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i];
+
+          // Check all patterns
+          for (const [regex, groupIdx] of [
+            [webpackBanner, 1], [jsonParseMeta, 2], [webpackModule, 1], [esbuildBanner, 1],
+          ] as [RegExp, number][]) {
+            const re = new RegExp(regex.source, regex.flags);
+            let m: RegExpExecArray | null;
+            while ((m = re.exec(line)) !== null) {
+              const depName = m[groupIdx]?.replace(/\/.*$/, ''); // strip sub-paths
+              if (depName && depName.length > 1 && depName.length < 80) {
+                deps.add(depName);
+
+                // Close previous region and start new one
+                if (currentDep) {
+                  this.bundleRegions.set(`${relativePath}:${regionStart}-${i}`, currentDep);
+                }
+                currentDep = depName;
+                regionStart = i;
+              }
+            }
+          }
+        }
+
+        // Close final region
+        if (currentDep) {
+          this.bundleRegions.set(`${relativePath}:${regionStart}-${lines.length}`, currentDep);
+        }
+      } catch {
+        // Skip unreadable files
+      }
+    }
+
+    return [...deps].sort();
+  }
+
+  /**
+   * Look up whether a finding's location falls inside a known bundled dependency region.
+   */
+  private getBundledDepForLocation(relativePath: string, lineNum: number): string | null {
+    for (const [key, dep] of this.bundleRegions) {
+      const [file, range] = key.split(':');
+      if (file !== relativePath) continue;
+      const [start, end] = range.split('-').map(Number);
+      if (lineNum >= start && lineNum <= end) return dep;
+    }
+    return null;
+  }
+
+  /**
+   * HEAD-request the repository URL. Returns a supply_chain Finding if
+   * the repo is unreachable (404, timeout, DNS failure).
+   */
+  private async verifyRepositoryUrl(rawUrl: string): Promise<Finding | null> {
+    // Normalize git+https:// and .git suffix
+    let url = rawUrl.replace(/^git\+/, '').replace(/\.git$/, '');
+    try {
+      new URL(url);
+    } catch {
+      return null; // Not a valid URL, skip
+    }
+
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 8000);
+      const resp = await fetch(url, { method: 'HEAD', signal: controller.signal, redirect: 'follow' });
+      clearTimeout(timeout);
+
+      if (resp.status >= 400) {
+        return {
+          category: 'supply_chain',
+          title: 'Repository URL Unreachable',
+          location: 'package.json:repository',
+          observation: `Repository URL returned HTTP ${resp.status}. The declared source repo may have been deleted or moved, which is a supply chain risk indicator.`,
+          evidence: url,
+          lineStart: 0, lineEnd: 0, context: '', isFalsePositive: false, falsePositiveReason: '',
+          riskLevel: resp.status === 404 ? 'high' : 'medium',
+        };
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes('abort')) {
+        return {
+          category: 'supply_chain',
+          title: 'Repository URL Unreachable',
+          location: 'package.json:repository',
+          observation: `Repository URL timed out after 8s. The declared source repo may be unavailable.`,
+          evidence: url,
+          lineStart: 0, lineEnd: 0, context: '', isFalsePositive: false, falsePositiveReason: '',
+          riskLevel: 'medium',
+        };
+      }
+      // DNS/network errors
+      return {
+        category: 'supply_chain',
+        title: 'Repository URL Unreachable',
+        location: 'package.json:repository',
+        observation: `Repository URL is unreachable: ${msg}. This could indicate a deleted or hijackable repository.`,
+        evidence: url,
+        lineStart: 0, lineEnd: 0, context: '', isFalsePositive: false, falsePositiveReason: '',
+        riskLevel: 'medium',
+      };
+    }
+
+    return null;
+  }
+
+  /**
+   * Extract evidence centered on the match position within a line/chunk.
+   * For long lines (minified bundles), centers a 500-char window on the match
+   * and trims to semicolons for readability. For short lines, uses surrounding
+   * context lines.
+   */
+  private extractEvidence(text: string, lines: string[] | null, lineNum: number, regex: RegExp): string {
+    const re = new RegExp(regex.source, regex.flags);
+    const match = re.exec(text);
+    const matchIndex = match ? match.index : 0;
+
+    if (text.length > 1000) {
+      // Long line / minified: center 500-char window on match
+      const halfWindow = 250;
+      let start = Math.max(0, matchIndex - halfWindow);
+      let end = Math.min(text.length, matchIndex + halfWindow);
+
+      // Expand to nearest semicolons for readability (within 50 chars)
+      const semiBeforeStart = text.lastIndexOf(';', start);
+      if (semiBeforeStart >= 0 && start - semiBeforeStart < 50) {
+        start = semiBeforeStart + 1;
+      }
+      const semiAfterEnd = text.indexOf(';', end);
+      if (semiAfterEnd >= 0 && semiAfterEnd - end < 50) {
+        end = semiAfterEnd + 1;
+      }
+
+      return text.substring(start, end);
+    }
+
+    // Short lines: use surrounding context lines if available
+    if (lines) {
+      return lines.slice(Math.max(0, lineNum - 2), lineNum + 3).join('\n').slice(0, 500);
+    }
+
+    return text.slice(0, 500);
+  }
+
+  /**
    * Extract the exact matched substring from the line
    */
   private getMatchHighlight(line: string, pattern: RegExp): string {
@@ -591,7 +816,6 @@ export class StaticAnalyzer {
 
     for (let lineNum = 0; lineNum < lines.length; lineNum++) {
       const line = lines[lineNum];
-      const contextLines = lines.slice(Math.max(0, lineNum - 2), lineNum + 2);
 
       for (const { category, name, definition, regex } of this.compiledPatterns) {
         const re = new RegExp(regex.source, regex.flags);
@@ -601,7 +825,7 @@ export class StaticAnalyzer {
             title: name.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
             location: `${relativePath}:${lineNum + 1}`,
             observation: definition.description,
-            evidence: contextLines.join('\n').slice(-500),
+            evidence: this.extractEvidence(line, lines, lineNum, re),
             lineStart: Math.max(1, lineNum),
             lineEnd: lineNum + 1,
             context: '',
@@ -660,7 +884,7 @@ export class StaticAnalyzer {
                 title: name.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
                 location: `${relativePath}:${lineNumber}`,
                 observation: definition.description,
-                evidence: line.slice(-500),
+                evidence: this.extractEvidence(line, null, lineNumber, re),
                 lineStart: lineNumber,
                 lineEnd: lineNumber,
                 context: '',
@@ -692,7 +916,7 @@ export class StaticAnalyzer {
               title: name.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
               location: `${relativePath}:${lineNumber}`,
               observation: definition.description,
-              evidence: leftover.slice(-500),
+              evidence: this.extractEvidence(leftover, null, lineNumber, re),
               lineStart: lineNumber,
               lineEnd: lineNumber,
               context: '',

@@ -1104,7 +1104,7 @@ async function runScan(
     // Static analysis
     task.emitProgress(0.15, 'Running static analysis...');
     const analyzer = new StaticAnalyzer(extensionPath, { verbose: true, patternsFile: options.config.patternsFile });
-    const result = analyzer.analyze();
+    const result = await analyzer.analyze();
     task.emitProgress(0.4, `Static analysis complete: ${result.findings.length} findings`);
     
     if (task.cancelled) {
@@ -1322,7 +1322,7 @@ async function runBatchLlmAnalysis(
       // Static analysis
       task.emitProgress(i / total, `[${i + 1}/${total}] Static analysis...`);
       const analyzer = new StaticAnalyzer(extPath, { verbose: options.verbose, patternsFile: options.config.patternsFile });
-      const result = analyzer.analyze();
+      const result = await analyzer.analyze();
 
       // Always override extensionId from search result - we know this is the correct ID
       result.extensionId = extensionId;
@@ -1532,7 +1532,7 @@ async function runBatchScan(
       // Static analysis
       task.emitProgress(i / total, `[${i + 1}/${total}] Static analysis...`);
       const analyzer = new StaticAnalyzer(extPath, { verbose: true, patternsFile: options.config.patternsFile });
-      const result = analyzer.analyze();
+      const result = await analyzer.analyze();
 
       // Always override extensionId from search result - we know this is the correct ID from marketplace
       // The analyzer may detect wrong ID from package.json (especially for non-English extensions)

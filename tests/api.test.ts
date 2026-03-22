@@ -104,6 +104,107 @@ describe('API Endpoints', () => {
       expect(response.statusCode).toBeLessThan(500);
     });
   });
+
+  describe('Config API', () => {
+    it('GET /api/config should return config', async () => {
+      const response = await server.inject({
+        method: 'GET',
+        url: '/api/config',
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.body);
+      expect(body.main).toBeDefined();
+      expect(body.assessmentMode).toBeDefined();
+    });
+
+    it('POST /api/config should save config', async () => {
+      const config = {
+        version: '1',
+        main: {
+          id: 'main',
+          label: 'Main',
+          enabled: true,
+          provider: 'ollama',
+          model: 'llama3.2',
+          baseUrl: 'http://localhost:11434',
+          apiStyle: 'auto',
+          timeout: 180000,
+          maxTokens: 32000,
+          temperature: 0.3,
+        },
+        judges: [],
+        consensus: { judgesValidateAllFindings: false },
+        assessmentMode: 'strategic',
+        promptProfile: 'default',
+        concurrency: 10,
+        defaultNoLlm: false,
+        defaultFull: false,
+      };
+      const response = await server.inject({
+        method: 'POST',
+        url: '/api/config',
+        payload: config,
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.body);
+      expect(body.saved).toBe(true);
+    });
+
+    it('POST /api/config should reject missing main', async () => {
+      const response = await server.inject({
+        method: 'POST',
+        url: '/api/config',
+        payload: { judges: [] },
+      });
+
+      expect(response.statusCode).toBe(400);
+    });
+  });
+
+  describe('Connection Test', () => {
+    it('POST /api/test-connection should handle unreachable endpoint', async () => {
+      const response = await server.inject({
+        method: 'POST',
+        url: '/api/test-connection',
+        payload: { baseUrl: 'http://localhost:19999', model: 'test', apiStyle: 'auto' },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.body);
+      expect(body).toBeDefined();
+      // Should indicate failure since nothing is listening on that port
+      expect(body.ok).toBe(false);
+      expect(body.error).toBeDefined();
+    });
+
+    it('POST /api/test-connection should reject missing baseUrl', async () => {
+      const response = await server.inject({
+        method: 'POST',
+        url: '/api/test-connection',
+        payload: { model: 'test' },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.body);
+      expect(body.ok).toBe(false);
+      expect(body.error).toContain('baseUrl required');
+    });
+  });
+
+  describe('Scan Cancel', () => {
+    it('DELETE /api/scan/:scanId should return 404 for unknown scan', async () => {
+      const response = await server.inject({
+        method: 'DELETE',
+        url: '/api/scan/nonexistent-id',
+      });
+
+      expect(response.statusCode).toBe(404);
+      const body = JSON.parse(response.body);
+      expect(body.error).toContain('not found');
+    });
+  });
 });
 
 describe('Pattern Matching', () => {

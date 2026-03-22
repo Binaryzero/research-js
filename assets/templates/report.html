@@ -92,11 +92,10 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
 <script>
 const reportName = "{{ report_name }}";
 
-document.addEventListener('DOMContentLoaded', () => {
+function initReportPage() {
     // Set up back button based on referrer
     const backBtn = document.getElementById('back-btn');
     const referrer = document.referrer;
@@ -115,7 +114,13 @@ document.addEventListener('DOMContentLoaded', () => {
     } else {
         loadSavedReport(reportName);
     }
-});
+}
+
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initReportPage);
+} else {
+    initReportPage();
+}
 
 async function loadSavedReport(name) {
     try {

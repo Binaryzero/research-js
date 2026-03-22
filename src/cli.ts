@@ -79,7 +79,7 @@ async function main() {
   // Static analysis
   if (verbose) console.log('Running static analysis...');
   const analyzer = new StaticAnalyzer(extensionPath, { verbose });
-  const result = analyzer.analyze();
+  const result = await analyzer.analyze();
   if (verbose) console.log(`Found ${result.findings.length} findings, ${result.endpoints.length} endpoints`);
   
   // LLM enhancement

@@ -1,0 +1,25 @@
+{
+  "version": "1",
+  "main": {
+    "id": "main",
+    "label": "Main",
+    "enabled": true,
+    "provider": "ollama",
+    "model": "llama3.2",
+    "baseUrl": "http://localhost:11434",
+    "apiStyle": "auto",
+    "timeout": 180000,
+    "maxTokens": 32000,
+    "temperature": 0.3,
+    "promptProfile": "default"
+  },
+  "judges": [],
+  "consensus": {
+    "judgesValidateAllFindings": false
+  },
+  "assessmentMode": "strategic",
+  "promptProfile": "default",
+  "concurrency": 10,
+  "defaultNoLlm": false,
+  "defaultFull": false
+}

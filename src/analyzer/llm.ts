@@ -6,7 +6,7 @@
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { readFileSync } from 'fs';
-import type { Finding, LlmAssessment, LlmConfig, EndpointInfo, ConsensusConfig } from '../types/index.js';
+import type { Finding, LlmAssessment, LlmConfig, EndpointInfo, ConsensusConfig, AnalysisResult } from '../types/index.js';
 import type { PromptConfig } from '../config.js';
 import { getEndpointFiltering } from './patterns.js';
 import type { LlmProvider } from '../providers/llm-provider.js';
@@ -1212,6 +1212,7 @@ If there are too many findings to assess completely, prioritize assessing the fi
       .replace('{findingsCount}', String(result.findings.length))
       .replace('{findingsByCategory}', findingsByCategory)
       .replace('{notableDependencies}', Object.keys(result.notableDependencies).join(', ') || 'None flagged')
+      .replace('{bundledDependencies}', (result as AnalysisResult).bundledDependencies?.join(', ') || 'None detected')
       .replace('{telemetryServices}', telemetryServices)
       .replace('{endpointsList}', endpointsList)
       .replace('{totalFiles}', String(result.jsFiles?.length || 0));

@@ -180,7 +180,7 @@ ${this.result.executiveSummary}
 | Repository | ${this.result.repository || 'Not specified'} |
 | Categories | ${categories.join(', ') || 'None'} |
 | Activation Events | ${activationEventsDisplay} |
-
+${this.result.bundledDependencies?.length ? `| Bundled Dependencies | ${this.result.bundledDependencies.join(', ')} |` : ''}
 ---`;
   }
 

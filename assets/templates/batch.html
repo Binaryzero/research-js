@@ -2,113 +2,154 @@
 {% block title %}Batch Marketplace Scanner{% endblock %}
 
 {% block content %}
-<div class="batch-header">    
-</div>
+<div class="analyze-layout">
+    <aside class="sidebar">
+        <!-- Card 1: Search -->
+        <div class="sidebar-card">
+            <div class="sidebar-header">Search Extensions</div>
+            <form id="search-form" class="batch-search-form" onsubmit="return doSearch(event)">
+                <div class="form-group">
+                    <label for="search-text">Search terms</label>
+                    <input type="text" id="search-text" name="search_text" placeholder="e.g. python, copilot, AI agent">
+                </div>
+                <div class="search-fields-row">
+                    <div class="form-group">
+                        <label for="category">Category</label>
+                        <select id="category" name="category">
+                            {% for cat in categories %}<option>{{ cat }}</option>{% endfor %}
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="sort-by">Sort by</label>
+                        <select id="sort-by" name="sort_by">
+                            {% for s in sort_options %}<option>{{ s }}</option>{% endfor %}
+                        </select>
+                    </div>
+                </div>
+                <div class="search-fields-row">
+                    <div class="form-group">
+                        <label for="page-size">Count</label>
+                        <input type="number" id="page-size" name="page_size" value="50" min="5" max="500" step="5">
+                    </div>
+                    <div class="form-group">
+                        <label for="page-num">Page</label>
+                        <input type="number" id="page-num" name="page" value="1" min="1" max="100">
+                    </div>
+                </div>
+                <button type="submit" class="btn btn-primary">Search</button>
+            </form>
+        </div>
 
-<!-- Search & filter interface -->
-<div class="search-card">
-    <form id="search-form" onsubmit="return doSearch(event)">
-        <div class="search-row">
-            <div class="form-group" style="flex:1">
-                <label for="search-text">Search terms</label>
-                <input type="text" id="search-text" name="search_text" placeholder="e.g. python, copilot, AI agent">
-            </div>
-            <div class="form-group" style="width:175px">
-                <label for="category">Category</label>
-                <select id="category" name="category">
-                    {% for cat in categories %}<option>{{ cat }}</option>{% endfor %}
-                </select>
-            </div>
-            <div class="form-group" style="width:175px">
-                <label for="sort-by">Sort by</label>
-                <select id="sort-by" name="sort_by">
-                    {% for s in sort_options %}<option>{{ s }}</option>{% endfor %}
-                </select>
-            </div>
-            <div class="form-group" style="width:80px">
-                <label for="page-size">Count</label>
-                <input type="number" id="page-size" name="page_size" value="50" min="5" max="500" step="5">
-            </div>
-            <div class="form-group" style="width:70px">
-                <label for="page-num">Page</label>
-                <input type="number" id="page-num" name="page" value="1" min="1" max="100">
+        <!-- Card 2: Result Filters -->
+        <div class="sidebar-card">
+            <div class="sidebar-header">Filters</div>
+            <div class="batch-filter-group">
+                <div class="form-group">
+                    <label for="filter-scan-status">Scan Status</label>
+                    <select id="filter-scan-status" class="filter-select" onchange="applyResultFilters()">
+                        <option value="">All Results</option>
+                        <option value="scanned">Scanned Only</option>
+                        <option value="unscanned">Unscanned Only</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="filter-verdict">Verdict</label>
+                    <select id="filter-verdict" class="filter-select" onchange="applyResultFilters()">
+                        <option value="">All Verdicts</option>
+                        <option value="MALICIOUS">Malicious</option>
+                        <option value="SUSPICIOUS">Suspicious</option>
+                        <option value="CLEAN">Clean</option>
+                        <option value="NO_VERDICT">No Verdict</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="filter-llm">LLM Status</label>
+                    <select id="filter-llm" class="filter-select" onchange="applyResultFilters()">
+                        <option value="">LLM: All</option>
+                        <option value="llm">With LLM</option>
+                        <option value="no-llm">Without LLM</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="filter-risk">Risk Level</label>
+                    <select id="filter-risk" class="filter-select" onchange="applyResultFilters()">
+                        <option value="">All Risk Levels</option>
+                        <option value="Very Suspicious">Very Suspicious</option>
+                        <option value="Suspicious">Suspicious</option>
+                        <option value="Moderate">Moderate</option>
+                        <option value="Low Risk">Low Risk</option>
+                    </select>
+                </div>
             </div>
         </div>
-        <div style="display:flex; gap:var(--space-2); align-items:center">
-            <span style="font-size:0.75rem; font-weight:500; color:var(--fg-muted); text-transform:uppercase; letter-spacing:0.05em">Filter:</span>
-            <select id="filter-scan-status" class="filter-select" aria-label="Filter by scan status" onchange="applyResultFilters()">
-                <option value="">All Results</option>
-                <option value="scanned">Scanned Only</option>
-                <option value="unscanned">Unscanned Only</option>
-            </select>
-            <select id="filter-verdict" class="filter-select" aria-label="Filter by verdict" onchange="applyResultFilters()">
-                <option value="">All Verdicts</option>
-                <option value="MALICIOUS">Malicious</option>
-                <option value="SUSPICIOUS">Suspicious</option>
-                <option value="CLEAN">Clean</option>
-            </select>
-            <select id="filter-llm" class="filter-select" aria-label="Filter by LLM status" onchange="applyResultFilters()">
-                <option value="">LLM: All</option>
-                <option value="llm">With LLM</option>
-                <option value="no-llm">Without LLM</option>
-            </select>
-            <select id="filter-risk" class="filter-select" aria-label="Filter by risk level" onchange="applyResultFilters()">
-                <option value="">All Risk Levels</option>
-                <option value="Very Suspicious">Very Suspicious</option>
-                <option value="Suspicious">Suspicious</option>
-                <option value="Moderate">Moderate</option>
-                <option value="Low Risk">Low Risk</option>
-            </select>
-        </div>
-    </form>
-</div>
 
-<!-- Progress area for batch scans -->
-<div id="batch-progress-area" class="progress-card" style="display:none;">
-    <div class="progress-header">
-        <span id="progress-title">Scanning...</span>
-        <button class="btn btn-outline btn-sm" id="cancel-btn" onclick="cancelBatchScan()">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
-            Cancel
-        </button>
-    </div>
-    <progress id="progress-bar" value="0" max="100"></progress>
-    <div id="progress-log" class="log-area"></div>
-</div>
-
-<!-- Results area -->
-<div id="results-area" style="display:none;">
-    <div class="results-header">
-        <h3 id="results-title">Results</h3>
-        <div class="results-actions">
-            <button id="scan-all-btn" class="btn btn-primary" onclick="scanAllNew()" style="display:none">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-                Scan All New
-            </button>
-            <button id="llm-all-btn" class="btn btn-secondary" onclick="llmAnalyzeAll()" style="display:none">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454z"/><path d="M17 4a2 2 0 0 0 2 2a2 2 0 0 0 -2 2a2 2 0 0 0 -2 -2a2 2 0 0 0 2 -2"/><path d="M19 11h2m-1 -1v2"/></svg>
-                Analyze All (LLM)
-            </button>
+        <!-- Card 3: Progress (hidden until scan starts) -->
+        <div class="sidebar-card" id="progress-sidebar-card" style="display:none">
+            <div class="sidebar-header">Progress</div>
+            <div class="progress-compact">
+                <span id="progress-text">Scanning 0 of 0...</span>
+                <button class="btn btn-outline btn-sm" id="cancel-btn" onclick="cancelBatchScan()">Cancel</button>
+            </div>
+            <progress id="progress-bar" value="0" max="100"></progress>
+            <button class="progress-log-toggle" onclick="toggleProgressLog()">Show log</button>
+            <div id="progress-log" class="progress-log-collapsed"></div>
         </div>
-    </div>
-    <div id="ext-list"></div>
+
+        <!-- Card 4: Bulk Actions (hidden until selection > 0) -->
+        <div class="sidebar-card" id="bulk-actions-card" style="display:none">
+            <div class="sidebar-header">Bulk Actions</div>
+            <div class="bulk-actions-content">
+                <span class="selection-count" id="selection-count">0 selected</span>
+                <div class="button-stack">
+                    <button class="btn btn-primary" onclick="rescanSelected(false)">Rescan Selected</button>
+                    <button class="btn btn-outline" onclick="rescanSelected(true)">Rescan + LLM</button>
+                    <button class="btn btn-outline" onclick="clearSelection()">Clear Selection</button>
+                </div>
+            </div>
+        </div>
+    </aside>
+
+    <section class="main-content">
+        <!-- Results area -->
+        <div id="results-area" style="display:none;">
+            <div class="results-header">
+                <h3 id="results-title">Results</h3>
+                <div class="results-actions">
+                    <button id="scan-all-btn" class="btn btn-primary" onclick="scanAllNew()" style="display:none">Scan All New</button>
+                    <button id="llm-all-btn" class="btn btn-secondary" onclick="llmAnalyzeAll()" style="display:none">Analyze All (LLM)</button>
+                </div>
+            </div>
+            <div id="select-all-container" class="select-all-row" style="display:none">
+                <input type="checkbox" class="select-checkbox" id="select-all-cb" onchange="toggleSelectAll(this.checked)">
+                <label for="select-all-cb">Select all scanned</label>
+            </div>
+            <div id="ext-list"></div>
+        </div>
+    </section>
 </div>
 {% endblock %}
 
 {% block scripts %}
-<script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
 <script>
 let searchResults = [];
 let _batchTracker = null;
 let _searchDebounce = null;
+let selectedExtensions = new Set();
+let scanProgress = { current: 0, total: 0 };
 
-document.addEventListener('DOMContentLoaded', () => {
+function initBatchPage() {
     initSessionTracking();
     loadFilterSettings();
     initFilterListeners();
     // Auto-load results with current parameters on page load
     executeSearch(getSearchFormData());
-});
+}
+
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initBatchPage);
+} else {
+    initBatchPage();
+}
 
 // -- Load/Save filter settings --
 function loadFilterSettings() {
@@ -172,7 +213,7 @@ function debounceSearch() {
         const category = document.getElementById('category').value;
         const sortBy = document.getElementById('sort-by').value;
         const pageNum = document.getElementById('page-num').value;
-        
+
         // Search if: there's text, OR category is selected, OR we have existing results
         if (searchText || (category && category !== 'All categories') || searchResults.length > 0) {
             executeSearch(getSearchFormData());
@@ -221,6 +262,8 @@ async function executeSearch(formData) {
         const resp = await fetch('/api/search', { method: 'POST', body: formData });
         const data = await resp.json();
         searchResults = data.results;
+        selectedExtensions.clear();
+        updateBulkActions();
         applyResultFilters();
     } catch(err) {
         toastError('Search error: ' + err.message);
@@ -243,19 +286,26 @@ function renderResults(results) {
 
     const scanAllBtn = document.getElementById('scan-all-btn');
     const llmAllBtn = document.getElementById('llm-all-btn');
-    
+
     if (unscanned.length > 0) {
         scanAllBtn.style.display = '';
         scanAllBtn.textContent = `Scan All New (${unscanned.length})`;
     } else {
         scanAllBtn.style.display = 'none';
     }
-    
+
     if (unanalyzed.length > 0) {
         llmAllBtn.style.display = '';
         llmAllBtn.textContent = `Analyze All (LLM) (${unanalyzed.length})`;
     } else {
         llmAllBtn.style.display = 'none';
+    }
+
+    const selectAllContainer = document.getElementById('select-all-container');
+    if (scannedCount > 0) {
+        selectAllContainer.style.display = '';
+    } else {
+        selectAllContainer.style.display = 'none';
     }
 
     results.forEach(ext => {
@@ -353,7 +403,26 @@ function renderResults(results) {
 
         row.appendChild(info);
         row.appendChild(actions);
-        list.appendChild(row);
+
+        const wrapper = document.createElement('div');
+        wrapper.className = 'ext-row-selectable';
+        if (ext.scan) {
+            const cb = document.createElement('input');
+            cb.type = 'checkbox';
+            cb.className = 'select-checkbox';
+            cb.dataset.extId = ext.extensionId;
+            cb.checked = selectedExtensions.has(ext.extensionId);
+            cb.addEventListener('change', () => toggleSelectOne(ext.extensionId, cb.checked));
+            wrapper.appendChild(cb);
+        } else {
+            const spacer = document.createElement('input');
+            spacer.type = 'checkbox';
+            spacer.className = 'select-checkbox select-checkbox-spacer';
+            spacer.disabled = true;
+            wrapper.appendChild(spacer);
+        }
+        wrapper.appendChild(row);
+        list.appendChild(wrapper);
     });
 }
 
@@ -376,8 +445,8 @@ function scanSingle(ext) {
     formData.append('no_llm', 'true');
     formData.append('full_output', 'true');
 
-    document.getElementById('batch-progress-area').style.display = '';
-    
+    document.getElementById('progress-sidebar-card').style.display = '';
+
     fetch('/api/scan', { method: 'POST', body: formData })
         .then(r => {
             if (!r.ok) return r.json().then(err => { throw new Error(err.detail || `Error ${r.status}`); });
@@ -388,8 +457,8 @@ function scanSingle(ext) {
             _batchTracker = createScanTracker(data.scan_id, {
                 progressBar: document.getElementById('progress-bar'),
                 logArea: document.getElementById('progress-log'),
-                titleEl: document.getElementById('progress-title'),
-                progressArea: document.getElementById('batch-progress-area'),
+                titleEl: document.getElementById('progress-text'),
+                progressArea: document.getElementById('progress-sidebar-card'),
                 onComplete: (result) => {
                     // Clear cached results to force fresh lookup from history
                     searchResults = [];
@@ -406,7 +475,7 @@ function scanSingle(ext) {
         })
         .catch(err => {
             toastError('Error starting scan: ' + err.message);
-            document.getElementById('batch-progress-area').style.display = 'none';
+            document.getElementById('progress-sidebar-card').style.display = 'none';
         });
 }
 
@@ -414,7 +483,7 @@ function scanAllNew() {
     const unscanned = searchResults.filter(r => !r.scan);
     if (unscanned.length === 0) return;
 
-    document.getElementById('batch-progress-area').style.display = '';
+    document.getElementById('progress-sidebar-card').style.display = '';
 
     fetch('/api/batch-scan', {
         method: 'POST',
@@ -430,8 +499,8 @@ function scanAllNew() {
         _batchTracker = createScanTracker(data.scan_id, {
             progressBar: document.getElementById('progress-bar'),
             logArea: document.getElementById('progress-log'),
-            titleEl: document.getElementById('progress-title'),
-            progressArea: document.getElementById('batch-progress-area'),
+            titleEl: document.getElementById('progress-text'),
+            progressArea: document.getElementById('progress-sidebar-card'),
             onComplete: (result) => {
                 const count = result?.totalScanned || unscanned.length;
                 toastSuccess(`Batch scan complete: ${count} extensions scanned. Results updated below.`);
@@ -443,13 +512,13 @@ function scanAllNew() {
     })
     .catch(err => {
         toastError('Error starting batch scan: ' + err.message);
-        document.getElementById('batch-progress-area').style.display = 'none';
+        document.getElementById('progress-sidebar-card').style.display = 'none';
     });
 }
 
 function startLlmAnalysis(ext) {
-    document.getElementById('batch-progress-area').style.display = '';
-    document.getElementById('progress-title').textContent = `Analyzing ${ext.extensionId}...`;
+    document.getElementById('progress-sidebar-card').style.display = '';
+    document.getElementById('progress-text').textContent = `Analyzing ${ext.extensionId}...`;
 
     fetch('/api/llm-analyze', {
         method: 'POST',
@@ -469,8 +538,8 @@ function startLlmAnalysis(ext) {
             _batchTracker = createScanTracker(data.scan_id, {
                 progressBar: document.getElementById('progress-bar'),
                 logArea: document.getElementById('progress-log'),
-                titleEl: document.getElementById('progress-title'),
-                progressArea: document.getElementById('batch-progress-area'),
+                titleEl: document.getElementById('progress-text'),
+                progressArea: document.getElementById('progress-sidebar-card'),
                 onComplete: () => {
                     toastSuccess('LLM analysis complete. Results updated below.');
                     // Clear cached results to force fresh lookup from history
@@ -481,7 +550,7 @@ function startLlmAnalysis(ext) {
         })
         .catch(err => {
             toastError('Error starting LLM analysis: ' + err.message);
-            document.getElementById('batch-progress-area').style.display = 'none';
+            document.getElementById('progress-sidebar-card').style.display = 'none';
         });
 }
 
@@ -497,7 +566,11 @@ function applyResultFilters() {
     if (scanStatus === 'scanned') filtered = filtered.filter(r => r.scan);
     else if (scanStatus === 'unscanned') filtered = filtered.filter(r => !r.scan);
 
-    if (verdict) filtered = filtered.filter(r => r.scan && r.scan.verdict === verdict);
+    if (verdict === 'NO_VERDICT') {
+        filtered = filtered.filter(r => r.scan && !r.scan.verdict);
+    } else if (verdict) {
+        filtered = filtered.filter(r => r.scan && r.scan.verdict === verdict);
+    }
     if (llm === 'llm') filtered = filtered.filter(r => r.scan && r.scan.llm_analyzed);
     else if (llm === 'no-llm') filtered = filtered.filter(r => r.scan && !r.scan.llm_analyzed);
     if (risk) filtered = filtered.filter(r => r.scan && r.scan.risk_label === risk);
@@ -510,7 +583,7 @@ function cancelBatchScan() {
         _batchTracker.cancel();
         _batchTracker = null;
     }
-    document.getElementById('batch-progress-area').style.display = 'none';
+    document.getElementById('progress-sidebar-card').style.display = 'none';
 }
 
 // -- LLM Analyze All for batch page (search results) --
@@ -522,8 +595,8 @@ function llmAnalyzeAll() {
         return;
     }
 
-    document.getElementById('batch-progress-area').style.display = '';
-    document.getElementById('progress-title').textContent = `Analyzing ${unanalyzed.length} extensions with LLM...`;
+    document.getElementById('progress-sidebar-card').style.display = '';
+    document.getElementById('progress-text').textContent = `Analyzing ${unanalyzed.length} extensions with LLM...`;
 
     const extensions = unanalyzed.map(ext => ({
         publisher: ext.publisher?.publisherName || ext.publisher,
@@ -546,8 +619,8 @@ function llmAnalyzeAll() {
         _batchTracker = createScanTracker(data.scan_id, {
             progressBar: document.getElementById('progress-bar'),
             logArea: document.getElementById('progress-log'),
-            titleEl: document.getElementById('progress-title'),
-            progressArea: document.getElementById('batch-progress-area'),
+            titleEl: document.getElementById('progress-text'),
+            progressArea: document.getElementById('progress-sidebar-card'),
             onComplete: (result) => {
                 const count = result?.totalScanned || unanalyzed.length;
                 toastSuccess(`LLM analysis complete: ${count} extensions analyzed. Results updated below.`);
@@ -559,8 +632,115 @@ function llmAnalyzeAll() {
     })
     .catch(err => {
         toastError('Error starting batch LLM analysis: ' + err.message);
-        document.getElementById('batch-progress-area').style.display = 'none';
+        document.getElementById('progress-sidebar-card').style.display = 'none';
     });
+}
+
+// -- Selection management --
+function toggleSelectAll(checked) {
+    const checkboxes = document.querySelectorAll('#ext-list .select-checkbox');
+    checkboxes.forEach(cb => {
+        cb.checked = checked;
+        const extId = cb.dataset.extId;
+        if (checked) {
+            selectedExtensions.add(extId);
+        } else {
+            selectedExtensions.delete(extId);
+        }
+    });
+    updateBulkActions();
+}
+
+function toggleSelectOne(extensionId, checked) {
+    if (checked) {
+        selectedExtensions.add(extensionId);
+    } else {
+        selectedExtensions.delete(extensionId);
+    }
+    // Update select-all checkbox state
+    const allCbs = document.querySelectorAll('#ext-list .select-checkbox');
+    const selectAllCb = document.getElementById('select-all-cb');
+    if (selectAllCb) {
+        selectAllCb.checked = allCbs.length > 0 && [...allCbs].every(cb => cb.checked);
+    }
+    updateBulkActions();
+}
+
+function updateBulkActions() {
+    const card = document.getElementById('bulk-actions-card');
+    const countEl = document.getElementById('selection-count');
+    if (selectedExtensions.size > 0) {
+        card.style.display = '';
+        countEl.textContent = `${selectedExtensions.size} selected`;
+    } else {
+        card.style.display = 'none';
+    }
+}
+
+function clearSelection() {
+    selectedExtensions.clear();
+    document.querySelectorAll('#ext-list .select-checkbox').forEach(cb => cb.checked = false);
+    const selectAllCb = document.getElementById('select-all-cb');
+    if (selectAllCb) selectAllCb.checked = false;
+    updateBulkActions();
+}
+
+function rescanSelected(withLlm) {
+    if (selectedExtensions.size === 0) return;
+
+    const extensions = searchResults.filter(r => selectedExtensions.has(r.extensionId));
+    if (extensions.length === 0) return;
+
+    scanProgress = { current: 0, total: extensions.length };
+    document.getElementById('progress-sidebar-card').style.display = '';
+    document.getElementById('progress-text').textContent = `Scanning 0 of ${extensions.length}...`;
+
+    fetch('/api/batch-scan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ extensions, no_llm: !withLlm })
+    })
+    .then(r => {
+        if (!r.ok) return r.json().then(err => { throw new Error(err.detail || `Error ${r.status}`); });
+        return r.json();
+    })
+    .then(data => {
+        if (!data.scan_id) throw new Error('No scan ID returned');
+        _batchTracker = createScanTracker(data.scan_id, {
+            progressBar: document.getElementById('progress-bar'),
+            logArea: document.getElementById('progress-log'),
+            titleEl: document.getElementById('progress-text'),
+            progressArea: document.getElementById('progress-sidebar-card'),
+            onComplete: (result) => {
+                const count = result?.totalScanned || extensions.length;
+                document.getElementById('progress-text').textContent = `Complete — ${count} scanned`;
+                document.getElementById('progress-text').classList.add('complete');
+                toastSuccess(`Rescan complete: ${count} extensions scanned.`);
+                clearSelection();
+                searchResults = [];
+                executeSearch(getSearchFormData());
+            }
+        }).start();
+    })
+    .catch(err => {
+        toastError('Error starting rescan: ' + err.message);
+        document.getElementById('progress-sidebar-card').style.display = 'none';
+    });
+}
+
+// -- Progress log toggle --
+function toggleProgressLog() {
+    const log = document.getElementById('progress-log');
+    const btn = log.previousElementSibling;
+    if (log.classList.contains('progress-log-collapsed')) {
+        log.classList.remove('progress-log-collapsed');
+        log.classList.add('progress-log-expanded');
+        btn.textContent = 'Hide log';
+    } else {
+        log.classList.remove('progress-log-expanded');
+        log.classList.add('progress-log-collapsed');
+        btn.textContent = 'Show log';
+    }
 }
 </script>
 {% endblock %}

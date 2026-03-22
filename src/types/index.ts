@@ -110,6 +110,9 @@ export interface AnalysisResult {
   // Endpoints
   endpoints: EndpointInfo[];
   
+  // Bundled dependencies detected inside JS bundles
+  bundledDependencies: string[];
+
   // Findings
   findings: Finding[];
   
