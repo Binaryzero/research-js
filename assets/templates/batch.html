@@ -1,0 +1,566 @@
+{% extends "base.html" %}
+{% block title %}Batch Marketplace Scanner{% endblock %}
+
+{% block content %}
+<div class="batch-header">    
+</div>
+
+<!-- Search & filter interface -->
+<div class="search-card">
+    <form id="search-form" onsubmit="return doSearch(event)">
+        <div class="search-row">
+            <div class="form-group" style="flex:1">
+                <label for="search-text">Search terms</label>
+                <input type="text" id="search-text" name="search_text" placeholder="e.g. python, copilot, AI agent">
+            </div>
+            <div class="form-group" style="width:175px">
+                <label for="category">Category</label>
+                <select id="category" name="category">
+                    {% for cat in categories %}<option>{{ cat }}</option>{% endfor %}
+                </select>
+            </div>
+            <div class="form-group" style="width:175px">
+                <label for="sort-by">Sort by</label>
+                <select id="sort-by" name="sort_by">
+                    {% for s in sort_options %}<option>{{ s }}</option>{% endfor %}
+                </select>
+            </div>
+            <div class="form-group" style="width:80px">
+                <label for="page-size">Count</label>
+                <input type="number" id="page-size" name="page_size" value="50" min="5" max="500" step="5">
+            </div>
+            <div class="form-group" style="width:70px">
+                <label for="page-num">Page</label>
+                <input type="number" id="page-num" name="page" value="1" min="1" max="100">
+            </div>
+        </div>
+        <div style="display:flex; gap:var(--space-2); align-items:center">
+            <span style="font-size:0.75rem; font-weight:500; color:var(--fg-muted); text-transform:uppercase; letter-spacing:0.05em">Filter:</span>
+            <select id="filter-scan-status" class="filter-select" aria-label="Filter by scan status" onchange="applyResultFilters()">
+                <option value="">All Results</option>
+                <option value="scanned">Scanned Only</option>
+                <option value="unscanned">Unscanned Only</option>
+            </select>
+            <select id="filter-verdict" class="filter-select" aria-label="Filter by verdict" onchange="applyResultFilters()">
+                <option value="">All Verdicts</option>
+                <option value="MALICIOUS">Malicious</option>
+                <option value="SUSPICIOUS">Suspicious</option>
+                <option value="CLEAN">Clean</option>
+            </select>
+            <select id="filter-llm" class="filter-select" aria-label="Filter by LLM status" onchange="applyResultFilters()">
+                <option value="">LLM: All</option>
+                <option value="llm">With LLM</option>
+                <option value="no-llm">Without LLM</option>
+            </select>
+            <select id="filter-risk" class="filter-select" aria-label="Filter by risk level" onchange="applyResultFilters()">
+                <option value="">All Risk Levels</option>
+                <option value="Very Suspicious">Very Suspicious</option>
+                <option value="Suspicious">Suspicious</option>
+                <option value="Moderate">Moderate</option>
+                <option value="Low Risk">Low Risk</option>
+            </select>
+        </div>
+    </form>
+</div>
+
+<!-- Progress area for batch scans -->
+<div id="batch-progress-area" class="progress-card" style="display:none;">
+    <div class="progress-header">
+        <span id="progress-title">Scanning...</span>
+        <button class="btn btn-outline btn-sm" id="cancel-btn" onclick="cancelBatchScan()">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+            Cancel
+        </button>
+    </div>
+    <progress id="progress-bar" value="0" max="100"></progress>
+    <div id="progress-log" class="log-area"></div>
+</div>
+
+<!-- Results area -->
+<div id="results-area" style="display:none;">
+    <div class="results-header">
+        <h3 id="results-title">Results</h3>
+        <div class="results-actions">
+            <button id="scan-all-btn" class="btn btn-primary" onclick="scanAllNew()" style="display:none">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                Scan All New
+            </button>
+            <button id="llm-all-btn" class="btn btn-secondary" onclick="llmAnalyzeAll()" style="display:none">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454z"/><path d="M17 4a2 2 0 0 0 2 2a2 2 0 0 0 -2 2a2 2 0 0 0 -2 -2a2 2 0 0 0 2 -2"/><path d="M19 11h2m-1 -1v2"/></svg>
+                Analyze All (LLM)
+            </button>
+        </div>
+    </div>
+    <div id="ext-list"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
+<script>
+let searchResults = [];
+let _batchTracker = null;
+let _searchDebounce = null;
+
+document.addEventListener('DOMContentLoaded', () => {
+    initSessionTracking();
+    loadFilterSettings();
+    initFilterListeners();
+    // Auto-load results with current parameters on page load
+    executeSearch(getSearchFormData());
+});
+
+// -- Load/Save filter settings --
+function loadFilterSettings() {
+    const saved = JSON.parse(localStorage.getItem('batchFilters') || '{}');
+    if (saved.category) document.getElementById('category').value = saved.category;
+    if (saved.sort_by) document.getElementById('sort-by').value = saved.sort_by;
+    if (!saved.sort_by) document.getElementById('sort-by').value = 'Published Date';
+    if (saved.page_size) document.getElementById('page-size').value = saved.page_size;
+    // Restore result filters
+    if (saved.filter_scan) document.getElementById('filter-scan-status').value = saved.filter_scan;
+    if (saved.filter_verdict) document.getElementById('filter-verdict').value = saved.filter_verdict;
+    if (saved.filter_llm) document.getElementById('filter-llm').value = saved.filter_llm;
+    if (saved.filter_risk) document.getElementById('filter-risk').value = saved.filter_risk;
+}
+
+function saveFilterSettings() {
+    const settings = {
+        category: document.getElementById('category').value,
+        sort_by: document.getElementById('sort-by').value,
+        page_size: document.getElementById('page-size').value,
+        filter_scan: document.getElementById('filter-scan-status').value,
+        filter_verdict: document.getElementById('filter-verdict').value,
+        filter_llm: document.getElementById('filter-llm').value,
+        filter_risk: document.getElementById('filter-risk').value,
+    };
+    localStorage.setItem('batchFilters', JSON.stringify(settings));
+}
+
+// -- Filter listeners for auto-search --
+function initFilterListeners() {
+    // Auto-search when category or sort changes
+    document.getElementById('category').addEventListener('change', () => {
+        saveFilterSettings();
+        debounceSearch();
+    });
+    document.getElementById('sort-by').addEventListener('change', () => {
+        saveFilterSettings();
+        debounceSearch();
+    });
+    document.getElementById('page-num').addEventListener('change', () => {
+        debounceSearch();
+    });
+    document.getElementById('page-size').addEventListener('change', () => {
+        saveFilterSettings();
+        debounceSearch();
+    });
+    // Also trigger on Enter in search box
+    document.getElementById('search-text').addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            debounceSearch();
+        }
+    });
+}
+
+function debounceSearch() {
+    clearTimeout(_searchDebounce);
+    _searchDebounce = setTimeout(() => {
+        // Always search if there are existing results, or if user has entered search criteria
+        const searchText = document.getElementById('search-text').value.trim();
+        const category = document.getElementById('category').value;
+        const sortBy = document.getElementById('sort-by').value;
+        const pageNum = document.getElementById('page-num').value;
+        
+        // Search if: there's text, OR category is selected, OR we have existing results
+        if (searchText || (category && category !== 'All categories') || searchResults.length > 0) {
+            executeSearch(getSearchFormData());
+        }
+    }, 300);
+}
+
+// -- Session tracking for "Current Session" filter in History --
+function initSessionTracking() {
+    if (!sessionStorage.getItem('scanSessionId')) {
+        sessionStorage.setItem('scanSessionId', Date.now().toString());
+    }
+}
+
+function getSessionId() {
+    return sessionStorage.getItem('scanSessionId');
+}
+
+function addToSession(extensionId) {
+    const sessionScans = JSON.parse(sessionStorage.getItem('sessionScans') || '[]');
+    if (!sessionScans.includes(extensionId)) {
+        sessionScans.push(extensionId);
+        sessionStorage.setItem('sessionScans', JSON.stringify(sessionScans));
+    }
+}
+
+// -- Search --
+function getSearchFormData() {
+    const formData = new FormData();
+    formData.append('search_text', document.getElementById('search-text').value);
+    formData.append('category', document.getElementById('category').value);
+    formData.append('sort_by', document.getElementById('sort-by').value);
+    formData.append('page', document.getElementById('page-num').value);
+    formData.append('page_size', document.getElementById('page-size').value);
+    return formData;
+}
+
+function doSearch(e) {
+    e.preventDefault();
+    executeSearch(getSearchFormData());
+    return false;
+}
+
+async function executeSearch(formData) {
+    try {
+        const resp = await fetch('/api/search', { method: 'POST', body: formData });
+        const data = await resp.json();
+        searchResults = data.results;
+        applyResultFilters();
+    } catch(err) {
+        toastError('Search error: ' + err.message);
+    }
+}
+
+// -- Render results --
+function renderResults(results) {
+    const area = document.getElementById('results-area');
+    const list = document.getElementById('ext-list');
+    area.style.display = '';
+    list.textContent = '';
+
+    const unscanned = results.filter(r => !r.scan);
+    const unanalyzed = results.filter(r => r.scan && !r.scan.llm_analyzed);
+    const scannedCount = results.length - unscanned.length;
+
+    document.getElementById('results-title').textContent =
+        `${results.length} results (${scannedCount} scanned, ${unscanned.length} new, ${unanalyzed.length} LLM-ready)`;
+
+    const scanAllBtn = document.getElementById('scan-all-btn');
+    const llmAllBtn = document.getElementById('llm-all-btn');
+    
+    if (unscanned.length > 0) {
+        scanAllBtn.style.display = '';
+        scanAllBtn.textContent = `Scan All New (${unscanned.length})`;
+    } else {
+        scanAllBtn.style.display = 'none';
+    }
+    
+    if (unanalyzed.length > 0) {
+        llmAllBtn.style.display = '';
+        llmAllBtn.textContent = `Analyze All (LLM) (${unanalyzed.length})`;
+    } else {
+        llmAllBtn.style.display = 'none';
+    }
+
+    results.forEach(ext => {
+        const row = document.createElement('div');
+        row.className = 'ext-row';
+
+        const info = document.createElement('div');
+        info.className = 'ext-info';
+
+        const title = document.createElement('h4');
+        if (ext.scan) {
+            const badge = document.createElement('span');
+            badge.className = 'verdict-badge';
+            const colors = badgeColor(ext.scan.risk_color);
+            badge.style.background = colors.bg;
+            badge.style.color = colors.fg;
+            badge.textContent = ext.scan.score;
+            title.appendChild(badge);
+            title.appendChild(document.createTextNode(' '));
+            if (ext.scan.verdict && ext.scan.verdict !== 'CLEAN') {
+                const vBadge = document.createElement('span');
+                vBadge.className = 'verdict-badge';
+                if (ext.scan.verdict === 'MALICIOUS') {
+                    vBadge.style.background = '#dc2626';
+                    vBadge.style.color = '#fff';
+                } else {
+                    vBadge.style.background = 'rgba(217, 119, 6, 0.15)';
+                    vBadge.style.color = '#d97706';
+                }
+                vBadge.textContent = ext.scan.verdict;
+                title.appendChild(vBadge);
+                title.appendChild(document.createTextNode(' '));
+            }
+        }
+        title.appendChild(document.createTextNode(`${ext.displayName}`));
+
+        const extId = document.createElement('span');
+        extId.className = 'ext-id';
+        extId.textContent = ext.extensionId;
+
+        const desc = document.createElement('p');
+        desc.textContent = ext.shortDescription || '';
+
+        const meta = document.createElement('div');
+        meta.className = 'ext-meta';
+        const installs = ext.statistics?.installCount || 0;
+        const rating = ext.statistics?.rating || 0;
+        const parts = [`${formatInstalls(installs)} installs`];
+        if (rating) parts.push(`★ ${rating.toFixed(1)}`);
+        if (ext.scan) {
+            parts.push(`${ext.scan.findings_count} findings`);
+            // Show LLM reduction if analyzed (like history)
+            if (ext.scan.llm_analyzed && ext.scan.true_positives !== undefined) {
+                parts.push(`(${ext.scan.true_positives} TP)`);
+            }
+            if (ext.scan.llm_analyzed) parts.push('LLM ✓');
+        }
+        meta.textContent = parts.join(' · ');
+
+        info.appendChild(title);
+        info.appendChild(extId);
+        info.appendChild(desc);
+        info.appendChild(meta);
+
+        const actions = document.createElement('div');
+        actions.className = 'ext-actions';
+
+        if (ext.scan) {
+            const viewBtn = document.createElement('a');
+            viewBtn.className = 'btn btn-outline btn-sm';
+            viewBtn.href = `/report/${ext.scan.report_name}`;
+            viewBtn.textContent = 'View';
+            actions.appendChild(viewBtn);
+
+            // Only show LLM button if there are findings to analyze
+            if (!ext.scan.llm_analyzed && ext.scan.findings_count > 0) {
+                const llmBtn = document.createElement('button');
+                llmBtn.className = 'btn btn-secondary btn-sm';
+                llmBtn.textContent = 'LLM';
+                llmBtn.addEventListener('click', () => startLlmAnalysis(ext));
+                actions.appendChild(llmBtn);
+            }
+            const rescanBtn = document.createElement('button');
+            rescanBtn.className = 'btn btn-secondary btn-sm';
+            rescanBtn.textContent = 'Re-scan';
+            rescanBtn.addEventListener('click', () => scanSingle(ext));
+            actions.appendChild(rescanBtn);
+        } else {
+            const scanBtn = document.createElement('button');
+            scanBtn.className = 'btn btn-primary btn-sm';
+            scanBtn.textContent = 'Scan';
+            scanBtn.addEventListener('click', () => scanSingle(ext));
+            actions.appendChild(scanBtn);
+        }
+
+        row.appendChild(info);
+        row.appendChild(actions);
+        list.appendChild(row);
+    });
+}
+
+function badgeColor(color) {
+    const map = {
+        red:    { bg: 'rgba(231, 76, 60, 0.15)',  fg: '#e74c3c' },
+        orange: { bg: 'rgba(230, 126, 34, 0.15)', fg: '#e67e22' },
+        yellow: { bg: 'rgba(234, 179, 8, 0.15)',  fg: '#ca8a04' },
+        green:  { bg: 'rgba(39, 174, 96, 0.15)',  fg: '#27ae60' },
+        gray:   { bg: 'rgba(149, 165, 166, 0.15)',fg: '#95a5a6' },
+    };
+    return map[color] || map.gray;
+}
+
+// -- Scan actions --
+function scanSingle(ext) {
+    const url = `https://marketplace.visualstudio.com/items?itemName=${ext.extensionId}`;
+    const formData = new FormData();
+    formData.append('input_source', url);
+    formData.append('no_llm', 'true');
+    formData.append('full_output', 'true');
+
+    document.getElementById('batch-progress-area').style.display = '';
+    
+    fetch('/api/scan', { method: 'POST', body: formData })
+        .then(r => {
+            if (!r.ok) return r.json().then(err => { throw new Error(err.detail || `Error ${r.status}`); });
+            return r.json();
+        })
+        .then(data => {
+            if (!data.scan_id) throw new Error('No scan ID returned');
+            _batchTracker = createScanTracker(data.scan_id, {
+                progressBar: document.getElementById('progress-bar'),
+                logArea: document.getElementById('progress-log'),
+                titleEl: document.getElementById('progress-title'),
+                progressArea: document.getElementById('batch-progress-area'),
+                onComplete: (result) => {
+                    // Clear cached results to force fresh lookup from history
+                    searchResults = [];
+                    executeSearch(getSearchFormData());
+                    // Show success if we have an extension ID
+                    if (result && result.extensionId) {
+                        addToSession(result.extensionId);
+                        toastSuccess(`Scan complete: ${result.extensionId}`);
+                    } else {
+                        toastSuccess('Scan complete');
+                    }
+                }
+            }).start();
+        })
+        .catch(err => {
+            toastError('Error starting scan: ' + err.message);
+            document.getElementById('batch-progress-area').style.display = 'none';
+        });
+}
+
+function scanAllNew() {
+    const unscanned = searchResults.filter(r => !r.scan);
+    if (unscanned.length === 0) return;
+
+    document.getElementById('batch-progress-area').style.display = '';
+
+    fetch('/api/batch-scan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ extensions: unscanned })
+    })
+    .then(r => {
+        if (!r.ok) return r.json().then(err => { throw new Error(err.detail || `Error ${r.status}`); });
+        return r.json();
+    })
+    .then(data => {
+        if (!data.scan_id) throw new Error('No scan ID returned');
+        _batchTracker = createScanTracker(data.scan_id, {
+            progressBar: document.getElementById('progress-bar'),
+            logArea: document.getElementById('progress-log'),
+            titleEl: document.getElementById('progress-title'),
+            progressArea: document.getElementById('batch-progress-area'),
+            onComplete: (result) => {
+                const count = result?.totalScanned || unscanned.length;
+                toastSuccess(`Batch scan complete: ${count} extensions scanned. Results updated below.`);
+                // Clear cached results to force fresh lookup from history
+                searchResults = [];
+                executeSearch(getSearchFormData());
+            }
+        }).start();
+    })
+    .catch(err => {
+        toastError('Error starting batch scan: ' + err.message);
+        document.getElementById('batch-progress-area').style.display = 'none';
+    });
+}
+
+function startLlmAnalysis(ext) {
+    document.getElementById('batch-progress-area').style.display = '';
+    document.getElementById('progress-title').textContent = `Analyzing ${ext.extensionId}...`;
+
+    fetch('/api/llm-analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            publisher: ext.publisher?.publisherName || ext.publisher,
+            extension_name: ext.extensionName,
+            full_output: true,
+        })
+    })
+        .then(r => {
+            if (!r.ok) return r.json().then(err => { throw new Error(err.detail || `Error ${r.status}`); });
+            return r.json();
+        })
+        .then(data => {
+            if (!data.scan_id) throw new Error('No scan ID returned');
+            _batchTracker = createScanTracker(data.scan_id, {
+                progressBar: document.getElementById('progress-bar'),
+                logArea: document.getElementById('progress-log'),
+                titleEl: document.getElementById('progress-title'),
+                progressArea: document.getElementById('batch-progress-area'),
+                onComplete: () => {
+                    toastSuccess('LLM analysis complete. Results updated below.');
+                    // Clear cached results to force fresh lookup from history
+                    searchResults = [];
+                    executeSearch(getSearchFormData());
+                }
+            }).start();
+        })
+        .catch(err => {
+            toastError('Error starting LLM analysis: ' + err.message);
+            document.getElementById('batch-progress-area').style.display = 'none';
+        });
+}
+
+function applyResultFilters() {
+    saveFilterSettings();
+    const scanStatus = document.getElementById('filter-scan-status').value;
+    const verdict = document.getElementById('filter-verdict').value;
+    const llm = document.getElementById('filter-llm').value;
+    const risk = document.getElementById('filter-risk').value;
+
+    let filtered = searchResults;
+
+    if (scanStatus === 'scanned') filtered = filtered.filter(r => r.scan);
+    else if (scanStatus === 'unscanned') filtered = filtered.filter(r => !r.scan);
+
+    if (verdict) filtered = filtered.filter(r => r.scan && r.scan.verdict === verdict);
+    if (llm === 'llm') filtered = filtered.filter(r => r.scan && r.scan.llm_analyzed);
+    else if (llm === 'no-llm') filtered = filtered.filter(r => r.scan && !r.scan.llm_analyzed);
+    if (risk) filtered = filtered.filter(r => r.scan && r.scan.risk_label === risk);
+
+    renderResults(filtered);
+}
+
+function cancelBatchScan() {
+    if (_batchTracker) {
+        _batchTracker.cancel();
+        _batchTracker = null;
+    }
+    document.getElementById('batch-progress-area').style.display = 'none';
+}
+
+// -- LLM Analyze All for batch page (search results) --
+function llmAnalyzeAll() {
+    // Filter for items that have findings to analyze (not already LLM analyzed AND have findings)
+    const unanalyzed = searchResults.filter(r => r.scan && !r.scan.llm_analyzed && r.scan.findings_count > 0);
+    if (unanalyzed.length === 0) {
+        toastInfo('No extensions with findings to analyze');
+        return;
+    }
+
+    document.getElementById('batch-progress-area').style.display = '';
+    document.getElementById('progress-title').textContent = `Analyzing ${unanalyzed.length} extensions with LLM...`;
+
+    const extensions = unanalyzed.map(ext => ({
+        publisher: ext.publisher?.publisherName || ext.publisher,
+        extensionName: ext.extensionName
+    }));
+
+    fetch('/api/batch-llm-analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            extensions: extensions,
+        })
+    })
+    .then(r => {
+        if (!r.ok) return r.json().then(err => { throw new Error(err.detail || `Error ${r.status}`); });
+        return r.json();
+    })
+    .then(data => {
+        if (!data.scan_id) throw new Error('No scan ID returned');
+        _batchTracker = createScanTracker(data.scan_id, {
+            progressBar: document.getElementById('progress-bar'),
+            logArea: document.getElementById('progress-log'),
+            titleEl: document.getElementById('progress-title'),
+            progressArea: document.getElementById('batch-progress-area'),
+            onComplete: (result) => {
+                const count = result?.totalScanned || unanalyzed.length;
+                toastSuccess(`LLM analysis complete: ${count} extensions analyzed. Results updated below.`);
+                // Clear cached results to force fresh lookup from history
+                searchResults = [];
+                executeSearch(getSearchFormData());
+            }
+        }).start();
+    })
+    .catch(err => {
+        toastError('Error starting batch LLM analysis: ' + err.message);
+        document.getElementById('batch-progress-area').style.display = 'none';
+    });
+}
+</script>
+{% endblock %}

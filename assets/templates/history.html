@@ -1,0 +1,705 @@
+{% extends "base.html" %}
+{% block title %}Scan History{% endblock %}
+
+{% block content %}
+<div class="history-header">
+    <h2>Scan History</h2>
+    <p>View and manage all previous extension scans with their risk scores and findings.</p>
+</div>
+
+<!-- History table -->
+<div class="history-table-container">
+    <div class="filter-bar">
+        <div class="filter-group filter-search">
+            <input type="text" id="history-search" placeholder="Search extensions..." aria-label="Search extensions">
+        </div>
+        <div class="filter-group">
+            <select id="session-filter" aria-label="Filter by session">
+                <option value="">All Scans</option>
+                <option value="session">Current Session</option>
+            </select>
+            <select id="risk-filter" aria-label="Filter by risk">
+                <option value="">All Risks</option>
+                <option value="Low">Low</option>
+                <option value="Moderate">Moderate</option>
+                <option value="Suspicious">Suspicious</option>
+                <option value="Very Suspicious">Very Suspicious</option>
+            </select>
+            <select id="llm-filter" aria-label="Filter by LLM analysis">
+                <option value="">All</option>
+                <option value="llm">With LLM</option>
+                <option value="no-llm">Without LLM</option>
+            </select>
+        </div>
+    </div>
+
+    <div id="history-loading" role="status" aria-live="polite" aria-busy="true">
+        <div class="report-skeleton" style="margin-top: var(--space-4);">
+            <div class="skeleton-title"></div>
+            <div class="skeleton-content">
+                <div class="skeleton-line"></div>
+                <div class="skeleton-line"></div>
+                <div class="skeleton-line"></div>
+            </div>
+        </div>
+    </div>
+    
+    <div id="history-empty" style="display:none;" class="empty-state" role="status" aria-live="polite">
+        <div class="empty-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/>
+            </svg>
+        </div>
+        <h3>No scans found</h3>
+        <p>Go to <a href="/batch">Batch Scanner</a> to start analyzing extensions.</p>
+    </div>
+
+    <!-- Progress area for live scans -->
+    <div id="progress-area" class="progress-card" style="display:none;" aria-live="polite">
+        <div class="progress-header">
+            <span id="progress-title">Analyzing...</span>
+            <button class="btn btn-outline btn-sm" id="cancel-btn" onclick="cancelCurrentScan()">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+                Cancel
+            </button>
+        </div>
+        <progress id="progress-bar" value="0" max="100"></progress>
+        <div id="progress-log" class="log-area" role="log" aria-live="polite"></div>
+    </div>
+
+    <!-- Analysis actions for filtered results -->
+    <div id="analysis-actions" class="results-header" style="display:none; margin-top: var(--space-4);">
+        <span></span>
+        <button id="rescan-all-btn" class="btn btn-outline" onclick="rescanAllHistory()">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/></svg>
+            Rescan All
+        </button>
+        <button id="llm-analyze-all-btn" class="btn btn-secondary" onclick="llmAnalyzeAllHistory()">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454z"/><path d="M17 4a2 2 0 0 0 2 2a2 2 0 0 0 -2 2a2 2 0 0 0 -2 -2a2 2 0 0 0 2 -2"/><path d="M19 11h2m-1 -1v2"/></svg>
+            LLM Scan All
+        </button>
+    </div>
+
+    <table id="history-table" class="history-table" style="display:none;" role="table" aria-label="Scan history">
+        <thead>
+            <tr>
+                <th data-sort="extension" role="columnheader" scope="col">Extension <span class="sort-indicator" aria-hidden="true"></span></th>
+                <th data-sort="score" role="columnheader" scope="col">Score <span class="sort-indicator" aria-hidden="true"></span></th>
+                <th data-sort="risk" role="columnheader" scope="col">Risk <span class="sort-indicator" aria-hidden="true"></span></th>
+                <th data-sort="verdict" role="columnheader" scope="col">Verdict <span class="sort-indicator" aria-hidden="true"></span></th>
+                <th data-sort="findings" role="columnheader" scope="col">Findings <span class="sort-indicator" aria-hidden="true"></span></th>
+                <th data-sort="llm" role="columnheader" scope="col">LLM <span class="sort-indicator" aria-hidden="true"></span></th>
+                <th data-sort="date" role="columnheader" scope="col">Scanned <span class="sort-indicator" aria-hidden="true"></span></th>
+                <th role="columnheader" scope="col">Actions</th>
+            </tr>
+        </thead>
+        <tbody id="history-body" role="rowgroup">
+        </tbody>
+    </table>
+
+    <!-- Pagination controls -->
+    <div id="pagination-controls" style="display:none;" class="pagination" role="navigation" aria-label="Pagination">
+        <div id="pagination-info" class="pagination-info" role="status" aria-live="polite"></div>
+        <div class="pagination-buttons">
+            <button id="prev-page" class="btn btn-outline btn-sm" onclick="prevPage()" disabled aria-label="Previous page">Previous</button>
+            <button id="next-page" class="btn btn-outline btn-sm" onclick="nextPage()" aria-label="Next page">Next</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Format install counts
+function formatInstalls(n) {
+    if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
+    if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K';
+    return n;
+}
+
+// Get risk badge
+function getRiskBadge(score) {
+    let riskClass, label;
+    if (score >= 70) { riskClass = 'risk-critical'; label = 'Critical'; }
+    else if (score >= 40) { riskClass = 'risk-high'; label = 'High'; }
+    else if (score >= 20) { riskClass = 'risk-medium'; label = 'Medium'; }
+    else { riskClass = 'risk-low'; label = 'Low'; }
+    return `<span class="risk-badge ${riskClass}">${label}</span>`;
+}
+
+// Current filter state
+let currentSearch = '';
+let currentSessionFilter = '';
+let currentRiskFilter = '';
+let currentLlmFilter = '';
+
+// Pagination state
+let currentPage = 0;
+const PAGE_SIZE = 20;
+
+// Load history
+async function loadHistory() {
+    try {
+        // Build filter params
+        const params = new URLSearchParams();
+        if (currentSearch) params.append('search', currentSearch);
+        if (currentRiskFilter) params.append('risk', currentRiskFilter);
+        if (currentLlmFilter) params.append('llm', currentLlmFilter);
+        // Request all entries (no pagination on frontend for now)
+        params.append('limit', '1000');
+        // Add cache-busting param
+        params.append('_', Date.now());
+
+        const url = '/api/history' + '?' + params.toString();
+        const resp = await fetch(url, { cache: 'no-store' });
+        
+        if (!resp.ok) {
+            throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
+        }
+        
+        const data = await resp.json();
+        const table = document.getElementById('history-table');
+        const tbody = document.getElementById('history-body');
+        const loading = document.getElementById('history-loading');
+        const empty = document.getElementById('history-empty');
+        const analysisActions = document.getElementById('analysis-actions');
+
+        loading.style.display = 'none';
+
+        if (!data.scans || Object.keys(data.scans).length === 0) {
+            empty.style.display = 'block';
+            table.style.display = 'none';
+            if (analysisActions) analysisActions.style.display = 'none';
+            return;
+        }
+
+        table.style.display = 'table';
+        empty.style.display = 'none';
+        tbody.innerHTML = '';
+
+        // Sort by date descending (most recent first)
+        const entries = Object.entries(data.scans);
+        entries.sort((a, b) => {
+            const dateA = new Date(a[1].scan_date || 0);
+            const dateB = new Date(b[1].scan_date || 0);
+            return dateB - dateA;
+        });
+
+        entries.forEach(([eid, info]) => {
+            // Determine which score to use: LLM-adjusted if available and LLM was run, otherwise static
+            let score;
+            let originalScore;
+            if (info.llm_analyzed && info.llm_adjusted_score !== undefined) {
+                score = info.llm_adjusted_score;
+                originalScore = info.suspicion_score;
+            } else {
+                score = info.suspicion_score;
+                originalScore = null;
+            }
+            const row = document.createElement('tr');
+
+            // Risk cell color based on the displayed score
+            let riskColor = 'var(--safe)';
+            if (score >= 70) riskColor = 'var(--danger)';
+            else if (score >= 40) riskColor = 'var(--warning)';
+            else if (score >= 20) riskColor = 'var(--caution)';
+
+            // Determine LLM status display
+            const llmStatus = info.llm_analyzed
+                ? '<span style="color:var(--safe)">✓</span>'
+                : '−';
+
+            // Show adjusted score if LLM ran, with original static in parentheses
+            const scoreDisplay = originalScore !== null
+                ? '<span style="color:' + riskColor + '">' + score + '</span> <span style="font-size:0.7rem;opacity:0.5">(' + originalScore + ' static)</span>'
+                : '<span style="color:' + riskColor + '">' + score + '</span>';
+
+            // Use stored true positives count
+            const truePositives = info.true_positives || 0;
+            const reportPath = info.report_path || '';
+            const reportName = reportPath ? reportPath.split('/').pop() : '';
+            
+            // Sanitize output (use DOMPurify if available, otherwise plain text)
+            const safeEid = typeof DOMPurify !== 'undefined' ? DOMPurify.sanitize(eid) : eid.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+            // Build actions cell content
+            let actionsHtml = '<td class="actions-cell" style="white-space:nowrap;">';
+            if (reportName) {
+                actionsHtml += '<a href="/report/' + encodeURIComponent(reportName) + '" class="btn btn-outline btn-sm">View</a> ';
+            }
+            // Static rescan button
+            actionsHtml += '<button onclick="rescanExtension(\'' + eid.replace(/'/g, "\\'") + '\')" class="btn btn-outline btn-sm" title="Re-scan extension">Rescan</button> ';
+            // LLM scan button
+            if (!info.llm_analyzed) {
+                actionsHtml += '<button onclick="rescanWithLlm(\'' + eid.replace(/'/g, "\\'") + '\')" class="btn btn-secondary btn-sm">LLM Scan</button>';
+            }
+            actionsHtml += '</td>';
+
+            // Verdict display — values are server-controlled enum (CLEAN/SUSPICIOUS/MALICIOUS)
+            const verdict = info.verdict || '';
+            let verdictHtml = '<span style="opacity:0.4">−</span>';
+            if (verdict === 'MALICIOUS') {
+                verdictHtml = '<span style="background:#dc2626;color:#fff;padding:2px 8px;border-radius:4px;font-weight:700;font-size:0.75rem;">MALICIOUS</span>';
+            } else if (verdict === 'SUSPICIOUS') {
+                verdictHtml = '<span style="background:#d97706;color:#fff;padding:2px 8px;border-radius:4px;font-weight:600;font-size:0.75rem;">SUSPICIOUS</span>';
+            } else if (verdict === 'CLEAN') {
+                verdictHtml = '<span style="color:var(--safe);font-size:0.75rem;">CLEAN</span>';
+            }
+
+            row.innerHTML = '<td><strong>' + safeEid + '</strong><br>' +
+                '<span style="font-size:0.75rem;color:var(--fg-muted);">' + (info.scan_date || 'Unknown date') + '</span>' +
+                '</td>' +
+                '<td style="color:' + riskColor + ';font-weight:600;">' + scoreDisplay + '</td>' +
+                '<td>' + getRiskBadge(score) + '</td>' +
+                '<td>' + verdictHtml + '</td>' +
+                '<td>' + truePositives + ' / ' + (info.findings_count || 0) + '</td>' +
+                '<td style="text-align:center;">' + llmStatus + '</td>' +
+                '<td style="font-size:0.8rem;color:var(--fg-muted);">' + (info.scan_date ? info.scan_date.split(' ')[0] : '-') + '</td>' +
+                actionsHtml;
+            tbody.appendChild(row);
+        });
+
+        // Show analysis actions if there are unanalyzed entries
+        const llmAllBtn = document.getElementById('llm-analyze-all-btn');
+        const unanalyzedLlm = entries.filter(([_, info]) => !info.llm_analyzed);
+        
+        if (llmAllBtn && unanalyzedLlm.length > 0) {
+            llmAllBtn.textContent = `Analyze All (LLM) (${unanalyzedLlm.length})`;
+            if (analysisActions) analysisActions.style.display = '';
+        } else if (llmAllBtn) {
+            if (analysisActions) analysisActions.style.display = 'none';
+        }
+    } catch (e) {
+        document.getElementById('history-loading').innerHTML = `Error: ${e.message}`;
+    }
+}
+
+// Previous page
+function prevPage() {
+    if (currentPage > 0) {
+        currentPage--;
+        loadHistory();
+    }
+}
+
+// Next page
+function nextPage() {
+    currentPage++;
+    loadHistory();
+}
+
+// Delete single scan
+async function deleteScan(eid) {
+    if (!confirm(`Delete scan record for ${eid}?`)) return;
+
+    try {
+        const resp = await fetch('/api/history', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ extension_id: eid }) });
+        if (resp.ok) loadHistory();
+    } catch (e) {
+        toastError('Error deleting scan');
+    }
+}
+
+// Rescan single extension (static analysis only)
+async function rescanExtension(eid) {
+    const parts = eid.split('.');
+    if (parts.length < 2) {
+        toastError('Invalid extension ID format');
+        return;
+    }
+    const publisher = parts[0];
+    const extensionName = parts.slice(1).join('.');
+    const url = `https://marketplace.visualstudio.com/items?itemName=${publisher}.${extensionName}`;
+
+    document.getElementById('progress-area').style.display = '';
+    document.getElementById('progress-title').textContent = `Rescanning ${eid}...`;
+
+    const formData = new FormData();
+    formData.append('input_source', url);
+    formData.append('no_llm', 'true');
+    formData.append('full_output', 'true');
+
+    fetch('/api/scan', {
+        method: 'POST',
+        body: formData
+    })
+    .then(r => {
+        if (!r.ok) return r.json().then(err => { throw new Error(err.detail || `Error ${r.status}`); });
+        return r.json();
+    })
+    .then(data => {
+        if (!data.scan_id) throw new Error('No scan ID returned');
+        _historyTracker = createScanTracker(data.scan_id, {
+            progressBar: document.getElementById('progress-bar'),
+            logArea: document.getElementById('progress-log'),
+            titleEl: document.getElementById('progress-title'),
+            progressArea: document.getElementById('progress-area'),
+            onComplete: () => {
+                toastSuccess('Rescan complete');
+                setTimeout(() => {
+                    loadHistory();
+                    document.getElementById('progress-area').style.display = 'none';
+                }, 1000);
+            },
+            onError: (info) => {
+                toastError('Rescan failed: ' + (info.error || 'Unknown error'));
+            }
+        }).start();
+    })
+    .catch(err => {
+        toastError('Error starting rescan: ' + err.message);
+        document.getElementById('progress-area').style.display = 'none';
+    });
+}
+
+// Rescan all extensions in history (static analysis)
+async function rescanAllHistory() {
+    const tbody = document.getElementById('history-body');
+    const rows = tbody.querySelectorAll('tr');
+    if (!rows || rows.length === 0) {
+        toastInfo('No extensions to rescan');
+        return;
+    }
+
+    const extensionList = Array.from(rows).map(row => {
+        const cells = row.querySelectorAll('td');
+        const extIdFull = cells[0]?.textContent || '';
+        const extId = extIdFull.split('\n')[0].trim();
+        const parts = extId.split('.');
+        const publisher = parts[0] || '';
+        const extensionName = parts.slice(1).join('.');
+        return { publisher, extensionName };
+    }).filter(item => item.publisher && item.extensionName);
+
+    if (extensionList.length === 0) {
+        toastInfo('No valid extensions found to rescan');
+        return;
+    }
+
+    document.getElementById('progress-area').style.display = '';
+    document.getElementById('progress-title').textContent = `Rescanning ${extensionList.length} extensions...`;
+
+    fetch('/api/batch-scan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ extensions: extensionList })
+    })
+    .then(r => {
+        if (!r.ok) return r.json().then(err => { throw new Error(err.detail || `Error ${r.status}`); });
+        return r.json();
+    })
+    .then(data => {
+        if (!data.scan_id) throw new Error('No scan ID returned');
+        _historyTracker = createScanTracker(data.scan_id, {
+            progressBar: document.getElementById('progress-bar'),
+            logArea: document.getElementById('progress-log'),
+            titleEl: document.getElementById('progress-title'),
+            progressArea: document.getElementById('progress-area'),
+            onComplete: (result) => {
+                const count = result?.totalScanned || extensionList.length;
+                toastSuccess(`Batch rescan complete: ${count} extensions scanned`);
+                setTimeout(() => {
+                    loadHistory();
+                    document.getElementById('progress-area').style.display = 'none';
+                }, 1000);
+            },
+            onError: (info) => {
+                toastError('Batch rescan failed: ' + (info.error || 'Unknown error'));
+            }
+        }).start();
+    })
+    .catch(err => {
+        toastError('Error starting batch rescan: ' + err.message);
+        document.getElementById('progress-area').style.display = 'none';
+    });
+}
+
+// Current scan tracking
+let _historyTracker = null;
+
+// Re-scan with LLM analysis
+async function rescanWithLlm(eid) {
+    if (!eid) {
+        toastError('Extension ID is missing. Please try again.');
+        return;
+    }
+
+    document.getElementById('progress-area').style.display = '';
+    document.getElementById('progress-title').textContent = `Analyzing ${eid}...`;
+
+    fetch('/api/llm-analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            extension_id: eid,
+        })
+    })
+    .then(r => {
+        if (!r.ok) return r.json().then(err => { throw new Error(err.detail || `Error ${r.status}`); });
+        return r.json();
+    })
+    .then(data => {
+        if (!data.scan_id) throw new Error('No scan ID returned');
+        _historyTracker = createScanTracker(data.scan_id, {
+            progressBar: document.getElementById('progress-bar'),
+            logArea: document.getElementById('progress-log'),
+            titleEl: document.getElementById('progress-title'),
+            progressArea: document.getElementById('progress-area'),
+            onComplete: () => {
+                toastSuccess('LLM analysis complete');
+                setTimeout(() => {
+                    loadHistory();
+                    document.getElementById('progress-area').style.display = 'none';
+                }, 1000);
+            }
+        }).start();
+    })
+    .catch(err => {
+        toastError('Error starting LLM analysis: ' + err.message);
+        document.getElementById('progress-area').style.display = 'none';
+    });
+}
+
+function cancelCurrentScan() {
+    if (_historyTracker) {
+        _historyTracker.cancel();
+        _historyTracker = null;
+    }
+    document.getElementById('progress-area').style.display = 'none';
+}
+
+// Clear all history
+async function clearHistory() {
+    if (!confirm('Clear all scan history? This cannot be undone.')) return;
+
+    try {
+        const resp = await fetch('/api/history', { method: 'DELETE' });
+        if (resp.ok) loadHistory();
+    } catch (e) {
+        toastError('Error clearing history');
+    }
+}
+
+// LLM Analyze All for history page
+async function llmAnalyzeAllHistory() {
+    const tbody = document.getElementById('history-body');
+    const rows = tbody.querySelectorAll('tr');
+    if (!rows || rows.length === 0) return;
+
+    const extensionList = Array.from(rows).map(row => {
+        const cells = row.querySelectorAll('td');
+        // Extension ID is in the first cell (cells[0])
+        const extIdFull = cells[0]?.textContent || '';
+        // Extract just the extension ID (first line before the date)
+        const extId = extIdFull.split('\n')[0].trim();
+        const parts = extId.split('.');
+        const publisher = parts[0] || '';
+        const extensionName = parts.slice(1).join('.') || '';
+        
+        // Skip extensions already LLM analyzed (LLM status is in cells[4])
+        const llmCell = cells[4]?.textContent?.trim() || '';
+        if (llmCell.includes('✓')) return null;
+        
+        return { publisher, extensionName };
+    }).filter(item => item.publisher && item.extensionName);
+
+    if (extensionList.length === 0) {
+        toastInfo('No unanalyzed LLM scans found in current filter.');
+        return;
+    }
+
+    document.getElementById('progress-area').style.display = '';
+    document.getElementById('progress-title').textContent = `Analyzing ${extensionList.length} extensions with LLM...`;
+
+    fetch('/api/batch-llm-analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            extensions: extensionList,
+        })
+    })
+    .then(r => {
+        if (!r.ok) return r.json().then(err => { throw new Error(err.detail || `Error ${r.status}`); });
+        return r.json();
+    })
+    .then(data => {
+        if (!data.scan_id) throw new Error('No scan ID returned');
+        _historyTracker = createScanTracker(data.scan_id, {
+            progressBar: document.getElementById('progress-bar'),
+            logArea: document.getElementById('progress-log'),
+            titleEl: document.getElementById('progress-title'),
+            progressArea: document.getElementById('progress-area'),
+            onComplete: () => {
+                toastSuccess(`LLM analysis complete: ${extensionList.length} extensions analyzed.`);
+                loadHistory();
+                document.getElementById('progress-area').style.display = 'none';
+            }
+        }).start();
+    })
+    .catch(err => {
+        toastError('Error starting batch LLM analysis: ' + err.message);
+        document.getElementById('progress-area').style.display = 'none';
+    });
+}
+
+// Get risk label helper
+function getRiskLabel(score) {
+    if (score >= 70) return 'Very Suspicious';
+    if (score >= 40) return 'Suspicious';
+    if (score >= 20) return 'Moderate';
+    return 'Low';
+}
+
+// Sort state
+let currentSort = { column: 'date', direction: 'desc' };
+
+// Event listeners for filters and sort
+document.addEventListener('DOMContentLoaded', () => {
+    // Load saved sort state from localStorage
+    const savedSort = localStorage.getItem('historySortState');
+    if (savedSort) {
+        currentSort = JSON.parse(savedSort);
+    }
+
+    // Load history on page load
+    loadHistory();
+    updateSortIndicators();  // Show initial sort indicator
+
+    // Refresh history when page becomes visible (user navigates back)
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') {
+            loadHistory();
+        }
+    });
+
+    // Search input
+    const searchInput = document.getElementById('history-search');
+    searchInput.addEventListener('input', () => {
+        currentSearch = searchInput.value;
+        currentPage = 0;
+        loadHistory();
+    });
+
+    // Risk filter
+    document.getElementById('risk-filter').addEventListener('change', (e) => {
+        currentRiskFilter = e.target.value;
+        currentPage = 0;
+        loadHistory();
+    });
+
+    // Session filter
+    document.getElementById('session-filter').addEventListener('change', (e) => {
+        currentSessionFilter = e.target.value;
+        currentPage = 0;
+        loadHistory();
+    });
+
+    // LLM filter
+    document.getElementById('llm-filter').addEventListener('change', (e) => {
+        currentLlmFilter = e.target.value;
+        currentPage = 0;
+        loadHistory();
+    });
+
+    // Sort header clicks
+    document.querySelectorAll('th[data-sort]').forEach(th => {
+        th.addEventListener('click', (e) => {
+            const column = th.dataset.sort;
+            
+            // Disable if filtering by LLM status
+            if (column === 'llm' && currentLlmFilter !== '') {
+                return;
+            }
+            
+            if (column === currentSort.column) {
+                // Toggle direction
+                currentSort.direction = currentSort.direction === 'asc' ? 'desc' : 'asc';
+            } else {
+                currentSort.column = column;
+                currentSort.direction = column === 'extension' ? 'asc' : 'desc';
+            }
+            updateSortIndicators();
+            // Save sort state to localStorage
+            localStorage.setItem('historySortState', JSON.stringify(currentSort));
+            // Re-sort current entries
+            const tbody = document.getElementById('history-body');
+            const rows = Array.from(tbody.querySelectorAll('tr'));
+            rows.sort((a, b) => compareRows(a, b, column, currentSort.direction));
+            tbody.innerHTML = '';
+            rows.forEach(row => tbody.appendChild(row));
+        });
+    });
+});
+
+// Update sort indicators in headers
+function updateSortIndicators() {
+    document.querySelectorAll('th[data-sort] span.sort-indicator').forEach(span => {
+        span.textContent = '';
+    });
+    const header = document.querySelector(`th[data-sort="${currentSort.column}"] span.sort-indicator`);
+    if (header) {
+        header.textContent = currentSort.direction === 'asc' ? '▲' : '▼';
+    }
+}
+
+// Compare rows for sorting
+function compareRows(rowA, rowB, column, direction) {
+    let valA, valB;
+
+    switch (column) {
+        case 'extension':
+            valA = rowA.children[0].textContent.toLowerCase();
+            valB = rowB.children[0].textContent.toLowerCase();
+            break;
+        case 'score':
+            valA = getScoreFromCell(rowA.children[1]);
+            valB = getScoreFromCell(rowB.children[1]);
+            break;
+        case 'risk':
+            valA = getRiskValue(rowA.children[2]);
+            valB = getRiskValue(rowB.children[2]);
+            break;
+        case 'verdict':
+            const verdictOrder = { 'MALICIOUS': 3, 'SUSPICIOUS': 2, 'CLEAN': 1 };
+            valA = verdictOrder[rowA.children[3].textContent.trim()] || 0;
+            valB = verdictOrder[rowB.children[3].textContent.trim()] || 0;
+            break;
+        case 'findings':
+            valA = parseInt(rowA.children[4].textContent.split(' ')[0]) || 0;
+            valB = parseInt(rowB.children[4].textContent.split(' ')[0]) || 0;
+            break;
+        case 'llm':
+            valA = rowA.children[5].textContent.includes('✓') ? 1 : 0;
+            valB = rowB.children[5].textContent.includes('✓') ? 1 : 0;
+            break;
+        case 'date':
+            valA = rowA.children[6].textContent || '';
+            valB = rowB.children[6].textContent || '';
+            break;
+        default:
+            valA = '';
+            valB = '';
+    }
+
+    if (valA < valB) return direction === 'asc' ? -1 : 1;
+    if (valA > valB) return direction === 'asc' ? 1 : -1;
+    return 0;
+}
+
+// Extract numeric score from score cell
+function getScoreFromCell(cell) {
+    const text = cell.textContent.trim();
+    const match = text.match(/^(\d+(?:\.\d+)?)/);
+    return match ? parseFloat(match[1]) : 0;
+}
+
+// Get numeric value for risk level
+function getRiskValue(cell) {
+    const badge = cell.querySelector('span');
+    if (!badge) return 0;
+    const label = badge.textContent.trim();
+    const values = { 'Very Suspicious': 4, 'Suspicious': 3, 'Moderate': 2, 'Low': 1 };
+    return values[label] || 0;
+}
+</script>
+{% endblock %}

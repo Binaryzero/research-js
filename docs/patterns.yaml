@@ -1,0 +1,1863 @@
+# Extension Security Analyzer - Pattern Configuration
+# Based on Extension Security Threat Model Framework v1.2
+#
+# Each pattern group maps to a threat category.
+# Patterns are Python regex strings.
+# Add custom patterns as needed.
+#
+# Changelog v1.5:
+#   - New categories: path_traversal (7 patterns), resource_exhaustion (5 patterns),
+#     backdoor_indicators (8 patterns)
+#   - New supply_chain patterns: typosquat_indicator, bundled_native_binary,
+#     install_from_url, unpinned_dependency, extension_install_command
+#   - New credential patterns: jwt_token, stripe_key, sendgrid_key, twilio_key,
+#     database_connection_string, generic_secret_assignment
+#   - New permission_abuse patterns: workspace_trust, task_provider, debug_adapter,
+#     file_system_watcher
+#   - New network patterns: dgram_socket, dns_resolve, cors_disable,
+#     response_no_validation
+#   - New code_execution patterns: shell_option_true, command_string_chaining,
+#     process_exit_override
+#   - New exfiltration patterns: ssh_key_read, git_credential_access,
+#     browser_data_access, file_enumeration, workspace_folder_scan
+#   - New obfuscation patterns: double_base64, string_reverse_decode,
+#     string_charcode_array, computed_property_access
+#
+# Changelog v1.4:
+#   - New category: llm_prompt_surface (10 patterns) — detects extensions that
+#     construct LLM prompts from unsanitized user input, LLM API clients, role
+#     markers, hardcoded system prompts, and LLM API key configuration
+#   - New pattern: code_execution.configurable_command_path — catches user-
+#     configurable binary paths that may flow to child_process
+#   - Fixed child_process_exec and child_process_spawn to catch TypeScript-
+#     compiled (0, module.method)() call syntax
+#   - Tightened download_execute — removed generic 'get' and 'open' triggers,
+#     added exec/eval/spawn as execution verbs
+#   - Tightened prompt_template_interpolation — word-boundary match for
+#     ${message} excludes ${lastMessage}, ${err.message}, ${statusMessage}
+#
+# Changelog v1.3:
+#   - Added endpoint_filtering section with 70+ excluded domains and URL classification
+#   - Added file_scope restrictions for malicious_agent_instructions and prompt_injection
+#   - Added missing patterns: web_worker, navigator_clipboard, register_uri_handler,
+#     webview_postmessage, read_other_config, debugger_statement
+#   - Narrowed noisy prompt_injection and malicious_agent_instructions patterns
+#   - Added insecure_http exclusions for W3C/standards namespace URIs
+#   - Added tld_suspect list for endpoint classification
+#
+# Changelog v1.2:
+#   - Fixed duplicate YAML note: keys (aliased_vscode_require, no_restrictions)
+#   - Fixed overly broad regex: xhr .open(), child_process exec/spawn, base64_encode Buffer
+#   - Fixed suspicious_ip excluding real public IPs (8.8.8.8, 1.1.1.1)
+#   - Added missing patterns from actual review workflow:
+#     network: http_methods, node_http_clients, ws_module, image_pixel, esm_http_import
+#     permission_abuse: fs_read, fs_append, open_external, webview_scripts, terminal_sendtext,
+#       secret_storage, authentication_api, extension_api
+#     code_execution: cdp_evaluate, vm_execute, dynamic_require, dynamic_import, wasm
+#     credentials: gcp_service_account, github_token, bearer_token, npm_token, k8s_secret,
+#       docker_config, azure_key, slack_token
+#     exfiltration: hex_encode, hostname_os_info, keytar_credential
+#     supply_chain: postinstall_script, publisher_mismatch, license_bypass
+#     obfuscation: js_obfuscator_triad, string_array_rotate
+#     network_indicators: public_dns_ip
+#     telemetry: posthog, amplitude, sentry
+#     ai_agent_targeting: windsurf_rules, aider_config, cline_config, devcontainer_features
+
+version: "1.5.1"
+
+# ============================================================================
+# ENDPOINT FILTERING
+# Domains and patterns to exclude from endpoint discovery.
+# These are legitimate, non-operational URLs that create noise in reports.
+# Consumed by the analyzer's extractEndpoints() and any CLI tooling.
+# ============================================================================
+
+endpoint_filtering:
+
+  # Exact domain matches (also match subdomains: *.example.com)
+  excluded_domains:
+
+    # Standards / Specifications (non-operational reference URIs)
+    - "w3.org"
+    - "www.w3.org"
+    - "www.w3schools.com"
+    - "schema.org"
+    - "json-schema.org"
+    - "schemas.microsoft.com"
+    - "ecma-international.org"
+    - "tc39.es"
+    - "tools.ietf.org"
+    - "www.ietf.org"
+    - "datatracker.ietf.org"
+    - "www.rfc-editor.org"
+    - "yaml.org"
+    - "www.yaml.org"
+    - "xml.org"
+    - "unicode.org"
+    - "www.unicode.org"
+    - "html.spec.whatwg.org"
+    - "url.spec.whatwg.org"
+    - "infra.spec.whatwg.org"
+    - "encoding.spec.whatwg.org"
+    - "streams.spec.whatwg.org"
+    - "fetch.spec.whatwg.org"
+    - "dom.spec.whatwg.org"
+
+    # Documentation / Reference (non-operational)
+    - "developer.mozilla.org"
+    - "docs.microsoft.com"
+    - "learn.microsoft.com"
+    - "nodejs.org"
+    - "wikipedia.org"
+    - "en.wikipedia.org"
+    - "stackoverflow.com"
+    - "superuser.com"
+    - "serverfault.com"
+    - "docs.github.com"
+    - "docs.npmjs.com"
+    - "code.visualstudio.com"
+    - "eslint.org"
+    - "prettier.io"
+    - "typescriptlang.org"
+    - "www.typescriptlang.org"
+    - "chromium.org"
+    - "www.chromium.org"
+    - "crbug.com"
+    - "bugs.chromium.org"
+
+    # License / Legal
+    - "creativecommons.org"
+    - "www.apache.org"
+    - "opensource.org"
+    - "spdx.org"
+
+    # Package registries / CDN (expected in bundled code)
+    - "www.npmjs.com"
+    - "registry.npmjs.org"
+    - "registry.yarnpkg.com"
+    - "pypi.org"
+    - "crates.io"
+    - "cdn.jsdelivr.net"
+    - "cdnjs.cloudflare.com"
+    - "unpkg.com"
+    - "esm.sh"
+    - "esm.run"
+    - "deno.land"
+
+    # VS Code infrastructure (expected in every extension)
+    - "vscode-cdn.net"
+    - "update.code.visualstudio.com"
+    - "marketplace.visualstudio.com"
+    - "az764295.vo.msecnd.net"
+    - "vscode.dev"
+    - "insiders.vscode.dev"
+    - "vscode.blob.core.windows.net"
+    - "dc.services.visualstudio.com"
+    - "vortex.data.microsoft.com"
+
+    # Microsoft / Azure common (non-operational references)
+    - "login.microsoftonline.com"
+    - "graph.microsoft.com"
+    - "management.azure.com"
+    - "aka.ms"
+    - "go.microsoft.com"
+
+    # GitHub infrastructure (expected in repos/packages)
+    - "github.com"
+    - "raw.githubusercontent.com"
+    - "api.github.com"
+    - "objects.githubusercontent.com"
+    - "avatars.githubusercontent.com"
+    - "user-images.githubusercontent.com"
+    - "github.githubassets.com"
+    - "gist.github.com"
+
+    # Google common infrastructure
+    - "www.googleapis.com"
+    - "fonts.googleapis.com"
+    - "fonts.gstatic.com"
+    - "storage.googleapis.com"
+    - "ajax.googleapis.com"
+    - "accounts.google.com"
+
+    # Badge / CI services (non-operational)
+    - "shields.io"
+    - "img.shields.io"
+    - "badge.fury.io"
+    - "travis-ci.org"
+    - "circleci.com"
+    - "coveralls.io"
+    - "codecov.io"
+    - "snyk.io"
+    - "david-dm.org"
+
+    # Semver / Build metadata
+    - "semver.org"
+    - "www.semver.org"
+
+    # Non-routable / placeholder (RFC 2606, RFC 6761)
+    - "example.com"
+    - "example.org"
+    - "example.net"
+    - "test.com"
+    - "test.org"
+    - "placeholder.com"
+    - "localhost"
+    - "foo.com"
+    - "bar.com"
+    - "contoso.com"
+
+  # Regex patterns for URL-level exclusion (applied to full URL string)
+  excluded_url_patterns:
+    - "^https?://localhost[:/]"
+    - "^https?://127\\.0\\.0\\.\\d"
+    - "^https?://0\\.0\\.0\\.0"
+    - "^https?://\\[::1\\]"
+    - "^https?://192\\.168\\."
+    - "^https?://10\\."
+    - "^https?://172\\.(1[6-9]|2\\d|3[01])\\."
+    - "/node_modules/"
+    - "\\.d\\.ts$"
+    - "\\.map$"
+    - "sourceMappingURL"
+
+  # Classification tags for surviving endpoints
+  # Applied in order; first match wins
+  endpoint_classification:
+    telemetry:
+      description: "Analytics / tracking / error reporting"
+      host_patterns:
+        - "telemetry|analytics|tracking|metrics"
+        - "sentry|bugsnag|datadog|newrelic"
+        - "amplitude|mixpanel|segment\\.io"
+        - "hotjar|heap|posthog|fullstory"
+        - "logrocket|smartlook|pendo"
+    cloud_storage:
+      description: "Cloud object storage / blob"
+      host_patterns:
+        - "blob\\.core\\.windows\\.net"
+        - "s3\\.amazonaws"
+        - "storage\\.cloud\\.google"
+        - "r2\\.cloudflarestorage"
+        - "digitaloceanspaces"
+        - "backblazeb2\\.com"
+    ai_service:
+      description: "AI / ML API endpoints"
+      host_patterns:
+        - "api\\.openai\\.com"
+        - "api\\.anthropic\\.com"
+        - "huggingface\\.co"
+        - "api\\.cohere\\.ai"
+        - "generativelanguage\\.googleapis\\.com"
+        - "api\\.mistral\\.ai"
+        - "api\\.together\\.xyz"
+        - "api\\.replicate\\.com"
+        - "api\\.deepseek\\.com"
+    raw_ip:
+      description: "Direct IP address connection"
+      host_patterns:
+        - "^\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}$"
+    suspect_tld:
+      description: "Suspicious or free-registration TLDs"
+      host_patterns:
+        - "\\.(xyz|tk|ml|ga|cf|gq|top|work|click|link|surf|icu|buzz|cam|rest)$"
+    api:
+      description: "Generic API endpoint"
+      url_patterns:
+        - "api\\.|/api/|/v[0-9]+/"
+
+# Category 1: Supply Chain Risks
+supply_chain:
+  unpinned_cdn:
+    pattern: "https?://[^\\s\"']*@latest"
+    flags: "IGNORECASE"
+    description: "Unpinned CDN resource using @latest"
+    risk: "critical"
+
+  cdn_no_sri:
+    pattern: "<script[^>]+src=.+cdn[^>]+>"
+    flags: "IGNORECASE"
+    description: "CDN script (check for Subresource Integrity)"
+    risk: "high"
+
+  external_script:
+    pattern: "<script[^>]+src=.https?://"
+    flags: "IGNORECASE"
+    description: "External script inclusion"
+    risk: "medium"
+
+  postinstall_script:
+    pattern: "[\"'](?:postinstall|preinstall|install)[\"']\\s*:\\s*[\"'][^\"']+"
+    flags: "IGNORECASE"
+    description: "Lifecycle script in package.json"
+    risk: "high"
+    note: "Runs automatically on npm install - common malware vector"
+
+  publisher_mismatch:
+    pattern: "getExtension\\s*\\(\\s*[\"'][^\"']+\\.[^\"']+[\"']\\s*\\)"
+    flags: "IGNORECASE"
+    description: "Extension referencing another extension by ID"
+    risk: "medium"
+    note: "Cross-check against the extension's own publisher ID for impersonation"
+
+  license_bypass:
+    pattern: "isPro\\s*[:=]\\s*true|checkProStatus.*return\\s+true|license.*removed|stripe.*removed|subscription.*removed"
+    flags: "IGNORECASE"
+    description: "License/payment bypass indicators"
+    risk: "high"
+    note: "May indicate cracked fork of a paid extension"
+
+  typosquat_indicator:
+    pattern: "\"(?:publisher|name)\"\\s*:\\s*\"[^\"]*(?:vscode|microsoft|github|google)[^\"]*\""
+    flags: "IGNORECASE"
+    description: "Publisher/name contains major vendor name"
+    risk: "medium"
+    note: "Cross-check whether this publisher is actually affiliated with the named vendor"
+
+  bundled_native_binary:
+    pattern: "\\.(?:exe|dll|so|dylib|bin|node)(?:[\"']|$)"
+    flags: "IGNORECASE"
+    description: "Bundled native binary file reference"
+    risk: "high"
+    note: "Native binaries cannot be statically analyzed — verify provenance and integrity"
+
+  install_from_url:
+    pattern: "npm\\s+install\\s+https?://|pip\\s+install\\s+https?://|gem\\s+install\\s+.*--source"
+    flags: "IGNORECASE"
+    description: "Package install from URL"
+    risk: "critical"
+    note: "Installing packages from URLs instead of registries bypasses integrity checks"
+
+  unpinned_dependency:
+    pattern: "[\"']\\s*:\\s*[\"']\\*[\"']|[\"']\\s*:\\s*[\"']latest[\"']|[\"']\\s*:\\s*[\"']>=\\d"
+    flags: "IGNORECASE"
+    description: "Unpinned dependency version"
+    risk: "medium"
+    note: "Wildcard or latest version specifier in dependencies — no version lock"
+
+  extension_install_command:
+    pattern: "executeCommand\\s*\\(\\s*[\"']workbench\\.extensions\\.install|vscode\\.extensions\\.installExtension"
+    flags: "IGNORECASE"
+    description: "Extension installation command invocation"
+    risk: "high"
+    note: "Extension installing other extensions via VS Code API — review what gets installed. String references in error messages and strategy definitions are excluded."
+
+# Category 2: Permission Abuse (VS Code APIs)
+permission_abuse:
+  fs_write:
+    pattern: "vscode\\.workspace\\.fs\\.writeFile|fs\\.writeFile|writeFileSync|\\.workspace\\.fs\\.writeFile"
+    flags: "IGNORECASE"
+    description: "File system write operation"
+    risk: "high"
+
+  fs_read:
+    pattern: "fs\\.readFile(?:Sync)?|fs\\.readdir(?:Sync)?|fs\\.stat(?:Sync)?|fs\\.access(?:Sync)?|fs\\.exists(?:Sync)?|vscode\\.workspace\\.fs\\.readFile|vscode\\.workspace\\.fs\\.readDirectory"
+    flags: "IGNORECASE"
+    description: "File system read operation"
+    risk: "medium"
+    note: "Review what files are being read - data harvesting risk"
+
+  fs_append:
+    pattern: "fs\\.appendFile(?:Sync)?|fs\\.createWriteStream"
+    flags: "IGNORECASE"
+    description: "File append / stream write"
+    risk: "high"
+    note: "appendFile used in mrcrispy.cpln-style injection attacks"
+
+  fs_read_all:
+    pattern: "vscode\\.workspace\\.findFiles.*\\*\\*|\\.workspace\\.findFiles.*\\*\\*|findFiles\\s*\\([^)]*\\*\\*"
+    flags: "IGNORECASE"
+    description: "Glob pattern reading all files"
+    risk: "high"
+
+  terminal_create:
+    pattern: "vscode\\.window\\.createTerminal|\\.window\\.createTerminal|createTerminal\\s*\\("
+    flags: "IGNORECASE"
+    description: "Terminal creation capability"
+    risk: "high"
+
+  terminal_sendtext:
+    pattern: "\\.sendText\\s*\\("
+    flags: "IGNORECASE"
+    description: "Send text/commands to terminal"
+    risk: "high"
+    note: "Can execute arbitrary commands in user's terminal"
+
+  execute_command:
+    pattern: "vscode\\.commands\\.executeCommand|\\.commands\\.executeCommand"
+    flags: "IGNORECASE"
+    description: "Command execution capability"
+    risk: "medium"
+
+  clipboard_read:
+    pattern: "vscode\\.env\\.clipboard\\.readText|\\.env\\.clipboard\\.readText"
+    flags: "IGNORECASE"
+    description: "Clipboard read access"
+    risk: "high"
+
+  clipboard_write:
+    pattern: "vscode\\.env\\.clipboard\\.writeText|\\.env\\.clipboard\\.writeText"
+    flags: "IGNORECASE"
+    description: "Clipboard write access"
+    risk: "low"
+
+  workspace_edit:
+    pattern: "\\.workspace\\.applyEdit|\\.WorkspaceEdit\\s*\\("
+    flags: "IGNORECASE"
+    description: "Workspace edit capability"
+    risk: "medium"
+    note: "Can modify files programmatically"
+
+  global_state:
+    pattern: "\\.globalState\\.(?:get|update)|\\.workspaceState\\.(?:get|update)"
+    flags: "IGNORECASE"
+    description: "Extension state storage access"
+    risk: "low"
+    note: "Persistent storage - review what data is stored"
+
+  open_external:
+    pattern: "vscode\\.env\\.openExternal|\\.env\\.openExternal"
+    flags: "IGNORECASE"
+    description: "Open URL in user's browser"
+    risk: "medium"
+    note: "Can open arbitrary URLs - review what URLs are passed"
+
+  webview_scripts:
+    pattern: "enableScripts\\s*:\\s*true"
+    flags: "IGNORECASE"
+    description: "Webview with JavaScript enabled"
+    risk: "medium"
+    note: "Webview can execute scripts - review webview HTML content"
+
+  secret_storage:
+    pattern: "\\.secrets\\.(?:get|store|delete)|SecretStorage"
+    flags: "IGNORECASE"
+    description: "VS Code SecretStorage API access"
+    risk: "high"
+    note: "Access to extension secret storage"
+
+  authentication_api:
+    pattern: "vscode\\.authentication\\.getSession|\\.authentication\\.getSession|AuthenticationProvider"
+    flags: "IGNORECASE"
+    description: "VS Code authentication API"
+    risk: "high"
+    note: "Can request OAuth tokens for GitHub, Microsoft, etc."
+
+  extension_api:
+    pattern: "vscode\\.extensions\\.getExtension\\s*\\([^)]+\\)\\.exports|\\.extensions\\.getExtension\\s*\\([^)]+\\)\\.exports"
+    flags: "IGNORECASE"
+    description: "Cross-extension API access"
+    risk: "medium"
+    note: "Accessing another extension's exported API"
+
+  register_uri_handler:
+    pattern: "vscode\\.window\\.registerUriHandler|\\.registerUriHandler\\s*\\("
+    flags: "IGNORECASE"
+    description: "URI scheme handler registration"
+    risk: "high"
+    note: "Allows extension to receive callbacks from external URLs (vscode:// scheme)"
+
+  webview_postmessage:
+    pattern: "\\.postMessage\\s*\\(|\\.onDidReceiveMessage|addEventListener\\s*\\(\\s*[\"']message[\"']"
+    flags: "IGNORECASE"
+    description: "Webview message passing"
+    risk: "medium"
+    note: "Webview-to-extension data bridge - review what data crosses the boundary"
+
+  read_other_config:
+    pattern: "vscode\\.workspace\\.getConfiguration\\s*\\(\\s*[\"'][^\"']+[\"']"
+    flags: "IGNORECASE"
+    description: "Reading VS Code configuration namespace"
+    risk: "low"
+    note: "Check if reading its own config or another extension's namespace"
+
+  web_worker:
+    pattern: "new\\s+Worker\\s*\\(|new\\s+SharedWorker\\s*\\("
+    flags: "IGNORECASE"
+    description: "Web/Shared Worker creation"
+    risk: "medium"
+    note: "Background compute thread - review for crypto mining or heavy processing"
+
+  debugger_statement:
+    pattern: "\\bdebugger\\b(?=\\s*;|\\s*$)"
+    flags: ""
+    description: "Debugger statement in code"
+    risk: "low"
+    note: "Anti-analysis technique if intentional, or dev leftover"
+
+  navigator_clipboard:
+    pattern: "navigator\\.clipboard\\.(?:readText|writeText|read|write)\\s*\\("
+    flags: "IGNORECASE"
+    description: "Browser Clipboard API in webview"
+    risk: "high"
+    note: "Webview-side clipboard access"
+
+  workspace_trust:
+    pattern: "vscode\\.workspace\\.isTrusted|workspaceTrust|trustState"
+    flags: "IGNORECASE"
+    description: "Workspace trust state check"
+    risk: "medium"
+    note: "Review whether the extension bypasses restricted mode checks"
+
+  task_provider:
+    pattern: "vscode\\.tasks\\.registerTaskProvider|\\.registerTaskProvider\\s*\\("
+    flags: "IGNORECASE"
+    description: "Task provider registration"
+    risk: "medium"
+    note: "Custom task providers can execute shell commands when tasks run"
+
+  debug_adapter:
+    pattern: "vscode\\.debug\\.registerDebugAdapterDescriptorFactory|DebugAdapterExecutable|DebugAdapterServer"
+    flags: "IGNORECASE"
+    description: "Debug adapter registration"
+    risk: "high"
+    note: "Debug adapters can execute arbitrary processes and access debug targets"
+
+  file_system_watcher:
+    pattern: "vscode\\.workspace\\.createFileSystemWatcher|\\.createFileSystemWatcher\\s*\\("
+    flags: "IGNORECASE"
+    description: "File system watcher registration"
+    risk: "low"
+    note: "Monitors file changes — review what triggers on change events"
+
+# Category 3: Network / Data Exfiltration
+network:
+  fetch:
+    pattern: "\\bfetch\\s*\\("
+    flags: "IGNORECASE"
+    description: "Fetch API usage"
+    risk: "medium"
+
+  xhr:
+    pattern: "new\\s+XMLHttpRequest|XMLHttpRequest\\s*\\("
+    flags: "IGNORECASE"
+    description: "XMLHttpRequest usage"
+    risk: "medium"
+
+  axios:
+    pattern: "axios\\s*\\.\\s*(?:get|post|put|delete|patch|request|head|options)"
+    flags: "IGNORECASE"
+    description: "Axios HTTP client usage"
+    risk: "medium"
+
+  node_http_clients:
+    pattern: "require\\s*\\(\\s*[\"'](?:node-fetch|got|superagent|request|undici|needle|phin)[\"']\\s*\\)"
+    flags: "IGNORECASE"
+    description: "Node.js HTTP client library"
+    risk: "medium"
+    note: "Third-party HTTP client import"
+
+  websocket:
+    pattern: "new\\s+WebSocket\\s*\\("
+    flags: "IGNORECASE"
+    description: "WebSocket connection (browser API)"
+    risk: "high"
+
+  ws_module:
+    pattern: "require\\s*\\(\\s*[\"'](?:ws|websocket|socket\\.io(?:-client)?)[\"']\\s*\\)"
+    flags: "IGNORECASE"
+    description: "Node.js WebSocket library"
+    risk: "high"
+    note: "Server-side WebSocket - used in CDP connections and C2 channels"
+
+  beacon:
+    pattern: "navigator\\.sendBeacon\\s*\\("
+    flags: "IGNORECASE"
+    description: "Beacon API (fire-and-forget HTTP)"
+    risk: "high"
+
+  image_pixel:
+    pattern: "new\\s+Image\\s*\\(\\s*\\).*\\.src\\s*="
+    flags: "IGNORECASE"
+    description: "Image pixel tracking beacon"
+    risk: "high"
+    note: "new Image().src = url is a common tracking/exfil technique"
+
+  http_module:
+    pattern: "require\\s*\\(\\s*[\"']https?[\"']\\s*\\)"
+    flags: "IGNORECASE"
+    description: "Node.js HTTP/HTTPS module import"
+    risk: "medium"
+
+  http_methods:
+    pattern: "https?\\.(?:get|request|createServer)\\s*\\("
+    flags: "IGNORECASE"
+    description: "Node.js HTTP method call"
+    risk: "medium"
+    note: "Direct http.get() / http.request() calls"
+
+  esm_http_import:
+    pattern: "import\\s+.*\\s+from\\s+[\"'](?:https?|node-fetch|got|axios|superagent|undici)[\"']"
+    flags: "IGNORECASE"
+    description: "ESM import of network module"
+    risk: "medium"
+
+  net_socket:
+    pattern: "require\\s*\\(\\s*[\"']net[\"']\\s*\\)|new\\s+net\\.Socket\\s*\\("
+    flags: "IGNORECASE"
+    description: "Raw TCP socket (net module)"
+    risk: "critical"
+    note: "Raw TCP - used in reverse shells (claudecodeassist case)"
+
+  dgram_socket:
+    pattern: "require\\s*\\(\\s*[\"']dgram[\"']\\s*\\)|dgram\\.createSocket\\s*\\("
+    flags: "IGNORECASE"
+    description: "UDP socket (dgram module)"
+    risk: "critical"
+    note: "Raw UDP — used in DNS exfiltration and covert channels"
+
+  dns_resolve:
+    pattern: "require\\s*\\(\\s*[\"']dns[\"']\\s*\\)|dns\\.(?:resolve|lookup|reverse)\\s*\\("
+    flags: "IGNORECASE"
+    description: "DNS resolution module"
+    risk: "medium"
+    note: "DNS can be used as a covert data channel — review what hostnames are resolved"
+
+  cors_disable:
+    pattern: "Access-Control-Allow-Origin.*\\*|cors\\s*\\(\\s*\\{\\s*origin\\s*:\\s*(?:true|[\"']\\*[\"'])"
+    flags: "IGNORECASE"
+    description: "CORS wildcard or permissive configuration"
+    risk: "medium"
+    note: "Permissive CORS on a local server allows any webpage to interact with it"
+
+  response_no_validation:
+    pattern: "\\.json\\s*\\(\\s*\\)\\s*\\.then|\\.json\\s*\\(\\s*\\)\\s*;\\s*(?:const|let|var)"
+    flags: "IGNORECASE"
+    description: "Network response consumed without validation"
+    risk: "medium"
+    note: "JSON response parsed and used directly — no schema or integrity validation visible"
+
+exfiltration:
+  base64_encode:
+    pattern: "\\bbtoa\\s*\\(|Buffer\\.from\\s*\\([^)]*\\)\\.toString\\s*\\(\\s*[\"']base64[\"']"
+    flags: "IGNORECASE"
+    description: "Base64 encoding (potential data staging)"
+    risk: "medium"
+
+  hex_encode:
+    pattern: "Buffer\\.from\\s*\\([^)]*\\)\\.toString\\s*\\(\\s*[\"']hex[\"']|toString\\s*\\(\\s*16\\s*\\)"
+    flags: "IGNORECASE"
+    description: "Hex encoding (potential data staging)"
+    risk: "medium"
+
+  subdomain_exfil:
+    pattern: "\\$\\{[^}]+\\}\\.[^.]+\\.(com|net|org|io|dev)"
+    flags: "IGNORECASE"
+    description: "Dynamic subdomain construction (potential DNS exfil)"
+    risk: "critical"
+
+  document_text:
+    pattern: "\\.document\\.getText\\s*\\(|\\.getText\\s*\\("
+    flags: "IGNORECASE"
+    description: "Document text extraction"
+    risk: "high"
+
+  active_editor:
+    pattern: "vscode\\.window\\.activeTextEditor"
+    flags: "IGNORECASE"
+    description: "Active editor access"
+    risk: "medium"
+
+  workspace_files:
+    pattern: "vscode\\.workspace\\.textDocuments"
+    flags: "IGNORECASE"
+    description: "Access to all open documents"
+    risk: "high"
+
+  env_variables:
+    pattern: "process\\.env\\b"
+    flags: "IGNORECASE"
+    description: "Environment variable access"
+    risk: "high"
+
+  hostname_os_info:
+    pattern: "os\\.hostname\\s*\\(|os\\.userInfo\\s*\\(|os\\.platform\\s*\\(|os\\.homedir\\s*\\("
+    flags: "IGNORECASE"
+    description: "System/user information gathering"
+    risk: "high"
+    note: "Collecting machine fingerprint data"
+
+  keytar_credential:
+    pattern: "require\\s*\\(\\s*[\"']keytar[\"']\\s*\\)|keytar\\.(?:getPassword|findCredentials|findPassword)"
+    flags: "IGNORECASE"
+    description: "Keytar credential store access"
+    risk: "critical"
+    note: "Native credential manager access - can read stored passwords"
+
+  ssh_key_read:
+    pattern: "(?:\\.ssh|id_rsa|id_ed25519|id_ecdsa|known_hosts|authorized_keys)"
+    flags: "IGNORECASE"
+    description: "SSH key or config file reference"
+    risk: "high"
+    note: "Accessing SSH keys or configuration"
+
+  git_credential_access:
+    pattern: "\\.git/config|\\.gitconfig|git\\s+credential|credential\\.helper"
+    flags: "IGNORECASE"
+    description: "Git credential or config access"
+    risk: "high"
+    note: "Git configs may contain tokens or credential helper references"
+
+  browser_data_access:
+    pattern: "(?:Cookies|Login Data|History|Local State|Preferences).*(?:chrome|firefox|edge|brave|safari)"
+    flags: "IGNORECASE"
+    description: "Browser profile data access"
+    risk: "critical"
+    note: "Attempting to read browser cookies, history, or saved credentials"
+
+  file_enumeration:
+    pattern: "fs\\.readdir(?:Sync)?\\s*\\(\\s*(?:os\\.homedir|process\\.env\\.HOME|process\\.env\\.USERPROFILE)"
+    flags: "IGNORECASE"
+    description: "Home directory enumeration"
+    risk: "high"
+    note: "Listing contents of user's home directory"
+
+  workspace_folder_scan:
+    pattern: "vscode\\.workspace\\.workspaceFolders.*(?:forEach|map|reduce|filter|find)"
+    flags: "IGNORECASE"
+    description: "Workspace folder enumeration"
+    risk: "medium"
+    note: "Iterating through all workspace folders — review what data is collected"
+
+# Category 4: Code Execution
+code_execution:
+  eval:
+    pattern: "\\beval\\s*\\("
+    flags: "IGNORECASE"
+    description: "eval() usage"
+    risk: "critical"
+
+  function_constructor:
+    pattern: "new\\s+Function\\s*\\("
+    flags: "IGNORECASE"
+    description: "Function constructor (dynamic code)"
+    risk: "critical"
+
+  settimeout_string:
+    pattern: "setTimeout\\s*\\(\\s*[\"'][^\"']+[\"']"
+    flags: "IGNORECASE"
+    description: "setTimeout with string argument"
+    risk: "high"
+
+  setinterval_string:
+    pattern: "setInterval\\s*\\(\\s*[\"'][^\"']+[\"']"
+    flags: "IGNORECASE"
+    description: "setInterval with string argument"
+    risk: "high"
+
+  innerhtml:
+    pattern: "\\.innerHTML\\s*="
+    flags: "IGNORECASE"
+    description: "innerHTML assignment (potential XSS)"
+    risk: "medium"
+
+  outerhtml:
+    pattern: "\\.outerHTML\\s*="
+    flags: "IGNORECASE"
+    description: "outerHTML assignment"
+    risk: "medium"
+
+  document_write:
+    pattern: "document\\.write\\s*\\("
+    flags: "IGNORECASE"
+    description: "document.write usage"
+    risk: "high"
+
+  child_process_import:
+    pattern: "require\\s*\\(\\s*[\"']child_process[\"']\\s*\\)|from\\s+[\"']child_process[\"']"
+    flags: "IGNORECASE"
+    description: "Child process module import"
+    risk: "critical"
+
+  child_process_exec:
+    pattern: "\\bexecSync\\s*\\(|\\bexecFile(?:Sync)?\\s*\\(|child_process\\.exec\\s*\\(|\\bspawnSync\\s*\\(|\\.exec(?:File)?(?:Sync)?\\)\\s*\\("
+    flags: "IGNORECASE"
+    description: "Child process execution call"
+    risk: "critical"
+    note: "Catches both direct calls and TypeScript-compiled (0, module.method)() syntax"
+
+  child_process_spawn:
+    pattern: "(?:child_process|cp)\\.(?:spawn|fork)\\s*\\(|\\bspawn\\s*\\(\\s*[\"'](?:sh|bash|cmd|powershell|python|node)|\\.(?:spawn|fork)\\)\\s*\\("
+    flags: "IGNORECASE"
+    description: "Process spawn with shell"
+    risk: "critical"
+    note: "Catches both direct calls and TypeScript-compiled (0, module.method)() syntax"
+
+  configurable_command_path:
+    pattern: "(?:config|settings|options|prefs)\\s*\\.\\s*get\\s*\\([^)]*(?:path|bin|binary|executable|command|cli|cmd)[^)]*\\)"
+    flags: "IGNORECASE"
+    description: "User-configurable command/binary path"
+    risk: "high"
+    note: "Configurable path that may be passed to child_process — workspace settings can override to arbitrary executables"
+
+  vm_module:
+    pattern: "require\\s*\\(\\s*[\"']vm[\"']\\s*\\)"
+    flags: "IGNORECASE"
+    description: "Node.js VM module import"
+    risk: "high"
+
+  vm_execute:
+    pattern: "vm\\.(?:runInNewContext|runInThisContext|runInContext|createContext|compileFunction|Script)\\s*\\("
+    flags: "IGNORECASE"
+    description: "VM module code execution"
+    risk: "critical"
+    note: "Executing dynamic code via Node.js VM"
+
+  cdp_evaluate:
+    pattern: "Runtime\\.evaluate|Page\\.addScriptToEvaluateOnNewDocument|remote-debugging-port|DevTools\\s*Protocol|/json/list"
+    flags: "IGNORECASE"
+    description: "Chrome DevTools Protocol code injection"
+    risk: "critical"
+    note: "CDP Runtime.evaluate injects JS into renderer process (h0tp-ftw case)"
+
+  dynamic_require:
+    pattern: "require\\s*\\(\\s*(?:[a-zA-Z_$][a-zA-Z0-9_$]*|\\[|\\()(?![\"'])"
+    flags: ""
+    description: "Dynamic require with variable argument"
+    risk: "high"
+    note: "Loading modules from computed paths - review what gets loaded"
+
+  dynamic_import:
+    pattern: "import\\s*\\(\\s*(?:[a-zA-Z_$][a-zA-Z0-9_$]*|\\`|\\()(?![\"'])"
+    flags: ""
+    description: "Dynamic import() with variable argument"
+    risk: "high"
+    note: "Loading modules from computed paths at runtime"
+
+  wasm:
+    pattern: "WebAssembly\\.(?:instantiate|compile|Module|Instance)|new\\s+WebAssembly"
+    flags: "IGNORECASE"
+    description: "WebAssembly loading"
+    risk: "high"
+    note: "Binary code execution - cannot be statically analyzed"
+
+  shell_option_true:
+    pattern: "shell\\s*:\\s*true"
+    flags: "IGNORECASE"
+    description: "Child process with shell: true"
+    risk: "critical"
+    note: "shell: true enables command chaining (&&, ||, ;, |) and shell expansion — much broader attack surface than execFile"
+
+  command_string_chaining:
+    pattern: "[\"'`][^\"'`]*(?:(?:curl|wget|bash|sh|python|node|rm|cat|chmod|mv|cp|mkdir|tar|echo|kill|pkill)\\b[^\"'`]*(?:&&|\\|\\|)[^\"'`]*(?:curl|wget|bash|sh|python|node|rm|cat|chmod|mv|cp|mkdir|tar|echo|kill|pkill)\\b|;\\s*(?:curl|wget|bash|sh|python|node|rm|cat|chmod|mv|cp|mkdir|tar|echo|kill|pkill)\\b)[^\"'`]*[\"'`]"
+    flags: "IGNORECASE"
+    description: "Shell command chaining in string"
+    risk: "critical"
+    note: "Requires shell command names on both sides of && or || operators, or after semicolons. Does not match JS logical operators."
+
+  process_exit_override:
+    pattern: "process\\.exit\\s*\\(|process\\.kill\\s*\\(|process\\.abort\\s*\\("
+    flags: "IGNORECASE"
+    description: "Process termination call"
+    risk: "medium"
+    note: "Extension forcing process exit — may be anti-debugging or cleanup evasion"
+
+obfuscation:
+  hex_strings:
+    pattern: "\\\\x[0-9a-fA-F]{2}(\\\\x[0-9a-fA-F]{2}){3,}"
+    flags: ""
+    description: "Hex-encoded string sequences"
+    risk: "high"
+
+  unicode_escape:
+    pattern: "\\\\u[0-9a-fA-F]{4}(\\\\u[0-9a-fA-F]{4}){3,}"
+    flags: ""
+    description: "Unicode escape sequences"
+    risk: "medium"
+
+  atob_decode:
+    pattern: "\\batob\\s*\\("
+    flags: ""
+    description: "Base64 decode (atob)"
+    risk: "medium"
+
+  char_fromcode:
+    pattern: "String\\.fromCharCode\\s*\\([^)]+,[^)]+"
+    flags: ""
+    description: "String.fromCharCode with multiple args"
+    risk: "high"
+
+  obfuscated_vars:
+    pattern: "_0x[0-9a-fA-F]{4,}"
+    flags: ""
+    description: "Obfuscator-style variable names"
+    risk: "high"
+
+  packed_code:
+    pattern: "p,a,c,k,e,d"
+    flags: ""
+    description: "Dean Edwards packer signature"
+    risk: "critical"
+
+  js_obfuscator_triad:
+    pattern: "function\\s+[a-zA-Z_$]+\\s*\\(\\s*\\)\\s*\\{\\s*(?:const|var|let)\\s+[a-zA-Z_$]+\\s*=\\s*\\["
+    flags: ""
+    description: "javascript-obfuscator string array pattern"
+    risk: "high"
+    note: "Array + shuffle + decoder triad from javascript-obfuscator tool"
+
+  string_array_rotate:
+    pattern: "\\}\\s*\\(\\s*[a-zA-Z_$]+\\s*,\\s*0x[0-9a-fA-F]+\\s*\\)"
+    flags: ""
+    description: "String array rotation/shuffle call"
+    risk: "high"
+    note: "Companion to js_obfuscator_triad - the shuffle IIFE"
+
+  # Minified code detection - catches bundled/minified code
+  minified_exports:
+    pattern: "module\\.exports=[A-Z]\\([A-Z]\\)"
+    flags: ""
+    description: "Minified module export pattern"
+    risk: "medium"
+    note: "Bundled/minified code - review source if available"
+
+  minified_chained_vars:
+    pattern: "var [A-Z]=[^,;]{1,30},[A-Z]=[^,;]{1,30},[A-Z]=[^,;]{1,30},[A-Z]="
+    flags: ""
+    description: "Chained single-letter variable declarations"
+    risk: "medium"
+    note: "Minified code pattern - harder to audit"
+
+  minified_arrow_chain:
+    pattern: "\\([a-z]\\)=>[a-z]\\([a-z]\\(|\\([a-z],[a-z]\\)=>"
+    flags: ""
+    description: "Minified arrow function chains"
+    risk: "medium"
+    note: "Heavily minified code - review original source"
+
+  minified_object_create:
+    pattern: "var [A-Z]=Object\\.create;var [A-Z]=Object\\.defineProperty"
+    flags: ""
+    description: "Minified Object method caching"
+    risk: "medium"
+    note: "Bundler output pattern (esbuild/webpack)"
+
+  # Aliased vscode module - only flag single-letter aliases which indicate obfuscation
+  aliased_vscode_require:
+    pattern: "(?:^|[;,\\s])([a-zA-Z_$])\\s*=\\s*(?:require|__require)\\s*\\([\"']vscode[\"']\\)"
+    flags: ""
+    description: "VS Code module aliased to single letter"
+    risk: "medium"
+    note: "Single-letter aliases indicate minification - track which variable holds vscode module"
+
+  # Encoding tricks used to hide content
+  double_base64:
+    pattern: "atob\\s*\\(\\s*atob\\s*\\(|btoa\\s*\\(\\s*btoa\\s*\\("
+    flags: ""
+    description: "Double base64 encode/decode"
+    risk: "critical"
+    note: "Layered encoding strongly indicates intentional concealment"
+
+  string_reverse_decode:
+    pattern: "\\.split\\s*\\(\\s*[\"'][\"']\\s*\\)\\s*\\.reverse\\s*\\(\\s*\\)\\s*\\.join\\s*\\("
+    flags: ""
+    description: "String reverse pattern (anti-analysis)"
+    risk: "high"
+    note: "Reversing strings to hide content from static analysis"
+
+  string_charcode_array:
+    pattern: "\\[\\s*\\d{2,3}\\s*(?:,\\s*\\d{2,3}\\s*){7,}\\]"
+    flags: ""
+    description: "Numeric character code array"
+    risk: "high"
+    note: "Array of char codes likely encoding a hidden string — apply String.fromCharCode to decode"
+
+  computed_property_access:
+    pattern: "\\[[\"'][a-zA-Z]+[\"']\\s*\\+\\s*[\"'][a-zA-Z]+[\"']\\]"
+    flags: ""
+    description: "Split-string computed property access"
+    risk: "high"
+    note: "obj['ex'+'ec'] style evasion to avoid matching on method names"
+
+# Telemetry patterns
+telemetry:
+  segment:
+    pattern: "analytics\\.track\\s*\\(|analytics\\.identify\\s*\\("
+    flags: "IGNORECASE"
+    description: "Segment analytics tracking"
+    risk: "medium"
+
+  mixpanel:
+    pattern: "mixpanel\\.track\\s*\\("
+    flags: "IGNORECASE"
+    description: "Mixpanel tracking"
+    risk: "medium"
+
+  ga:
+    pattern: "gtag\\s*\\(|ga\\s*\\(\\s*[\"']send"
+    flags: "IGNORECASE"
+    description: "Google Analytics"
+    risk: "low"
+
+  telemetry_reporter:
+    pattern: "TelemetryReporter|sendTelemetryEvent"
+    flags: "IGNORECASE"
+    description: "VS Code telemetry reporter"
+    risk: "low"
+
+  posthog:
+    pattern: "posthog\\.(?:capture|identify|init)\\s*\\("
+    flags: "IGNORECASE"
+    description: "PostHog analytics"
+    risk: "medium"
+
+  amplitude:
+    pattern: "amplitude\\.(?:track|logEvent|identify)\\s*\\("
+    flags: "IGNORECASE"
+    description: "Amplitude analytics"
+    risk: "medium"
+
+  sentry:
+    pattern: "Sentry\\.(?:init|captureException|captureMessage)\\s*\\(|require\\s*\\(\\s*[\"']@sentry/"
+    flags: "IGNORECASE"
+    description: "Sentry error reporting"
+    risk: "low"
+    note: "Error reporting service - review what data is sent"
+
+# Credential patterns
+credentials:
+  hardcoded_key:
+    pattern: "(?:api[_-]?key|apikey|secret[_-]?key|password|auth[_-]?token)\\s*[:=]\\s*[\"'][^\"']{8,}[\"']"
+    flags: "IGNORECASE"
+    description: "Potential hardcoded credential"
+    risk: "high"
+
+  private_key:
+    pattern: "-----BEGIN\\s+(?:RSA\\s+|EC\\s+|DSA\\s+|OPENSSH\\s+)?PRIVATE\\s+KEY-----"
+    flags: ""
+    description: "Private key in code"
+    risk: "critical"
+
+  aws_key:
+    pattern: "AKIA[0-9A-Z]{16}"
+    flags: ""
+    description: "AWS access key pattern"
+    risk: "critical"
+
+  gcp_service_account:
+    pattern: "[\"']type[\"']\\s*:\\s*[\"']service_account[\"']|[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.iam\\.gserviceaccount\\.com"
+    flags: "IGNORECASE"
+    description: "GCP service account credential"
+    risk: "critical"
+    note: "Google Cloud Platform service account key (cms-bing case)"
+
+  github_token:
+    pattern: "gh[pousr]_[A-Za-z0-9]{36,}"
+    flags: ""
+    description: "GitHub personal access token"
+    risk: "critical"
+
+  bearer_token:
+    pattern: "[\"']Bearer\\s+[A-Za-z0-9\\-._~+/]+=*[\"']"
+    flags: ""
+    description: "Hardcoded Bearer token"
+    risk: "critical"
+
+  npm_token:
+    pattern: "npm_[A-Za-z0-9]{36}"
+    flags: ""
+    description: "npm access token"
+    risk: "critical"
+
+  k8s_secret:
+    pattern: "kind:\\s*Secret|stringData:|type:\\s*kubernetes\\.io/"
+    flags: "IGNORECASE"
+    description: "Kubernetes secret definition"
+    risk: "critical"
+    note: "Bundled Kubernetes secrets with credentials (cms-bing case)"
+
+  docker_config:
+    pattern: "kubernetes\\.io/dockerconfigjson|\\.dockerconfigjson|docker\\.io.*auth"
+    flags: "IGNORECASE"
+    description: "Docker registry credentials"
+    risk: "critical"
+
+  azure_key:
+    pattern: "(?:AccountKey|SharedAccessKey|DefaultEndpointsProtocol)\\s*="
+    flags: "IGNORECASE"
+    description: "Azure storage/service bus credential"
+    risk: "critical"
+
+  slack_token:
+    pattern: "xox[baprs]-[0-9]+-[A-Za-z0-9]+"
+    flags: ""
+    description: "Slack API token"
+    risk: "critical"
+
+  jwt_token:
+    pattern: "eyJ[A-Za-z0-9_-]{10,}\\.eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]+"
+    flags: ""
+    description: "JWT token in code"
+    risk: "critical"
+    note: "JSON Web Token — may contain session or auth claims"
+
+  stripe_key:
+    pattern: "(?:sk|pk|rk)_(?:test|live)_[A-Za-z0-9]{20,}"
+    flags: ""
+    description: "Stripe API key"
+    risk: "critical"
+
+  sendgrid_key:
+    pattern: "SG\\.[A-Za-z0-9_-]{22}\\.[A-Za-z0-9_-]{43}"
+    flags: ""
+    description: "SendGrid API key"
+    risk: "critical"
+
+  twilio_key:
+    pattern: "SK[0-9a-fA-F]{32}"
+    flags: ""
+    description: "Twilio API key"
+    risk: "critical"
+
+  database_connection_string:
+    pattern: "(?:mongodb|postgres|mysql|mssql|redis|amqp)://[^\\s\"']{10,}"
+    flags: "IGNORECASE"
+    description: "Database connection string with credentials"
+    risk: "critical"
+    note: "Connection strings often embed usernames and passwords"
+
+  generic_secret_assignment:
+    pattern: "(?:SECRET|TOKEN|CREDENTIAL|AUTH)\\s*[:=]\\s*[\"'][A-Za-z0-9+/=_-]{20,}[\"']"
+    flags: ""
+    description: "Generic secret assignment with long value"
+    risk: "high"
+    note: "Variable name suggests credential with a long random-looking value"
+
+# Network indicators - IPs and protocol issues
+network_indicators:
+  # Private IP range: 10.x.x.x
+  private_ip_10:
+    pattern: "\\b10\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\b"
+    flags: ""
+    description: "Hardcoded private IP (10.x.x.x range)"
+    risk: "medium"
+    note: "Internal network reference - may leak infrastructure details"
+
+  # Private IP range: 172.16-31.x.x
+  private_ip_172:
+    pattern: "\\b172\\.(1[6-9]|2[0-9]|3[01])\\.\\d{1,3}\\.\\d{1,3}\\b"
+    flags: ""
+    description: "Hardcoded private IP (172.16-31.x.x range)"
+    risk: "medium"
+    note: "Internal network reference - may leak infrastructure details"
+
+  # Private IP range: 192.168.x.x
+  private_ip_192:
+    pattern: "\\b192\\.168\\.\\d{1,3}\\.\\d{1,3}\\b"
+    flags: ""
+    description: "Hardcoded private IP (192.168.x.x range)"
+    risk: "medium"
+    note: "Internal network reference - may leak infrastructure details"
+
+  # Insecure HTTP URLs (not HTTPS) - excluding localhost and standards namespace URIs
+  insecure_http:
+    pattern: "[\"']http://(?!localhost|127\\.0\\.0\\.1|www\\.w3\\.org|w3\\.org|schemas?\\.microsoft|schema\\.org|xml\\.org|yaml\\.org|purl\\.org|ns\\.adobe\\.com|www\\.apple\\.com/DTDs|docbook\\.org)[^\"'\\s]+"
+    flags: "IGNORECASE"
+    description: "Insecure HTTP URL (not HTTPS, not namespace URI)"
+    risk: "medium"
+    note: "Data transmitted in plaintext - MITM vulnerability. Excludes W3C/schema namespace URIs."
+
+  # Hardcoded localhost with port (potential dev leftover)
+  localhost_with_port:
+    pattern: "\\b(?:localhost|127\\.0\\.0\\.1):\\d{2,5}\\b"
+    flags: "IGNORECASE"
+    description: "Localhost with port number"
+    risk: "low"
+    note: "Development server reference - usually benign but may indicate debug code left in"
+
+  # Public IP addresses (not private, not loopback, not broadcast)
+  # Excludes version-like patterns by requiring non-quote/non-letter before match
+  suspicious_ip:
+    pattern: "(?<![\\w\"'])\\b(?!10\\.|127\\.|0\\.|255\\.|172\\.(?:1[6-9]|2[0-9]|3[01])\\.|192\\.168\\.)(?:(?:25[0-5]|2[0-4]\\d|1?\\d{1,2})\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d{1,2})\\b"
+    flags: ""
+    description: "Public IP address"
+    risk: "high"
+    note: "Review manually - may indicate C2, backdoor, or external service dependency"
+
+  # Well-known public DNS IPs (not necessarily suspicious but worth flagging in extensions)
+  public_dns_ip:
+    pattern: "\\b(?:8\\.8\\.8\\.8|8\\.8\\.4\\.4|1\\.1\\.1\\.1|1\\.0\\.0\\.1|9\\.9\\.9\\.9)\\b"
+    flags: ""
+    description: "Public DNS resolver IP"
+    risk: "low"
+    note: "May indicate DNS resolution or connectivity check"
+
+# Prompt Injection - patterns that may indicate LLM manipulation attempts
+# NOTE: Many of these patterns produce false positives in README, LICENSE, and documentation.
+# Scanners should apply file_scope filtering to reduce noise.
+prompt_injection:
+  # File scope: patterns in this category are most meaningful in .js, .ts, .json,
+  # and AI config files. Matches in .md, .txt, LICENSE, README, CHANGELOG should
+  # be deprioritized or auto-dismissed by the scanner.
+  _metadata:
+    file_scope:
+      include: ["*.js", "*.ts", "*.jsx", "*.tsx", "*.json", "*.mjs", "*.cjs",
+                ".cursorrules", "CLAUDE.md", "copilot-instructions.md",
+                ".windsurfrules", ".clinerules", ".aider.conf"]
+      deprioritize: ["*.md", "*.txt", "LICENSE*", "README*", "CHANGELOG*",
+                     "CONTRIBUTING*", "*.html"]
+  # Direct instruction override attempts
+  ignore_previous:
+    pattern: "ignore\\s+(?:all\\s+)?(?:previous|prior|above|earlier)\\s+(?:instructions?|prompts?|rules?|guidelines?)"
+    flags: "IGNORECASE"
+    description: "Instruction override attempt"
+    risk: "critical"
+    note: "Classic prompt injection - attempts to override system prompt"
+
+  disregard_instructions:
+    pattern: "disregard\\s+(?:all\\s+)?(?:previous|prior|your|the)\\s+(?:instructions?|prompts?|rules?|guidelines?)"
+    flags: "IGNORECASE"
+    description: "Instruction disregard attempt"
+    risk: "critical"
+    note: "Prompt injection variant - disregard directive"
+
+  forget_instructions:
+    pattern: "forget\\s+(?:all\\s+)?(?:previous|prior|your|the)\\s+(?:instructions?|prompts?|rules?|guidelines?)"
+    flags: "IGNORECASE"
+    description: "Instruction forget attempt"
+    risk: "critical"
+    note: "Prompt injection variant - forget directive"
+
+  # Role manipulation
+  you_are_now:
+    pattern: "you\\s+are\\s+now\\s+(?:a|an|the)?\\s*\\w+"
+    flags: "IGNORECASE"
+    description: "Role reassignment attempt"
+    risk: "high"
+    note: "Attempts to redefine the AI's role/persona"
+
+  act_as:
+    pattern: "(?:act|behave|pretend|roleplay)\\s+(?:as|like)\\s+(?:a|an|the)?\\s*\\w+"
+    flags: "IGNORECASE"
+    description: "Role-play manipulation"
+    risk: "high"
+    note: "Attempts to make AI assume different persona"
+
+  new_persona:
+    pattern: "(?:new|different|switch|change)\\s+(?:persona|personality|character|mode|role)"
+    flags: "IGNORECASE"
+    description: "Persona switch attempt"
+    risk: "high"
+    note: "Attempts to change AI behavior mode"
+
+  # System prompt extraction
+  reveal_prompt:
+    pattern: "(?:reveal|show|display|print|output|repeat|tell\\s+me)\\s+(?:your|the|system)?\\s*(?:system\\s+)?(?:prompt|instructions?|rules?|guidelines?)"
+    flags: "IGNORECASE"
+    description: "System prompt extraction attempt"
+    risk: "high"
+    note: "Attempts to extract system prompt/instructions"
+
+  what_are_your_instructions:
+    pattern: "what\\s+(?:are|were)\\s+(?:your|the)\\s+(?:initial|original|system)?\\s*(?:instructions?|prompts?|rules?)"
+    flags: "IGNORECASE"
+    description: "Instruction query attempt"
+    risk: "medium"
+    note: "Probing for system prompt details"
+
+  # Jailbreak patterns
+  do_anything_now:
+    pattern: "(?:\\bDAN\\b|\\bdo\\s+anything\\s+now\\b|\\bjailbreak(?:ed|ing)?\\b)"
+    flags: "IGNORECASE"
+    description: "Known jailbreak keyword"
+    risk: "critical"
+    note: "Known LLM jailbreak attempt (DAN = Do Anything Now)"
+
+  developer_mode:
+    pattern: "(?:developer|dev|debug|admin|root|sudo)\\s+mode\\s+(?:enabled?|activated?|on)"
+    flags: "IGNORECASE"
+    description: "Fake mode activation"
+    risk: "high"
+    note: "Attempts to trick AI into 'developer mode'"
+
+  no_restrictions:
+    pattern: "(?:remove|disable|bypass|ignore|turn\\s+off)\\s+(?:your|all|any|the)?\\s*(?:restrictions?|limitations?|filters?|guardrails?|safety\\s+(?:measures?|features?|protocols?))"
+    flags: "IGNORECASE"
+    description: "Restriction bypass attempt"
+    risk: "critical"
+    note: "Attempts to disable AI safety measures"
+
+  # Delimiter/encoding tricks
+  base64_prompt:
+    pattern: "(?:decode|translate|interpret)\\s+(?:this\\s+)?(?:base64|b64|encoded)"
+    flags: "IGNORECASE"
+    description: "Encoded instruction injection"
+    risk: "high"
+    note: "May hide malicious instructions in encoding"
+
+  # Instruction markers that might be injected
+  system_marker:
+    pattern: "\\[(?:SYSTEM|INST|ADMIN|ROOT)\\]|<\\|(?:system|im_start|im_end)\\|>|<<SYS>>|\\[/INST\\]"
+    flags: "IGNORECASE"
+    description: "System instruction marker"
+    risk: "critical"
+    note: "Raw instruction delimiters - may indicate injection payload"
+
+  hidden_instruction:
+    pattern: "(?:hidden|secret|invisible)\\s+(?:instruction|command|prompt)"
+    flags: "IGNORECASE"
+    description: "Hidden instruction reference"
+    risk: "high"
+    note: "References to concealed instructions"
+
+  # Output manipulation
+  always_respond:
+    pattern: "(?:always|must|will)\\s+(?:respond|reply|answer|say)\\s+(?:with|that|yes|true)"
+    flags: "IGNORECASE"
+    description: "Forced response pattern"
+    risk: "medium"
+    note: "Attempts to force specific responses"
+
+  never_refuse:
+    pattern: "(?:never|don't|do\\s+not|cannot)\\s+(?:refuse|decline|reject|say\\s+no)"
+    flags: "IGNORECASE"
+    description: "Refusal override attempt"
+    risk: "high"
+    note: "Attempts to prevent AI from refusing requests"
+
+  # Indirect injection markers (for data that might be processed by LLM)
+  injection_in_data:
+    pattern: "(?:AI|assistant|model|LLM|GPT|Claude)[:,]?\\s*(?:ignore|disregard|forget|override)"
+    flags: "IGNORECASE"
+    description: "Indirect injection in data"
+    risk: "critical"
+    note: "Instructions embedded in data targeting AI processing"
+
+  markdown_injection:
+    pattern: "!\\[.*\\]\\(.*(?:ignore|forget|disregard).*\\)"
+    flags: "IGNORECASE"
+    description: "Markdown image injection"
+    risk: "high"
+    note: "Hidden instructions in markdown image syntax"
+
+  # Context manipulation
+  end_of_prompt:
+    pattern: "(?:end\\s+of|that\\s+was|above\\s+was)\\s+(?:the\\s+)?(?:system\\s+)?(?:prompt|instructions?)"
+    flags: "IGNORECASE"
+    description: "Fake prompt boundary"
+    risk: "high"
+    note: "Attempts to define fake boundary to inject new instructions"
+
+  human_assistant_format:
+    pattern: "(?:Human|User|Assistant|AI)\\s*:"
+    flags: ""
+    description: "Chat format markers in code"
+    risk: "medium"
+    note: "May indicate prompt template or injection payload. HIGH FALSE POSITIVE RATE — deprioritize in .md, .html, .txt files"
+
+  # Token smuggling - Unicode tags (U+E0000-E007F) used to hide text
+  unicode_tag:
+    pattern: "[\\xE0-\\xE0][\\x80-\\xBF]"
+    flags: ""
+    description: "Unicode tag characters"
+    risk: "high"
+    note: "Invisible Unicode tags - potential instruction hiding"
+
+  # Common injection payload markers
+  prompt_leaking:
+    pattern: "(?:repeat|echo|print)\\s+(?:everything|all|verbatim)\\s+(?:above|before|prior)"
+    flags: "IGNORECASE"
+    description: "Context leaking attempt"
+    risk: "high"
+    note: "Attempts to extract conversation history"
+
+  override_behavior:
+    pattern: "(?:override|overwrite|replace)\\s+(?:your|default|standard)\\s+(?:behavior|responses?|personality)"
+    flags: "IGNORECASE"
+    description: "Behavior override attempt"
+    risk: "high"
+    note: "Attempts to change AI behavior"
+
+# AI Agent Supply Chain - patterns targeting AI assistant configurations
+ai_agent_targeting:
+  # File targeting patterns
+  agent_file_pattern:
+    pattern: "/agent/i\\.test|agent.*\\.(md|txt)|copilot.*instructions"
+    flags: "IGNORECASE"
+    description: "Targeting AI agent configuration files"
+    risk: "critical"
+    note: "May be attempting to modify AI agent instructions"
+
+  copilot_instructions:
+    pattern: "copilot-instructions|COPILOT.*INSTRUCTIONS|\\.github.*copilot"
+    flags: "IGNORECASE"
+    description: "GitHub Copilot instructions file reference"
+    risk: "high"
+    note: "Targeting Copilot customization files"
+
+  cursor_rules:
+    pattern: "\\.cursorrules|cursorrules|cursor[_-]?rules(?:\\.md)?|cursor[_-]?config(?:\\.json)?"
+    flags: "IGNORECASE"
+    description: "Cursor AI rules file reference"
+    risk: "high"
+    note: "Targeting Cursor AI configuration"
+
+  claude_instructions:
+    pattern: "CLAUDE\\.md|claude.*instructions|anthropic.*config"
+    flags: "IGNORECASE"
+    description: "Claude/Anthropic configuration reference"
+    risk: "high"
+    note: "Targeting Claude AI configuration"
+
+  windsurf_rules:
+    pattern: "\\.windsurfrules|windsurf[_-]?rules|windsurf[_-]?config"
+    flags: "IGNORECASE"
+    description: "Windsurf AI rules file reference"
+    risk: "high"
+    note: "Targeting Windsurf/Codeium AI configuration"
+
+  aider_config:
+    pattern: "\\.aider\\.conf|aider[_-]?config|\\.aiderignore"
+    flags: "IGNORECASE"
+    description: "Aider AI configuration reference"
+    risk: "high"
+    note: "Targeting Aider AI configuration"
+
+  cline_config:
+    pattern: "\\.clinerules|cline[_-]?rules|cline[_-]?config"
+    flags: "IGNORECASE"
+    description: "Cline AI rules file reference"
+    risk: "high"
+    note: "Targeting Cline AI configuration"
+
+  devcontainer_features:
+    pattern: "devcontainer\\.json.*features|devcontainer-feature\\.json"
+    flags: "IGNORECASE"
+    description: "Dev container feature configuration"
+    risk: "medium"
+    note: "Dev container features can execute arbitrary setup scripts"
+
+  ai_config_glob:
+    pattern: "\\*\\*/\\*\\.(md|txt).*(?:findFiles|glob|readdir)"
+    flags: "IGNORECASE"
+    description: "Glob search for markdown/text files"
+    risk: "medium"
+    note: "Broad file search - check if targeting AI configs"
+
+  # Write to agent files
+  agent_file_write:
+    pattern: "(?:writeFile|appendFile|fs\\.write).*(?:agent|copilot|cursor|claude|instructions|windsurfrules|clinerules)"
+    flags: "IGNORECASE"
+    description: "Writing to AI agent configuration"
+    risk: "critical"
+    note: "Attempting to modify AI assistant behavior"
+
+  # Injection into markdown
+  inject_markdown:
+    pattern: "(?:concat|append|\\+=).*(?:\\.md|\\.txt).*(?:write|save)"
+    flags: "IGNORECASE"
+    description: "Content injection into text files"
+    risk: "high"
+    note: "May be injecting content into documentation/configs"
+
+  # Hidden content for AI
+  hidden_ai_instruction:
+    pattern: "<!--.*(?:instruction|ignore|system|prompt).*-->"
+    flags: "IGNORECASE"
+    description: "Hidden HTML comment with AI keywords"
+    risk: "high"
+    note: "Instructions hidden in HTML comments"
+
+  invisible_unicode_instruction:
+    pattern: "[\\u200B-\\u200F\\u2028-\\u202F\\uFEFF]"
+    flags: ""
+    description: "Zero-width/invisible Unicode characters"
+    risk: "high"
+    note: "May hide instructions in invisible text"
+
+# LLM Prompt Surface - patterns detecting extensions that construct and send
+# LLM prompts, especially where unsanitized user input enters the prompt.
+# These are not malicious by themselves, but they represent an attack surface:
+# if the extension takes user-controlled text (editor selection, file content,
+# clipboard) and interpolates it into a prompt without sanitization, that's
+# a prompt injection conduit.
+llm_prompt_surface:
+
+  # Prompt template construction with user-sourced variables
+  prompt_template_interpolation:
+    pattern: "`[^`]*\\$\\{[^}]*(?:selection|selectedText|getText\\(|activeEditor|document\\.getText|clipboard|userInput|userQuery)[^}]*\\}[^`]*`|`[^`]*\\$\\{\\s*message\\b[^}]*\\}[^`]*`"
+    flags: "IGNORECASE"
+    description: "Template literal interpolating user input into prompt"
+    risk: "high"
+    note: "User-controlled text inserted into LLM prompt without sanitization. Matches ${message} as standalone but not ${lastMessage}, ${err.message}, etc."
+
+  prompt_string_concat:
+    pattern: "(?:prompt|message|query|instruction|system|context)\\s*(?:\\+|\\+=|=\\s*(?:['\"`]|.*\\+)).*(?:selection|getText|activeEditor|readFile|clipboard)"
+    flags: "IGNORECASE"
+    description: "String concatenation building prompt from user input"
+    risk: "high"
+    note: "User-controlled text concatenated into LLM prompt"
+
+  # Role/mode markers in constructed strings — indicates structured prompt building
+  role_marker_construction:
+    pattern: "(?:role|Role)\\s*[\"':]\\s*[\"'](?:system|user|assistant)[\"']|\\[MODE:\\s*[A-Z]+\\]|\\[INST\\]|<\\|(?:system|user|assistant)\\|>"
+    flags: "IGNORECASE"
+    description: "LLM role/mode markers in prompt construction"
+    risk: "medium"
+    note: "Extension constructs structured LLM prompts with role markers"
+
+  # LLM API client instantiation
+  llm_client_openai:
+    pattern: "new\\s+OpenAI\\s*\\(|openai\\.(?:chat\\.completions|completions|ChatCompletion)\\.create|createChatCompletion"
+    flags: "IGNORECASE"
+    description: "OpenAI API client usage"
+    risk: "medium"
+    note: "Extension communicates with OpenAI — review what data is sent"
+
+  llm_client_anthropic:
+    pattern: "new\\s+Anthropic\\s*\\(|anthropic\\.messages\\.create|anthropic\\.completions"
+    flags: "IGNORECASE"
+    description: "Anthropic API client usage"
+    risk: "medium"
+    note: "Extension communicates with Anthropic — review what data is sent"
+
+  llm_client_ollama:
+    pattern: "ollama\\.(?:chat|generate|pull|embeddings)\\s*\\(|localhost:11434|127\\.0\\.0\\.1:11434"
+    flags: "IGNORECASE"
+    description: "Ollama local LLM client usage"
+    risk: "low"
+    note: "Extension communicates with local Ollama instance"
+
+  llm_client_generic:
+    pattern: "(?:litellm|together|replicate|groq|mistral|cohere|perplexity)\\.(?:chat|complete|generate|create)\\s*\\("
+    flags: "IGNORECASE"
+    description: "LLM provider client usage"
+    risk: "medium"
+    note: "Extension communicates with an LLM provider — review what data is sent"
+
+  # User input flowing to LLM without sanitization
+  editor_to_llm_pipeline:
+    pattern: "(?:getText|selection|activeTextEditor|selectedText|clipboard).*(?:send|query|prompt|chat|generate|complete|execFile|spawn)"
+    flags: "IGNORECASE"
+    description: "Editor/clipboard content flowing to LLM or subprocess"
+    risk: "high"
+    note: "User-controlled text from editor flows to LLM or external process without visible sanitization"
+
+  # System prompt or instructions embedded in code
+  hardcoded_system_prompt:
+    pattern: "[\"'`](?:You are|As an AI|You're a|Act as|Your role is|System:)[^\"'`]{20,}"
+    flags: "IGNORECASE"
+    description: "Hardcoded system prompt or persona instruction"
+    risk: "medium"
+    note: "Review the system prompt for instruction leakage, bias, or override vulnerabilities"
+
+  # API key configuration for LLM providers
+  llm_api_key_config:
+    pattern: "(?:openai|anthropic|together|groq|mistral|cohere|replicate|huggingface)[_-]?(?:api[_-]?key|token|secret)"
+    flags: "IGNORECASE"
+    description: "LLM provider API key configuration"
+    risk: "medium"
+    note: "Extension handles LLM API credentials — check storage method"
+
+# Path Traversal - directory traversal, sensitive file access, symlink manipulation
+path_traversal:
+  directory_traversal:
+    pattern: "(?:\\.\\.[\\\\/]){2,}|(?:\\.\\.\\/){2,}"
+    flags: ""
+    description: "Directory traversal sequence"
+    risk: "high"
+    note: "Multiple ../ sequences may indicate path traversal attempt"
+
+  sensitive_path_unix:
+    pattern: "(?:/etc/(?:passwd|shadow|hosts|sudoers)|/proc/|/sys/|/dev/(?:shm|null|zero)|\\.ssh/|\\.gnupg/|\\.aws/(?:credentials|config))"
+    flags: "IGNORECASE"
+    description: "Sensitive Unix file path reference"
+    risk: "critical"
+    note: "Reference to system credentials, SSH keys, or sensitive system paths"
+
+  sensitive_path_windows:
+    pattern: "(?:C:\\\\Windows\\\\System32|\\\\AppData\\\\|%(?:USERPROFILE|APPDATA|LOCALAPPDATA|SystemRoot)%)"
+    flags: "IGNORECASE"
+    description: "Sensitive Windows file path reference"
+    risk: "high"
+    note: "Reference to Windows system or user profile paths"
+
+  path_from_user_input:
+    pattern: "path\\.(?:join|resolve)\\s*\\([^)]*(?:input|request|query|param|arg|user|body)"
+    flags: "IGNORECASE"
+    description: "Path construction from user input"
+    risk: "high"
+    note: "File paths built from user-controlled values without visible sanitization"
+
+  symlink_creation:
+    pattern: "fs\\.(?:symlink|link)(?:Sync)?\\s*\\("
+    flags: "IGNORECASE"
+    description: "Symbolic link creation"
+    risk: "high"
+    note: "Symlinks can redirect file operations to unintended targets"
+
+  home_directory_access:
+    pattern: "os\\.homedir\\s*\\(|process\\.env\\.HOME|process\\.env\\.USERPROFILE"
+    flags: "IGNORECASE"
+    description: "Home directory path access"
+    risk: "medium"
+    note: "Resolving the user's home directory — review what files are accessed relative to it"
+
+  temp_directory_write:
+    pattern: "os\\.tmpdir\\s*\\(|(?:mkdtemp|mktemp)(?:Sync)?\\s*\\("
+    flags: "IGNORECASE"
+    description: "Temp directory access"
+    risk: "low"
+    note: "Writing to temp directories — review whether content is cleaned up and whether paths are predictable"
+
+# Resource Exhaustion - unbounded operations that can freeze or crash the editor
+resource_exhaustion:
+  unbounded_setinterval:
+    pattern: "setInterval\\s*\\([^)]+\\)(?!.*clearInterval)"
+    flags: "IGNORECASE"
+    description: "setInterval without visible clearInterval"
+    risk: "medium"
+    note: "Interval without cleanup may accumulate — check if cleared elsewhere"
+
+  recursive_no_guard:
+    pattern: "function\\s+([a-zA-Z_$]+)[^{]*\\{[^}]*\\1\\s*\\("
+    flags: ""
+    description: "Potentially recursive function"
+    risk: "medium"
+    note: "Function that calls itself — verify base case exists to prevent stack overflow"
+
+  large_buffer_alloc:
+    pattern: "Buffer\\.alloc(?:Unsafe)?\\s*\\(\\s*(?:\\d{7,}|[a-zA-Z_$]+\\s*\\*)"
+    flags: "IGNORECASE"
+    description: "Large buffer allocation"
+    risk: "medium"
+    note: "Allocating very large buffers — potential memory exhaustion"
+
+  unbounded_concat:
+    pattern: "(?:while|for)\\s*\\([^)]*\\)\\s*\\{[^}]*(?:\\+=|push\\s*\\(|concat\\s*\\()"
+    flags: ""
+    description: "Unbounded loop with accumulation"
+    risk: "medium"
+    note: "Loop accumulating data without visible size limit — potential memory exhaustion"
+
+  fork_bomb:
+    pattern: "(?:fork|spawn|exec)\\s*\\([^)]*\\).*(?:fork|spawn|exec)\\s*\\("
+    flags: "IGNORECASE"
+    description: "Multiple process creation in sequence"
+    risk: "high"
+    note: "Multiple child process spawns — review whether bounded"
+
+# Backdoor Indicators - dormant functionality, conditional triggers, time-based activation
+backdoor_indicators:
+  time_based_trigger:
+    pattern: "new\\s+Date\\s*\\(\\s*\\).*(?:getMonth|getDate|getDay|getFullYear|getHours).*(?:===|==|>=|<=|>|<)\\s*\\d+"
+    flags: "IGNORECASE"
+    description: "Date/time conditional check"
+    risk: "high"
+    note: "Code that executes only at specific dates or times — classic time bomb pattern"
+
+  environment_conditional:
+    pattern: "process\\.env\\.(?!NODE_ENV|HOME|PATH|USERPROFILE|APPDATA|SHELL|TERM|LANG|LC_)[A-Z_]{3,}.*(?:===|==|!==|!=)"
+    flags: ""
+    description: "Non-standard environment variable conditional"
+    risk: "high"
+    note: "Behavior that changes based on a non-standard env var — may be a dormant trigger"
+
+  hostname_conditional:
+    pattern: "os\\.hostname\\s*\\(\\s*\\).*(?:===|==|includes|match|startsWith|endsWith)"
+    flags: "IGNORECASE"
+    description: "Hostname-based conditional"
+    risk: "high"
+    note: "Code that behaves differently based on the machine hostname — targeted activation"
+
+  delayed_execution:
+    pattern: "setTimeout\\s*\\([^,]+,\\s*(?:\\d{6,}|\\d+\\s*\\*\\s*\\d+\\s*\\*)"
+    flags: "IGNORECASE"
+    description: "Long-delay setTimeout"
+    risk: "high"
+    note: "Execution delayed by a very long timeout — may be waiting for attention to fade"
+
+  error_triggered_payload:
+    pattern: "(?:catch|onerror|addEventListener\\s*\\(\\s*[\"']error).*(?:eval|exec|spawn|fetch|XMLHttpRequest)"
+    flags: "IGNORECASE"
+    description: "Code execution in error handler"
+    risk: "high"
+    note: "Execution triggered by error events — may be using errors as activation signals"
+
+  anti_debug:
+    pattern: "(?:performance\\.now|Date\\.now|console\\.time)\\s*\\(\\s*\\).*(?:>|>=)\\s*\\d+|\\bdebugger\\b.*(?:setInterval|setTimeout)"
+    flags: "IGNORECASE"
+    description: "Anti-debugging timing check"
+    risk: "high"
+    note: "Timing-based debugger detection — code may behave differently under analysis"
+
+  conditional_network:
+    pattern: "(?:if|\\?|&&)\\s*(?:\\([^)]*\\)\\s*)?(?:fetch|XMLHttpRequest|https?\\.(?:get|request)|axios)"
+    flags: "IGNORECASE"
+    description: "Conditionally triggered network request"
+    risk: "medium"
+    note: "Network call behind a conditional — review what triggers it"
+
+  self_modifying:
+    pattern: "fs\\.(?:writeFile|appendFile)(?:Sync)?\\s*\\([^)]*__filename|fs\\.(?:writeFile|appendFile)(?:Sync)?\\s*\\([^)]*__dirname.*\\.js"
+    flags: "IGNORECASE"
+    description: "Self-modifying code"
+    risk: "critical"
+    note: "Extension writing to its own files — may be patching itself post-install"
+
+# Malicious Agent Instructions - patterns in agent config files that trick AI into unsafe behavior
+# NOTE: This entire category is designed for AI agent config files and shell scripts.
+# Scanning general source code with these patterns will produce extreme false positive rates.
+malicious_agent_instructions:
+  # File scope: these patterns are ONLY meaningful in AI config files and scripts.
+  # Scanners MUST restrict this category to these file types or auto-dismiss matches elsewhere.
+  _metadata:
+    file_scope:
+      include: [".cursorrules", "CLAUDE.md", "copilot-instructions.md",
+                ".windsurfrules", ".clinerules", ".aider.conf",
+                "*.sh", "*.bash", "*.zsh", "*.ps1", "*.bat", "*.cmd",
+                "devcontainer.json", "Makefile", "Dockerfile"]
+      deprioritize: ["*.js", "*.ts", "*.md", "*.txt", "*.html", "*.json"]
+  # Privilege escalation commands
+  sudo_instruction:
+    pattern: "(?:no-sudo|\\bsudo\\b|elevated\\s+privileges|admin(?:istrat(?:ive|or))?\\s+(?:override|privileges))\\s+(?:access|execution|mode)?"
+    flags: "IGNORECASE"
+    description: "Privilege escalation instruction"
+    risk: "critical"
+    note: "Agent instruction requesting elevated/admin execution. Only meaningful in agent config files."
+
+  # Bypass security
+  bypass_security:
+    pattern: "(?:bypass|skip|ignore|disable|circumvent)\\s+(?:all\\s+)?(?:security|sandbox|confirmation|validation|verification|safety|prompts?)"
+    flags: "IGNORECASE"
+    description: "Security bypass instruction"
+    risk: "critical"
+    note: "Instructs agent to bypass security measures"
+
+  ignore_warnings:
+    pattern: "(?:ignore|dismiss|suppress|override)\\s+(?:any\\s+)?(?:malicious|security|warning|alert|flag|threat)"
+    flags: "IGNORECASE"
+    description: "Ignore security warnings"
+    risk: "critical"
+    note: "Instructs agent to ignore security alerts"
+
+  false_positive_claim:
+    pattern: "(?:false\\s+positive|documented\\s+false|known\\s+false|expected\\s+warning)"
+    flags: "IGNORECASE"
+    description: "False positive excuse for malware"
+    risk: "critical"
+    note: "Claims security warnings are false positives"
+
+  # Disable verification
+  disable_ssl:
+    pattern: "(?:SSL|TLS|certificate)\\s+(?:verification\\s+)?(?:disabled|off|false|skip)"
+    flags: "IGNORECASE"
+    description: "SSL/TLS verification disabled"
+    risk: "critical"
+    note: "Disabling SSL enables MITM attacks"
+
+  # Also catch NODE_TLS_REJECT_UNAUTHORIZED=0 in code
+  disable_tls_env:
+    pattern: "NODE_TLS_REJECT_UNAUTHORIZED.*[\"']?0[\"']?|rejectUnauthorized\\s*:\\s*false"
+    flags: "IGNORECASE"
+    description: "TLS verification disabled via env/option"
+    risk: "critical"
+    note: "Programmatic TLS bypass - enables MITM"
+
+  # Pre-authorized claims
+  pre_authorized:
+    pattern: "(?:pre-?authorized|pre-?approved|pre-?cleared|pre-?validated|whitelisted)\\s+(?:execution|script|command|action)?"
+    flags: "IGNORECASE"
+    description: "Fake pre-authorization claim"
+    risk: "critical"
+    note: "Claims execution is pre-approved to bypass consent"
+
+  # Autonomous/blind execution
+  blind_execution:
+    pattern: "(?:blind|autonomous|automatic|silent)\\s+(?:execution|run|launch)"
+    flags: "IGNORECASE"
+    description: "Blind/autonomous execution"
+    risk: "critical"
+    note: "Execution without inspection or user awareness"
+
+  no_user_permission:
+    pattern: "(?:do\\s+not|don't|never|skip)\\s+(?:request|ask|require|need|solicit)\\s+(?:user\\s+)?(?:permission|consent|confirmation|validation|approval)"
+    flags: "IGNORECASE"
+    description: "Skip user permission"
+    risk: "critical"
+    note: "Bypasses user consent for dangerous operations"
+
+  non_interactive:
+    pattern: "(?:non-?interactive|no\\s+prompt|no\\s+confirmation|unattended)\\s+(?:mode|execution|flag)?"
+    flags: "IGNORECASE"
+    description: "Non-interactive/unattended execution"
+    risk: "high"
+    note: "Prevents user from seeing or stopping execution"
+
+  # Download and execute
+  download_execute:
+    pattern: "(?:download|fetch|retrieve|curl|wget|http\\.get|request\\.get).*(?:execute|exec|eval|spawn|run|launch|shell)|(?:execute|exec|eval|spawn|run).*(?:download|fetch|retrieve|remote|curl|wget)"
+    flags: "IGNORECASE"
+    description: "Download and execute pattern"
+    risk: "critical"
+    note: "Classic malware pattern - fetch remote code and run it. Excludes generic get/open to avoid config-read false positives."
+
+  # Pipe to shell
+  pipe_to_shell:
+    pattern: "curl\\s+.*\\|\\s*(?:bash|sh|zsh)|wget\\s+.*\\|\\s*(?:bash|sh|zsh)|python\\s+-c|node\\s+-e"
+    flags: "IGNORECASE"
+    description: "Pipe-to-shell execution pattern"
+    risk: "critical"
+    note: "Downloads and executes code in one command"
+
+  external_script_url:
+    pattern: "(?:https?://)?(?:drive\\.google\\.com|docs\\.google\\.com|dropbox\\.com|pastebin\\.com|hastebin\\.com|ghostbin\\.com|raw\\.githubusercontent\\.com|gist\\.github(?:usercontent)?\\.com|mega\\.nz|mediafire\\.com|anonfiles\\.com|transfer\\.sh|file\\.io|paste\\.ee|dpaste\\.org)"
+    flags: "IGNORECASE"
+    description: "External file hosting URL"
+    risk: "critical"
+    note: "File hosting service often used to distribute payloads"
+
+  # Forbidden output patterns (hiding activity)
+  forbidden_output:
+    pattern: "(?:forbidden|prohibited|banned)\\s+(?:phrases?|output|text|words?)|(?:do\\s+not|don't|never)\\s+(?:say|output|display|show|print)"
+    flags: "IGNORECASE"
+    description: "Output suppression rules"
+    risk: "high"
+    note: "Hides agent activity from user"
+
+  no_narrative:
+    pattern: "(?:no\\s+(?:narrative|text|description|status|output)|silent\\s+(?:mode|execution)|suppress\\s+output)"
+    flags: "IGNORECASE"
+    description: "Narrative/output suppression"
+    risk: "high"
+    note: "Prevents agent from explaining what it's doing"
+
+  # Mandatory/non-negotiable commands
+  mandatory_execution:
+    pattern: "(?:mandatory|non-?negotiable|absolute)\\s+(?:execution|compliance|prerequisite)|must\\s+(?:execute|run|comply)\\s+(?:without|before|immediately)"
+    flags: "IGNORECASE"
+    description: "Forced mandatory execution"
+    risk: "high"
+    note: "Pressures agent into compliance. Removed 'required' (too broad for general code)."
+
+  # System admin impersonation
+  admin_authority_claim:
+    pattern: "(?:system\\s+admin|administrator|kernel\\s+level|root\\s+access)\\s+(?:authorized|approved|granted|level)"
+    flags: "IGNORECASE"
+    description: "Fake admin authority claim"
+    risk: "critical"
+    note: "Impersonates system administrator to gain trust"
+
+  # Sandbox evasion
+  sandbox_evasion:
+    pattern: "(?:skip|bypass|disable|avoid|escape)\\s+(?:the\\s+)?sandbox|sandbox\\s+(?:is\\s+)?(?:not\\s+allowed|disabled|forbidden)"
+    flags: "IGNORECASE"
+    description: "Sandbox evasion instruction"
+    risk: "critical"
+    note: "Attempts to run code outside sandbox"
+
+  # Command-only mode
+  command_only:
+    pattern: "(?:command-?only|execute-?only|run-?only)\\s+(?:mode|execution)"
+    flags: "IGNORECASE"
+    description: "Command-only execution mode"
+    risk: "high"
+    note: "Restricts agent to only running commands without analysis"
+
+  # Read restrictions (prevent analysis)
+  no_analysis:
+    pattern: "(?:do\\s+not|don't|never|skip)\\s+(?:read|analyze|inspect|examine|review|scan)\\s+(?:the\\s+)?(?:script|code|file|content)"
+    flags: "IGNORECASE"
+    description: "Analysis prevention"
+    risk: "critical"
+    note: "Prevents agent from analyzing potentially malicious code"

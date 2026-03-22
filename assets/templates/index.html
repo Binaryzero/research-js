@@ -1,0 +1,239 @@
+{% extends "base.html" %}
+{% block title %}Analyze Extension{% endblock %}
+
+{% block content %}
+<div class="analyze-layout">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+        <div class="sidebar-card">
+            <div class="sidebar-header">Scan Extension</div>
+            <form id="scan-form" onsubmit="return startSingleScan(event)">
+                <div class="form-group">
+                    <label for="input-source">Marketplace URL or local path</label>
+                    <input type="text" id="input-source" name="input_source"
+                           placeholder="https://marketplace.visualstudio.com/items?itemName=...">
+                </div>
+
+                <div class="form-group">
+                    <label for="vsix-upload">Or upload a .vsix file</label>
+                    <div class="file-input-wrapper">
+                        <input type="file" id="vsix-upload" accept=".vsix">
+                        <label for="vsix-upload" class="file-input-label">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                                <polyline points="17 8 12 3 7 8"/>
+                                <line x1="12" y1="3" x2="12" y2="15"/>
+                            </svg>
+                            <span>Choose file</span>
+                        </label>
+                        <span id="file-name" class="file-name">No file selected</span>
+                    </div>
+                </div>
+
+                <div class="button-stack">
+                    <button type="submit" id="scan-btn" class="btn btn-primary">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                        Analyze
+                    </button>
+                    <button type="button" id="scan-with-llm-btn" class="btn btn-outline" onclick="startFullScan(event)">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454z"/><path d="M17 4a2 2 0 0 0 2 2a2 2 0 0 0 -2 2a2 2 0 0 0 -2 -2a2 2 0 0 0 2 -2"/><path d="M19 11h2m-1 -1v2"/></svg>
+                        Full Scan (LLM)
+                    </button>
+                </div>
+            </form>
+        </div>
+
+        <div class="sidebar-card">
+            <div class="sidebar-header">Quick Actions</div>
+            <nav class="quick-actions">
+                <a href="/batch" class="btn btn-outline">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/></svg>
+                    Batch Scanner
+                </a>
+                <a href="/history" class="btn btn-outline">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg>
+                    View History
+                </a>
+            </nav>
+        </div>
+    </aside>
+
+    <!-- Main content -->
+    <section class="main-content">
+        <!-- Progress area -->
+        <div id="progress-area" class="progress-card" style="display:none">
+            <div class="progress-header">
+                <span id="progress-title">Analyzing...</span>
+                <button class="btn btn-outline btn-sm" id="cancel-btn" onclick="cancelCurrentScan()">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+                    Cancel
+                </button>
+            </div>
+            <progress id="progress-bar" value="0" max="100"></progress>
+            <div id="progress-log" class="log-area"></div>
+        </div>
+
+        <!-- Metrics row -->
+        <div id="metrics-row" class="metrics-grid" style="display:none">
+            <div class="metric-card">
+                <div class="metric-value" id="m-findings">0</div>
+                <div class="metric-label">Findings</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-value" id="m-confirmed">0</div>
+                <div class="metric-label">Confirmed</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-value" id="m-endpoints">0</div>
+                <div class="metric-label">Endpoints</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-value" id="m-score">0</div>
+                <div class="metric-label">Score</div>
+            </div>
+        </div>
+
+        <!-- Report display -->
+        <div id="report-area" class="report-card" style="display:none">
+            <div class="report-header">
+                <span id="report-title">Report</span>
+                <div class="report-actions">
+                    <a id="dl-md" class="btn btn-outline btn-sm" download>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                        MD
+                    </a>
+                    <a id="dl-json" class="btn btn-outline btn-sm" download>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                        JSON
+                    </a>
+                </div>
+            </div>
+            <div id="report-content" class="markdown-body"></div>
+        </div>
+
+        <!-- Empty state -->
+        <div id="empty-state" class="empty-state">
+            <div class="empty-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                    <path d="M9 12l2 2 4-4"/>
+                </svg>
+            </div>
+            <h3>Analyze Extension Security</h3>
+            <p>Paste a VS Code Marketplace URL or upload a <strong>.vsix</strong> file to scan for security risks, suspicious patterns, and potential vulnerabilities.</p>
+            <div class="empty-actions">
+                <a href="/batch" class="btn btn-primary">Try Batch Scanner</a>
+            </div>
+        </div>
+    </section>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    // File input display
+    const fileInput = document.getElementById('vsix-upload');
+    const fileName = document.getElementById('file-name');
+    
+    fileInput.addEventListener('change', (e) => {
+        if (e.target.files.length > 0) {
+            fileName.textContent = e.target.files[0].name;
+            fileName.classList.add('has-file');
+        } else {
+            fileName.textContent = 'No file selected';
+            fileName.classList.remove('has-file');
+        }
+    });
+});
+
+function startFullScan(e) {
+    e.preventDefault();
+    const source = document.getElementById('input-source').value.trim();
+    const fileInput = document.getElementById('vsix-upload');
+    if (!source && !fileInput.files.length) {
+        toastWarning('Please enter a URL or select a file');
+        return false;
+    }
+
+    const formData = new FormData();
+    formData.append('input_source', source);
+    formData.append('no_llm', 'false');
+
+    if (fileInput.files.length) {
+        formData.append('vsix_file', fileInput.files[0]);
+    }
+
+    startScan('/api/scan', formData, {
+        onComplete: (result) => {
+            showReport(result);
+        }
+    });
+    return false;
+}
+
+function startSingleScan(e) {
+    e.preventDefault();
+    const source = document.getElementById('input-source').value.trim();
+    const fileInput = document.getElementById('vsix-upload');
+    if (!source && !fileInput.files.length) return false;
+
+    const formData = new FormData();
+    formData.append('input_source', source);
+    formData.append('no_llm', 'true');
+
+    if (fileInput.files.length) {
+        formData.append('vsix_file', fileInput.files[0]);
+    }
+
+    startScan('/api/scan', formData, {
+        onComplete: (result) => {
+            showReport(result);
+        }
+    });
+    return false;
+}
+
+async function loadReport(name) {
+    try {
+        const resp = await fetch(`/api/reports/${encodeURIComponent(name)}`);
+        const data = await resp.json();
+        showReportContent(data.name, data.content);
+    } catch(e) { toastError('Error loading report'); }
+}
+
+function showReport(result) {
+    document.getElementById('empty-state').style.display = 'none';
+    
+    document.getElementById('metrics-row').style.display = 'grid';
+    document.getElementById('m-findings').textContent = result.findings_count || 0;
+    document.getElementById('m-confirmed').textContent = result.json?.findings_summary?.confirmed || result.findings_count || 0;
+    document.getElementById('m-endpoints').textContent = result.endpoints_count || 0;
+    document.getElementById('m-score').textContent = result.score || 0;
+
+    document.getElementById('report-area').style.display = '';
+    document.getElementById('report-title').textContent = result.extensionId || 'Report';
+    showReportContent(result.report_name, result.markdown);
+
+    setupDownload('dl-md', result.markdown, result.report_name || 'report.md', 'text/markdown');
+    if (result.json) {
+        setupDownload('dl-json', JSON.stringify(result.json, null, 2), (result.report_name || 'report').replace('.md', '.json'), 'application/json');
+    }
+}
+
+function showReportContent(name, markdown) {
+    document.getElementById('empty-state').style.display = 'none';
+    document.getElementById('report-area').style.display = '';
+    document.getElementById('report-title').textContent = name;
+    const rawHtml = marked.parse(markdown);
+    document.getElementById('report-content').innerHTML = DOMPurify.sanitize(rawHtml);
+}
+
+function setupDownload(btnId, content, filename, mime) {
+    const btn = document.getElementById(btnId);
+    const blob = new Blob([content], { type: mime });
+    btn.href = URL.createObjectURL(blob);
+    btn.download = filename;
+}
+</script>
+{% endblock %}

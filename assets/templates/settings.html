@@ -1,0 +1,1026 @@
+{% extends "base.html" %}
+{% block title %}Settings{% endblock %}
+
+{% block content %}
+<div class="settings-layout">
+    <div class="settings-header">
+        <h2>Settings</h2>
+        <p>Configure models, consensus, and prompts for security analysis.</p>
+    </div>
+
+    <!-- Main tabs -->
+    <div class="settings-tabs" role="tablist">
+        <button type="button" class="settings-tab active" onclick="showSettingsTab('models', this)" role="tab" aria-selected="true">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+            Models
+        </button>
+        <button type="button" class="settings-tab" onclick="showSettingsTab('prompts', this)" role="tab" aria-selected="false">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 10h8"/><path d="M8 14h4"/></svg>
+            Prompts
+        </button>
+    </div>
+
+    <!-- Models Tab -->
+    <div id="tab-models" class="settings-tab-content">
+        <form id="settings-form" onsubmit="return saveAllSettings(event)">
+            <div class="settings-grid">
+                <!-- Main Model -->
+                <div class="settings-card" id="card-main">
+                    <div class="settings-card-header">
+                        <h3>Main Model</h3>
+                        <div class="connection-status" id="status-main" style="display:none;">
+                            <span class="status-dot"></span>
+                            <span class="status-text">Not tested</span>
+                        </div>
+                    </div>
+                    <div class="settings-card-body">
+                        <div class="form-row">
+                            <div class="form-group form-group-grow">
+                                <label for="main-url">Base URL</label>
+                                <input type="url" id="main-url" placeholder="http://localhost:11434">
+                            </div>
+                            <div>
+                                <button type="button" onclick="testSlotConnection('main')" class="btn btn-outline btn-test">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                                    Test
+                                </button>
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group form-group-grow">
+                                <label for="main-model">Model</label>
+                                <select id="main-model-select"><option value="">Select model...</option></select>
+                                <input type="text" id="main-model-manual" placeholder="Enter model name" style="display:none">
+                            </div>
+                            <div class="form-group">
+                                <label for="main-api-style">API Style</label>
+                                <select id="main-api-style">
+                                    <option value="auto">Auto</option>
+                                    <option value="openai">OpenAI</option>
+                                    <option value="chat">Chat</option>
+                                    <option value="generate">Generate</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="form-row form-row-3">
+                            <div class="form-group">
+                                <label for="main-temperature">Temperature</label>
+                                <input type="number" id="main-temperature" min="0" max="2" step="0.1" value="0.3">
+                            </div>
+                            <div class="form-group">
+                                <label for="main-max-tokens">Max Tokens</label>
+                                <input type="number" id="main-max-tokens" min="1000" step="1000" value="32000">
+                            </div>
+                            <div class="form-group">
+                                <label for="main-timeout">Timeout (ms)</label>
+                                <input type="number" id="main-timeout" min="5000" step="5000" value="180000">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Judge 1 -->
+                <div class="settings-card judge-card" id="card-judge1">
+                    <div class="settings-card-header">
+                        <div class="judge-header-left">
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="judge1-enabled" onchange="toggleJudgeCard('judge1')">
+                                <span class="toggle-slider"></span>
+                            </label>
+                            <h3>Judge 1</h3>
+                        </div>
+                        <div class="connection-status" id="status-judge1" style="display:none;">
+                            <span class="status-dot"></span>
+                            <span class="status-text">Not tested</span>
+                        </div>
+                    </div>
+                    <div class="settings-card-body judge-body" id="judge1-body" style="display:none;">
+                        <div class="form-row">
+                            <div class="form-group form-group-grow">
+                                <label for="judge1-url">Base URL</label>
+                                <input type="url" id="judge1-url" placeholder="http://localhost:11434">
+                            </div>
+                            <div>
+                                <button type="button" onclick="testSlotConnection('judge1')" class="btn btn-outline btn-test">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                                    Test
+                                </button>
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group form-group-grow">
+                                <label for="judge1-model">Model</label>
+                                <select id="judge1-model-select"><option value="">Select model...</option></select>
+                                <input type="text" id="judge1-model-manual" placeholder="Enter model name" style="display:none">
+                            </div>
+                            <div class="form-group">
+                                <label for="judge1-api-style">API Style</label>
+                                <select id="judge1-api-style">
+                                    <option value="auto">Auto</option>
+                                    <option value="openai">OpenAI</option>
+                                    <option value="chat">Chat</option>
+                                    <option value="generate">Generate</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="form-row form-row-3">
+                            <div class="form-group">
+                                <label for="judge1-temperature">Temperature</label>
+                                <input type="number" id="judge1-temperature" min="0" max="2" step="0.1" value="0.3">
+                            </div>
+                            <div class="form-group">
+                                <label for="judge1-max-tokens">Max Tokens</label>
+                                <input type="number" id="judge1-max-tokens" min="1000" step="1000" value="32000">
+                            </div>
+                            <div class="form-group">
+                                <label for="judge1-timeout">Timeout (ms)</label>
+                                <input type="number" id="judge1-timeout" min="5000" step="5000" value="180000">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Judge 2 -->
+                <div class="settings-card judge-card" id="card-judge2">
+                    <div class="settings-card-header">
+                        <div class="judge-header-left">
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="judge2-enabled" onchange="toggleJudgeCard('judge2')">
+                                <span class="toggle-slider"></span>
+                            </label>
+                            <h3>Judge 2</h3>
+                        </div>
+                        <div class="connection-status" id="status-judge2" style="display:none;">
+                            <span class="status-dot"></span>
+                            <span class="status-text">Not tested</span>
+                        </div>
+                    </div>
+                    <div class="settings-card-body judge-body" id="judge2-body" style="display:none;">
+                        <div class="form-row">
+                            <div class="form-group form-group-grow">
+                                <label for="judge2-url">Base URL</label>
+                                <input type="url" id="judge2-url" placeholder="http://localhost:11434">
+                            </div>
+                            <div>
+                                <button type="button" onclick="testSlotConnection('judge2')" class="btn btn-outline btn-test">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                                    Test
+                                </button>
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group form-group-grow">
+                                <label for="judge2-model">Model</label>
+                                <select id="judge2-model-select"><option value="">Select model...</option></select>
+                                <input type="text" id="judge2-model-manual" placeholder="Enter model name" style="display:none">
+                            </div>
+                            <div class="form-group">
+                                <label for="judge2-api-style">API Style</label>
+                                <select id="judge2-api-style">
+                                    <option value="auto">Auto</option>
+                                    <option value="openai">OpenAI</option>
+                                    <option value="chat">Chat</option>
+                                    <option value="generate">Generate</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="form-row form-row-3">
+                            <div class="form-group">
+                                <label for="judge2-temperature">Temperature</label>
+                                <input type="number" id="judge2-temperature" min="0" max="2" step="0.1" value="0.3">
+                            </div>
+                            <div class="form-group">
+                                <label for="judge2-max-tokens">Max Tokens</label>
+                                <input type="number" id="judge2-max-tokens" min="1000" step="1000" value="32000">
+                            </div>
+                            <div class="form-group">
+                                <label for="judge2-timeout">Timeout (ms)</label>
+                                <input type="number" id="judge2-timeout" min="5000" step="5000" value="180000">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Consensus Options -->
+                <div class="settings-card" id="card-consensus">
+                    <div class="settings-card-header">
+                        <h3>Consensus &amp; Scan Options</h3>
+                    </div>
+                    <div class="settings-card-body">
+                        <label class="checkbox-option">
+                            <input type="checkbox" id="judges-validate-all">
+                            <span class="checkbox-label">
+                                <strong>Judges validate all findings</strong>
+                                <span>By default judges only validate HIGH/CRITICAL findings. Enable this to have judges review everything.</span>
+                            </span>
+                        </label>
+                        <div class="form-group" style="margin-top: var(--space-4);">
+                            <label for="assessment-mode">LLM Assessment Mode</label>
+                            <select id="assessment-mode">
+                                <option value="strategic">Strategic (slower, thorough)</option>
+                                <option value="bulk">Bulk (faster, single call)</option>
+                            </select>
+                            <p class="form-hint">
+                                <strong>Strategic:</strong> Uses sampling for ~50-200 LLM calls. Best for smaller models.<br>
+                                <strong>Bulk:</strong> Sends all findings in 1 call. Requires large context model.
+                            </p>
+                        </div>
+                        <div class="form-group">
+                            <label for="concurrency">LLM Concurrency</label>
+                            <input type="number" id="concurrency" min="1" max="50" value="10">
+                            <p class="form-hint">Number of parallel LLM requests during analysis.</p>
+                        </div>
+                        <div class="form-group">
+                            <label for="prompt-profile">Prompt Profile</label>
+                            <select id="prompt-profile">
+                                <option value="default">Default</option>
+                            </select>
+                            <p class="form-hint">Applied uniformly to all models (main + judges). Configure profiles in the Prompts tab.</p>
+                        </div>
+                        <label class="checkbox-option">
+                            <input type="checkbox" id="default-no-llm">
+                            <span class="checkbox-label">
+                                <strong>Static analysis only</strong>
+                                <span>Skip LLM analysis by default (faster but less detailed)</span>
+                            </span>
+                        </label>
+                        <label class="checkbox-option">
+                            <input type="checkbox" id="default-full">
+                            <span class="checkbox-label">
+                                <strong>Full output</strong>
+                                <span>Include more detailed analysis in reports</span>
+                            </span>
+                        </label>
+                    </div>
+                </div>
+            </div>
+
+            <div class="settings-actions">
+                <button type="submit" id="save-btn" class="btn btn-primary">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+                    Save Settings
+                </button>
+            </div>
+        </form>
+    </div>
+
+    <!-- Prompts Tab -->
+    <div id="tab-prompts" class="settings-tab-content" style="display:none;">
+        <div class="settings-card">
+            <div class="settings-card-header">
+                <h3>LLM Prompts Configuration</h3>
+                <div class="form-group" style="margin:0; min-width:180px;">
+                    <select id="prompt-profile-selector" onchange="loadPromptsForProfile(this.value)" class="form-select">
+                        <option value="default">Default Profile</option>
+                    </select>
+                </div>
+            </div>
+            <div class="settings-card-body">
+                <p class="form-hint" style="margin-bottom: var(--space-4);">
+                    Customize the prompts sent to all models. Select a profile above to view/edit overrides for that profile.
+                </p>
+                <div id="profile-indicator" class="profile-indicator" style="display:none;"></div>
+
+                <div class="prompt-tabs">
+                    <button type="button" class="prompt-tab active" onclick="showPromptTab('assessment')">Finding Assessment</button>
+                    <button type="button" class="prompt-tab" onclick="showPromptTab('summary')">Executive Summary</button>
+                    <button type="button" class="prompt-tab" onclick="showPromptTab('prose')">Finding Prose</button>
+                    <button type="button" class="prompt-tab" onclick="showPromptTab('batch')">Batch Triage</button>
+                </div>
+
+                <div id="prompt-assessment" class="prompt-section">
+                    <div class="form-group">
+                        <label>System Prompt</label>
+                        <textarea id="prompt-assessment-system" rows="10" class="prompt-textarea"></textarea>
+                        <p class="form-hint">Sets the LLM's role and output format for assessing security findings.</p>
+                    </div>
+                    <div class="form-group">
+                        <label>User Prompt Template</label>
+                        <textarea id="prompt-assessment-user" rows="12" class="prompt-textarea"></textarea>
+                        <p class="form-hint">Available variables: {category}, {title}, {location}, {evidence}, {file_type}, {is_minified}, {probable_origin}, {match_highlight}, {neighboring_imports}</p>
+                    </div>
+                </div>
+
+                <div id="prompt-summary" class="prompt-section" style="display:none;">
+                    <div class="form-group">
+                        <label>System Prompt</label>
+                        <textarea id="prompt-summary-system" rows="8" class="prompt-textarea"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label>User Prompt Template</label>
+                        <textarea id="prompt-summary-user" rows="12" class="prompt-textarea"></textarea>
+                        <p class="form-hint">Available variables: {extensionName}, {version}, {publisher}, {extensionDescription}, {activationEvents}, {findingsCount}, {findingsByCategory}, {notableDependencies}, {telemetryServices}, {endpointsList}, {totalFiles}</p>
+                    </div>
+                </div>
+
+                <div id="prompt-prose" class="prompt-section" style="display:none;">
+                    <div class="form-group">
+                        <label>System Prompt</label>
+                        <textarea id="prompt-prose-system" rows="8" class="prompt-textarea"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label>User Prompt Template</label>
+                        <textarea id="prompt-prose-user" rows="10" class="prompt-textarea"></textarea>
+                        <p class="form-hint">Available variables: {title}, {location}, {category}, {assessment}, {evidence}, {file_type}, {probable_origin}, {match_highlight}</p>
+                    </div>
+                </div>
+
+                <div id="prompt-batch" class="prompt-section" style="display:none;">
+                    <div class="form-group">
+                        <label>System Prompt</label>
+                        <textarea id="prompt-batch-system" rows="12" class="prompt-textarea"></textarea>
+                        <p class="form-hint">Instructions for batch processing multiple findings in a single LLM call for efficiency.</p>
+                    </div>
+                    <div class="form-group">
+                        <label>User Prompt Template</label>
+                        <textarea id="prompt-batch-user" rows="12" class="prompt-textarea"></textarea>
+                        <p class="form-hint">Available variables: {extensionName}, {findingsJson}. Each finding in JSON includes: category, title, location, evidence, file_type, is_minified, probable_origin, match_highlight, neighboring_imports, priority</p>
+                    </div>
+                </div>
+
+                <div class="form-actions" style="margin-top: var(--space-4);">
+                    <button type="button" onclick="savePrompts()" class="btn btn-primary">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+                        Save Prompts
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.settings-tabs {
+    display: flex;
+    gap: var(--space-2);
+    margin-bottom: var(--space-5);
+    padding-bottom: var(--space-3);
+    border-bottom: 1px solid var(--border-subtle);
+}
+
+.settings-tab {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-4);
+    font-family: var(--font-body);
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: var(--fg-muted);
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.settings-tab:hover {
+    color: var(--fg);
+    background: var(--bg-hover);
+}
+
+.settings-tab.active {
+    color: var(--accent);
+    background: var(--accent-muted);
+}
+
+/* Form row — horizontal field layout using grid for alignment */
+.settings-card .form-row {
+    display: grid;
+    gap: var(--space-3);
+    align-items: end;
+    margin-bottom: var(--space-3);
+    grid-template-columns: 1fr 160px;
+}
+
+.settings-card .form-row.form-row-3 {
+    grid-template-columns: repeat(3, 1fr);
+}
+
+.settings-card .form-row .form-group {
+    margin-bottom: 0;
+}
+
+.form-group-grow {
+    min-width: 0;
+}
+
+/* Grid placement: All models left, options right */
+#card-main       { grid-column: 1; grid-row: 1; }
+#card-judge1     { grid-column: 1; grid-row: 2; }
+#card-judge2     { grid-column: 1; grid-row: 3; }
+#card-consensus  { grid-column: 2; grid-row: 1 / 4; }
+
+.btn-test {
+    white-space: nowrap;
+    height: 38px;
+}
+
+/* Judge card header with toggle */
+.judge-header-left {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+}
+
+.judge-card.disabled {
+    opacity: 0.5;
+}
+
+/* Toggle switch */
+.toggle-switch {
+    position: relative;
+    display: inline-block;
+    width: 36px;
+    height: 20px;
+    cursor: pointer;
+}
+
+.toggle-switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.toggle-slider {
+    position: absolute;
+    inset: 0;
+    background: var(--border);
+    border-radius: 10px;
+    transition: background var(--transition-fast);
+}
+
+.toggle-slider::before {
+    content: '';
+    position: absolute;
+    height: 14px;
+    width: 14px;
+    left: 3px;
+    bottom: 3px;
+    background: white;
+    border-radius: 50%;
+    transition: transform var(--transition-fast);
+}
+
+.toggle-switch input:checked + .toggle-slider {
+    background: var(--accent);
+}
+
+.toggle-switch input:checked + .toggle-slider::before {
+    transform: translateX(16px);
+}
+
+.profile-indicator {
+    padding: var(--space-2) var(--space-3);
+    margin-bottom: var(--space-3);
+    font-size: 0.8125rem;
+    color: var(--accent);
+    background: var(--accent-muted);
+    border-radius: var(--radius-md);
+    border-left: 3px solid var(--accent);
+}
+
+.prompt-tabs {
+    display: flex;
+    gap: var(--space-2);
+    margin-bottom: var(--space-4);
+}
+
+.prompt-tab {
+    padding: var(--space-2) var(--space-4);
+    font-family: var(--font-body);
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: var(--fg-muted);
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.prompt-tab:hover {
+    color: var(--fg);
+    border-color: var(--border);
+}
+
+.prompt-tab.active {
+    color: var(--accent);
+    background: var(--accent-muted);
+    border-color: var(--accent);
+}
+
+.prompt-section {
+    background: var(--bg-elevated);
+    padding: var(--space-4);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-subtle);
+    width: 100%;
+}
+
+.prompt-textarea {
+    width: 100%;
+    min-height: 700px;
+    height: 700px;
+    font-family: var(--font-mono);
+    font-size: 0.875rem;
+    line-height: 1.6;
+    padding: var(--space-4);
+    background: var(--bg-base);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    color: var(--fg);
+    resize: both;
+    transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.prompt-textarea:hover {
+    border-color: var(--fg-muted);
+}
+
+.prompt-textarea:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-muted);
+}
+
+.prompt-textarea::placeholder {
+    color: var(--fg-dim);
+}
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// ── State ──────────────────────────────────────────────────────
+let appConfig = null;      // Loaded from GET /api/config
+let currentPrompts = null;
+let currentProfileName = 'default'; // Currently selected prompt profile
+
+document.addEventListener('DOMContentLoaded', () => {
+    loadAppConfig();
+    loadPrompts();
+});
+
+// ── Tab Switching ──────────────────────────────────────────────
+function showSettingsTab(tab, btn) {
+    document.getElementById('tab-models').style.display = tab === 'models' ? 'block' : 'none';
+    document.getElementById('tab-prompts').style.display = tab === 'prompts' ? 'block' : 'none';
+    document.querySelectorAll('.settings-tab').forEach(t => {
+        t.classList.remove('active');
+        t.setAttribute('aria-selected', 'false');
+    });
+    if (btn) {
+        btn.classList.add('active');
+        btn.setAttribute('aria-selected', 'true');
+    }
+}
+
+// ── Load AppConfig from server ─────────────────────────────────
+async function loadAppConfig() {
+    try {
+        const resp = await fetch('/api/config');
+        appConfig = await resp.json();
+        populateModelCard('main', appConfig.main);
+
+        // Judges
+        const judge1 = appConfig.judges.find(j => j.id === 'judge1');
+        const judge2 = appConfig.judges.find(j => j.id === 'judge2');
+
+        if (judge1 && judge1.enabled) {
+            document.getElementById('judge1-enabled').checked = true;
+            toggleJudgeCard('judge1');
+            populateModelCard('judge1', judge1);
+        }
+        if (judge2 && judge2.enabled) {
+            document.getElementById('judge2-enabled').checked = true;
+            toggleJudgeCard('judge2');
+            populateModelCard('judge2', judge2);
+        }
+
+        // Consensus & scan options
+        document.getElementById('judges-validate-all').checked = appConfig.consensus?.judgesValidateAllFindings || false;
+        document.getElementById('assessment-mode').value = appConfig.assessmentMode || 'strategic';
+        document.getElementById('concurrency').value = appConfig.concurrency || 10;
+        document.getElementById('default-no-llm').checked = appConfig.defaultNoLlm || false;
+        document.getElementById('default-full').checked = appConfig.defaultFull || false;
+        document.getElementById('prompt-profile').value = appConfig.promptProfile || 'default';
+
+        // Load models for main slot
+        loadModelsForSlot('main');
+    } catch (e) {
+        console.error('Failed to load config:', e);
+        toastError('Failed to load configuration from server.');
+    }
+}
+
+// ── Populate a model card from slot config ─────────────────────
+function populateModelCard(slotId, slot) {
+    document.getElementById(`${slotId}-url`).value = slot.baseUrl || 'http://localhost:11434';
+    document.getElementById(`${slotId}-api-style`).value = slot.apiStyle || 'auto';
+    document.getElementById(`${slotId}-temperature`).value = slot.temperature ?? 0.3;
+    document.getElementById(`${slotId}-max-tokens`).value = slot.maxTokens ?? 32000;
+    document.getElementById(`${slotId}-timeout`).value = slot.timeout ?? 180000;
+
+    // Set model — try select first, fall back to manual input
+    const select = document.getElementById(`${slotId}-model-select`);
+    const manual = document.getElementById(`${slotId}-model-manual`);
+    if (slot.model) {
+        manual.value = slot.model;
+        // Will be properly set when models load
+    }
+}
+
+// ── Read a model card back into a slot config object ───────────
+function readModelCard(slotId, label) {
+    const select = document.getElementById(`${slotId}-model-select`);
+    const manual = document.getElementById(`${slotId}-model-manual`);
+    const model = select.style.display !== 'none' ? select.value : manual.value.trim();
+
+    return {
+        id: slotId,
+        label: label,
+        enabled: slotId === 'main' ? true : document.getElementById(`${slotId}-enabled`).checked,
+        provider: 'ollama',
+        model: model,
+        baseUrl: document.getElementById(`${slotId}-url`).value.trim() || 'http://localhost:11434',
+        apiStyle: document.getElementById(`${slotId}-api-style`).value,
+        timeout: Number(document.getElementById(`${slotId}-timeout`).value) || 180000,
+        maxTokens: Number(document.getElementById(`${slotId}-max-tokens`).value) || 32000,
+        temperature: (() => { const v = parseFloat(document.getElementById(`${slotId}-temperature`).value); return isNaN(v) ? 0.3 : v; })(),
+    };
+}
+
+// ── Toggle judge card visibility ───────────────────────────────
+function toggleJudgeCard(judgeId) {
+    const enabled = document.getElementById(`${judgeId}-enabled`).checked;
+    const body = document.getElementById(`${judgeId}-body`);
+    const card = document.getElementById(`card-${judgeId}`);
+
+    body.style.display = enabled ? '' : 'none';
+    card.classList.toggle('disabled', !enabled);
+
+    if (enabled) {
+        loadModelsForSlot(judgeId);
+    }
+}
+
+// ── Load models list for a slot ────────────────────────────────
+async function loadModelsForSlot(slotId) {
+    const url = document.getElementById(`${slotId}-url`).value.trim() || 'http://localhost:11434';
+    const select = document.getElementById(`${slotId}-model-select`);
+    const manual = document.getElementById(`${slotId}-model-manual`);
+
+    try {
+        const resp = await fetch(`/api/models?ollama_url=${encodeURIComponent(url)}`);
+        const data = await resp.json();
+
+        if (data.models && data.models.length > 0) {
+            select.textContent = '';
+            data.models.sort((a, b) => a.localeCompare(b)).forEach(m => {
+                const opt = document.createElement('option');
+                opt.value = m;
+                opt.textContent = m;
+                select.appendChild(opt);
+            });
+            select.style.display = '';
+            manual.style.display = 'none';
+
+            // Restore saved model selection
+            const savedModel = manual.value;
+            if (savedModel) {
+                for (const opt of select.options) {
+                    if (opt.value === savedModel) {
+                        opt.selected = true;
+                        break;
+                    }
+                }
+            }
+        } else {
+            select.style.display = 'none';
+            manual.style.display = '';
+        }
+    } catch (e) {
+        select.style.display = 'none';
+        manual.style.display = '';
+    }
+}
+
+// ── Test connection for a slot ─────────────────────────────────
+async function testSlotConnection(slotId) {
+    const statusEl = document.getElementById(`status-${slotId}`);
+    const textEl = statusEl.querySelector('.status-text');
+    statusEl.style.display = 'flex';
+    statusEl.className = 'connection-status';
+    textEl.textContent = 'Testing...';
+
+    const baseUrl = document.getElementById(`${slotId}-url`).value.trim() || 'http://localhost:11434';
+
+    try {
+        const resp = await fetch('/api/test-connection', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ baseUrl }),
+        });
+        const data = await resp.json();
+
+        if (data.ok) {
+            statusEl.classList.add('connected');
+            textEl.textContent = 'Connected';
+            toastSuccess(`${slotId}: Connection successful`);
+            loadModelsForSlot(slotId);
+        } else {
+            statusEl.classList.add('error');
+            textEl.textContent = data.error || 'Failed';
+            toastError(`${slotId}: ${data.error || 'Connection failed'}`);
+        }
+    } catch (e) {
+        statusEl.classList.add('error');
+        textEl.textContent = e.message;
+        toastError(`${slotId}: ${e.message}`);
+    }
+}
+
+// ── Update connection status display ───────────────────────────
+function updateSlotStatus(slotId, status, message) {
+    const el = document.getElementById(`status-${slotId}`);
+    if (!el) return;
+    const textEl = el.querySelector('.status-text');
+    el.style.display = 'flex';
+    el.className = 'connection-status ' + status;
+    if (textEl) textEl.textContent = message || status;
+}
+
+// ── Save all settings to server ────────────────────────────────
+async function saveAllSettings(e) {
+    e.preventDefault();
+
+    const saveBtn = document.getElementById('save-btn');
+    setButtonLoading(saveBtn, true, 'Saving...');
+
+    const main = readModelCard('main', 'Main Model');
+    if (!main.model) {
+        toastWarning('Please select or enter a model name for the main model.');
+        setButtonLoading(saveBtn, false);
+        return false;
+    }
+
+    // Build judges array
+    const judges = [];
+    if (document.getElementById('judge1-enabled').checked) {
+        const j1 = readModelCard('judge1', 'Judge 1');
+        if (!j1.model) {
+            toastWarning('Judge 1 is enabled but has no model selected.');
+            setButtonLoading(saveBtn, false);
+            return false;
+        }
+        judges.push(j1);
+    }
+    if (document.getElementById('judge2-enabled').checked) {
+        const j2 = readModelCard('judge2', 'Judge 2');
+        if (!j2.model) {
+            toastWarning('Judge 2 is enabled but has no model selected.');
+            setButtonLoading(saveBtn, false);
+            return false;
+        }
+        judges.push(j2);
+    }
+
+    const configPayload = {
+        version: appConfig?.version || '1',
+        main: main,
+        judges: judges,
+        consensus: {
+            judgesValidateAllFindings: document.getElementById('judges-validate-all').checked,
+        },
+        assessmentMode: document.getElementById('assessment-mode').value,
+        promptProfile: document.getElementById('prompt-profile').value || 'default',
+        concurrency: parseInt(document.getElementById('concurrency').value) || 10,
+        defaultNoLlm: document.getElementById('default-no-llm').checked,
+        defaultFull: document.getElementById('default-full').checked,
+    };
+
+    try {
+        const resp = await fetch('/api/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(configPayload),
+        });
+
+        if (resp.ok) {
+            const result = await resp.json();
+            toastSuccess(`Settings saved! (${result.judges} judge${result.judges !== 1 ? 's' : ''} configured)`);
+
+            // Also sync to localStorage for backward compat with other pages
+            const legacySettings = {
+                ollamaUrl: main.baseUrl,
+                model: main.model,
+                apiStyle: main.apiStyle,
+                defaultNoLlm: configPayload.defaultNoLlm,
+                defaultFull: configPayload.defaultFull,
+                assessmentMode: configPayload.assessmentMode,
+            };
+            localStorage.setItem('ollamaSettings', JSON.stringify(legacySettings));
+            window.ollamaSettings = legacySettings;
+        } else {
+            const err = await resp.json();
+            toastError('Failed to save: ' + (err.error || 'Unknown error'));
+        }
+    } catch (e) {
+        toastError('Error saving settings: ' + e.message);
+    }
+
+    setButtonLoading(saveBtn, false);
+    return false;
+}
+
+// ── Prompt Management ──────────────────────────────────────────
+async function loadPrompts() {
+    try {
+        const resp = await fetch('/api/prompts');
+        const data = await resp.json();
+        currentPrompts = data.prompts;
+
+        // Populate profile selectors (Prompts tab + Models tab global dropdown)
+        const profileSelect = document.getElementById('prompt-profile-selector');
+        const globalProfileSelect = document.getElementById('prompt-profile');
+        if (currentPrompts.profiles) {
+            Object.keys(currentPrompts.profiles).forEach(key => {
+                // Add to prompts tab selector
+                if (!profileSelect.querySelector(`option[value="${key}"]`)) {
+                    const opt = document.createElement('option');
+                    opt.value = key;
+                    opt.textContent = key.charAt(0).toUpperCase() + key.slice(1) + ' Profile';
+                    profileSelect.appendChild(opt);
+                }
+                // Add to global profile dropdown on Models tab
+                if (globalProfileSelect && !globalProfileSelect.querySelector(`option[value="${key}"]`)) {
+                    const opt2 = document.createElement('option');
+                    opt2.value = key;
+                    opt2.textContent = key.charAt(0).toUpperCase() + key.slice(1);
+                    globalProfileSelect.appendChild(opt2);
+                }
+            });
+        }
+        // Re-apply saved profile selection after options are populated
+        if (appConfig?.promptProfile) {
+            globalProfileSelect.value = appConfig.promptProfile;
+        }
+
+        populatePromptFields(currentPrompts);
+    } catch (e) {
+        console.error('Failed to load prompts:', e);
+    }
+}
+
+function populatePromptFields(prompts) {
+    document.getElementById('prompt-assessment-system').value = prompts.finding_assessment?.system || '';
+    document.getElementById('prompt-assessment-user').value = prompts.finding_assessment?.user || '';
+    document.getElementById('prompt-summary-system').value = prompts.executive_summary?.system || '';
+    document.getElementById('prompt-summary-user').value = prompts.executive_summary?.user || '';
+    document.getElementById('prompt-prose-system').value = prompts.finding_prose?.system || '';
+    document.getElementById('prompt-prose-user').value = prompts.finding_prose?.user || '';
+    document.getElementById('prompt-batch-system').value = prompts.triage_batch?.system || '';
+    document.getElementById('prompt-batch-user').value = prompts.triage_batch?.user || '';
+}
+
+function loadPromptsForProfile(profile) {
+    if (!currentPrompts) return;
+
+    // Track which profile is selected for save logic
+    currentProfileName = profile;
+
+    if (profile === 'default') {
+        populatePromptFields(currentPrompts);
+        document.getElementById('profile-indicator').style.display = 'none';
+        return;
+    }
+
+    // Show profile indicator
+    const indicator = document.getElementById('profile-indicator');
+    indicator.style.display = '';
+    indicator.textContent = `Editing: ${profile} profile (only differences from default are saved)`;
+
+    // Deep-merge overrides on top of defaults (mirrors getPromptsForProfile on server)
+    const overrides = currentPrompts.profiles?.[profile] || {};
+    const merged = {
+        finding_assessment: { ...currentPrompts.finding_assessment, ...overrides.finding_assessment },
+        executive_summary: { ...currentPrompts.executive_summary, ...overrides.executive_summary },
+        finding_prose: { ...currentPrompts.finding_prose, ...overrides.finding_prose },
+        triage_batch: overrides.triage_batch
+            ? { ...currentPrompts.triage_batch, ...overrides.triage_batch }
+            : currentPrompts.triage_batch,
+    };
+    populatePromptFields(merged);
+}
+
+// Read current textarea values into a prompt sections object
+function readPromptFields() {
+    return {
+        finding_assessment: {
+            system: document.getElementById('prompt-assessment-system').value,
+            user: document.getElementById('prompt-assessment-user').value,
+        },
+        executive_summary: {
+            system: document.getElementById('prompt-summary-system').value,
+            user: document.getElementById('prompt-summary-user').value,
+        },
+        finding_prose: {
+            system: document.getElementById('prompt-prose-system').value,
+            user: document.getElementById('prompt-prose-user').value,
+        },
+        triage_batch: {
+            system: document.getElementById('prompt-batch-system').value,
+            user: document.getElementById('prompt-batch-user').value,
+        },
+    };
+}
+
+// Compute overrides: only keys that differ from the default prompts
+function computeProfileOverrides(fields) {
+    const overrides = {};
+    for (const section of ['finding_assessment', 'executive_summary', 'finding_prose', 'triage_batch']) {
+        const defaults = currentPrompts[section] || {};
+        const edited = fields[section] || {};
+        const diff = {};
+        for (const key of ['system', 'user']) {
+            if (edited[key] !== undefined && edited[key] !== (defaults[key] || '')) {
+                diff[key] = edited[key];
+            }
+        }
+        if (Object.keys(diff).length > 0) {
+            overrides[section] = diff;
+        }
+    }
+    return overrides;
+}
+
+async function savePrompts() {
+    if (!currentPrompts) currentPrompts = {};
+
+    const fields = readPromptFields();
+    const profile = currentProfileName || 'default';
+
+    if (profile === 'default') {
+        // Save directly to top-level prompts
+        currentPrompts.finding_assessment = {
+            ...currentPrompts.finding_assessment,
+            system: fields.finding_assessment.system,
+            user: fields.finding_assessment.user,
+        };
+        currentPrompts.executive_summary = {
+            ...currentPrompts.executive_summary,
+            system: fields.executive_summary.system,
+            user: fields.executive_summary.user,
+        };
+        currentPrompts.finding_prose = {
+            ...currentPrompts.finding_prose,
+            system: fields.finding_prose.system,
+            user: fields.finding_prose.user,
+        };
+        currentPrompts.triage_batch = {
+            system: fields.triage_batch.system,
+            user: fields.triage_batch.user,
+        };
+    } else {
+        // Save as profile overrides (only diffs from defaults)
+        if (!currentPrompts.profiles) currentPrompts.profiles = {};
+        const overrides = computeProfileOverrides(fields);
+        currentPrompts.profiles[profile] = overrides;
+    }
+
+    try {
+        const resp = await fetch('/api/prompts', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ prompts: currentPrompts }),
+        });
+
+        if (resp.ok) {
+            const label = profile === 'default' ? 'Default prompts' : `${profile} profile overrides`;
+            toastSuccess(`${label} saved to prompts.yaml.`);
+        } else {
+            toastError('Failed to save prompts');
+        }
+    } catch (e) {
+        toastError('Error saving prompts: ' + e.message);
+    }
+}
+
+function showPromptTab(tab) {
+    document.getElementById('prompt-assessment').style.display = 'none';
+    document.getElementById('prompt-summary').style.display = 'none';
+    document.getElementById('prompt-prose').style.display = 'none';
+    document.getElementById('prompt-batch').style.display = 'none';
+    document.querySelectorAll('.prompt-tab').forEach(t => t.classList.remove('active'));
+    document.getElementById('prompt-' + tab).style.display = 'block';
+    event.target.classList.add('active');
+}
+
+// Legacy compat
+window.ollamaSettings = JSON.parse(localStorage.getItem('ollamaSettings') || '{}');
+window.getOllamaSettings = function() {
+    return window.ollamaSettings || JSON.parse(localStorage.getItem('ollamaSettings') || '{}');
+};
+</script>
+{% endblock %}

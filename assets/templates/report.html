@@ -1,0 +1,276 @@
+{% extends "base.html" %}
+{% block title %}Report — {{ report_name }}{% endblock %}
+
+{% block content %}
+<!-- Loading skeleton -->
+<div id="report-loading" class="animate-in">
+    <div role="status" aria-live="polite" aria-busy="true" class="report-skeleton">
+        <div class="skeleton-title"></div>
+        <div class="skeleton-header"></div>
+        <div class="skeleton-content">
+            <div class="skeleton-line"></div>
+            <div class="skeleton-line"></div>
+            <div class="skeleton-line"></div>
+            <div class="skeleton-line"></div>
+            <div class="skeleton-line"></div>
+        </div>
+    </div>
+</div>
+
+<!-- Progress area for live scans -->
+<div id="progress-area" class="progress-card" style="display:none" aria-live="polite">
+    <div class="progress-header">
+        <span id="progress-title">Analyzing...</span>
+        <button class="btn btn-outline btn-sm" id="cancel-btn" onclick="cancelCurrentScan()">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+            Cancel
+        </button>
+    </div>
+    <progress id="progress-bar" value="0" max="100" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100"></progress>
+    <div id="progress-log" class="log-area" role="log" aria-live="polite"></div>
+</div>
+
+<!-- Report content -->
+<div id="report-area" class="report-card" style="display:none" role="main" aria-label="Report content">
+    <div class="report-header">
+        <span id="report-title" role="heading" aria-level="1"></span>
+        <div class="report-actions">
+            <a href="#" id="back-btn" class="btn btn-outline btn-sm" role="button" aria-label="Back">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></svg>
+                Back
+            </a>
+        </div>
+    </div>
+    <div id="report-content" class="markdown-body" role="article"></div>
+</div>
+
+<!-- LLM Re-scan Modal -->
+<div id="llm-rescan-modal" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="llm-rescan-title">
+    <div class="settings-card" style="max-width: 480px; margin: 10vh auto;">
+        <div class="settings-card-header">
+            <h3 id="llm-rescan-title">Re-scan with LLM</h3>
+        </div>
+        <div class="settings-card-body">
+            <p style="color: var(--fg-secondary); margin-bottom: var(--space-4);">Re-analyze this extension with LLM to get deeper insights and false positive detection.</p>
+
+            <div class="form-group">
+                <label for="rescan-model">Model</label>
+                <select id="rescan-model"><option value="">Loading...</option></select>
+                <input type="text" id="rescan-model-manual" placeholder="Enter model name manually" style="display:none">
+            </div>
+
+            <label class="checkbox-option">
+                <input type="checkbox" id="rescan-full">
+                <span class="checkbox-label">
+                    <strong>Full output</strong>
+                    <span>Include more detailed analysis in the report</span>
+                </span>
+            </label>
+        </div>
+        <div class="settings-actions" style="display: flex; gap: var(--space-3); justify-content: flex-end; padding-top: var(--space-4); border-top: 1px solid var(--border-subtle); margin-top: 0;">
+            <button onclick="closeLlmRescanModal()" class="btn btn-outline">Cancel</button>
+            <button onclick="startLlmRescan()" class="btn btn-primary">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454z"/><path d="M17 4a2 2 0 0 0 2 2a2 2 0 0 0 -2 2a2 2 0 0 0 -2 -2a2 2 0 0 0 2 -2"/><path d="M19 11h2m-1 -1v2"/></svg>
+                Start Analysis
+            </button>
+        </div>
+    </div>
+</div>
+
+<div id="report-error" style="display:none" role="alert" aria-live="assertive" class="empty-state">
+    <div class="empty-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"/>
+            <path d="m15 9-6 6"/>
+            <path d="m9 9 6 6"/>
+        </svg>
+    </div>
+    <h3>Report Not Found</h3>
+    <p id="error-message">The requested report could not be loaded.</p>
+    <a href="/history" class="btn btn-primary">Back to History</a>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
+<script>
+const reportName = "{{ report_name }}";
+
+document.addEventListener('DOMContentLoaded', () => {
+    // Set up back button based on referrer
+    const backBtn = document.getElementById('back-btn');
+    const referrer = document.referrer;
+    if (referrer.includes('/batch')) {
+        backBtn.textContent = 'Back to Batch';
+        backBtn.onclick = () => window.location.href = '/batch';
+    } else {
+        backBtn.textContent = 'Back to History';
+        backBtn.onclick = () => window.location.href = '/history';
+    }
+
+    if (reportName.startsWith('_scan_')) {
+        // This is a live scan — track its progress via SSE
+        const scanId = reportName.replace('_scan_', '');
+        trackLiveScan(scanId);
+    } else {
+        loadSavedReport(reportName);
+    }
+});
+
+async function loadSavedReport(name) {
+    try {
+        const resp = await fetch(`/api/reports/${encodeURIComponent(name)}`);
+        if (!resp.ok) throw new Error('Not found');
+        const data = await resp.json();
+        showReport(name, data.content);
+    } catch(e) {
+        document.getElementById('report-loading').style.display = 'none';
+        document.getElementById('report-error').style.display = '';
+        document.getElementById('error-message').textContent = `Error loading report: ${e.message}`;
+    }
+}
+
+function trackLiveScan(scanId) {
+    document.getElementById('report-loading').style.display = 'none';
+    document.getElementById('progress-area').style.display = '';
+
+    _reportTracker = createScanTracker(scanId, {
+        progressBar: document.getElementById('progress-bar'),
+        logArea: document.getElementById('progress-log'),
+        titleEl: document.getElementById('progress-title'),
+        progressArea: document.getElementById('progress-area'),
+        onComplete: (result) => {
+            if (result && result.markdown) {
+                showReport(result.report_name || 'report', result.markdown);
+            }
+        },
+        onError: (info) => {
+            if (info.result && info.result.error) {
+                document.getElementById('report-error').style.display = '';
+                document.getElementById('error-message').textContent = `Error: ${info.result.error}`;
+            }
+        }
+    }).start();
+}
+
+function showReport(name, markdown) {
+    document.getElementById('report-loading').style.display = 'none';
+    document.getElementById('report-area').style.display = '';
+    document.getElementById('report-title').textContent = name;
+
+    const rawHtml = marked.parse(markdown);
+    const safeHtml = DOMPurify.sanitize(rawHtml);
+    const container = document.getElementById('report-content');
+    while (container.firstChild) container.removeChild(container.firstChild);
+    const wrapper = document.createElement('div');
+    wrapper.innerHTML = safeHtml;
+    while (wrapper.firstChild) container.appendChild(wrapper.firstChild);
+}
+
+// Cancel current scan
+let _reportTracker = null;
+
+function cancelCurrentScan() {
+    if (_reportTracker) {
+        _reportTracker.cancel();
+        _reportTracker = null;
+    }
+}
+
+// LLM Re-scan functionality
+let currentExtensionId = null;
+
+function showLlmRescanModal() {
+    // Extract extension ID from report name (format: publisher.extensionName)
+    // For report names in format extid_YYYYMMDD_HHMMSS, extract the first part
+    if (reportName && !reportName.startsWith('_scan_')) {
+        // Check if underscore format first, then dot format
+        if (reportName.includes('_')) {
+            currentExtensionId = reportName.split('_')[0];
+        } else if (reportName.includes('.')) {
+            currentExtensionId = reportName;
+        } else {
+            currentExtensionId = reportName;
+        }
+    }
+    loadRescanModels();
+    document.getElementById('llm-rescan-modal').style.display = 'flex';
+}
+
+function closeLlmRescanModal() {
+    document.getElementById('llm-rescan-modal').style.display = 'none';
+}
+
+async function loadRescanModels() {
+    // Load base URL from server config
+    let url = 'http://localhost:11434';
+    try {
+        const cfgResp = await fetch('/api/config');
+        const cfg = await cfgResp.json();
+        url = cfg.main?.baseUrl || url;
+    } catch (_) {}
+
+    try {
+        const resp = await fetch(`/api/models?ollama_url=${encodeURIComponent(url)}`);
+        const data = await resp.json();
+        const select = document.getElementById('rescan-model');
+        const manual = document.getElementById('rescan-model-manual');
+
+        if (data.models && data.models.length > 0) {
+            select.textContent = '';
+            data.models.sort((a, b) => a.localeCompare(b)).forEach(m => {
+                const opt = document.createElement('option');
+                opt.value = m;
+                opt.textContent = m;
+                select.appendChild(opt);
+            });
+            select.style.display = '';
+            manual.style.display = 'none';
+        } else {
+            select.style.display = 'none';
+            manual.style.display = '';
+            manual.value = manual.value || 'kimi-k2.5:cloud';
+        }
+    } catch(e) {
+        document.getElementById('rescan-model').style.display = 'none';
+        document.getElementById('rescan-model-manual').style.display = '';
+        document.getElementById('rescan-model-manual').value = 'kimi-k2.5:cloud';
+    }
+}
+
+async function startLlmRescan() {
+    const model = document.getElementById('rescan-model').value || document.getElementById('rescan-model-manual').value.trim();
+    const fullOutput = document.getElementById('rescan-full').checked;
+
+    if (!model) {
+        toastWarning('Please select or enter a model name.');
+        return;
+    }
+
+    closeLlmRescanModal();
+
+    fetch('/api/llm-analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            extension_id: currentExtensionId,
+            full_output: fullOutput
+        })
+    })
+    .then(r => {
+        if (!r.ok) return r.json().then(err => { throw new Error(err.detail || `Error ${r.status}`); });
+        return r.json();
+    })
+    .then(data => {
+        if (data.scan_id) {
+            toastSuccess('LLM re-analysis started. Check History for results.');
+        } else {
+            throw new Error(data.detail || 'No scan ID returned');
+        }
+    })
+    .catch(err => {
+        toastError('Error starting LLM analysis: ' + err.message);
+    });
+}
+</script>
+{% endblock %}
