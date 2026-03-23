@@ -349,7 +349,10 @@ export class StaticAnalyzer {
     const fileStats = this.buildFileStats(fileTypes);
     
     // Verify repository URL accessibility
-    const repoUrl = packageJson.repository?.url;
+    // repository can be a string or an object with a url property
+    const repoUrl = typeof packageJson.repository === 'string'
+      ? packageJson.repository
+      : packageJson.repository?.url;
     if (repoUrl) {
       const repoFinding = await this.verifyRepositoryUrl(repoUrl);
       if (repoFinding) findings.push(repoFinding);
@@ -613,6 +616,7 @@ export class StaticAnalyzer {
       try {
         const stats = statSync(filePath);
         const relativePath = relative(this.extensionPath, filePath);
+        const wasTruncated = stats.size > 1024 * 1024;
 
         // Only scan the first 1MB for dependency markers (they appear early in bundles)
         const content = stats.size <= CHUNK_SIZE
@@ -621,10 +625,12 @@ export class StaticAnalyzer {
 
         const lines = content.split('\n');
         let currentDep: string | null = null;
-        let regionStart = 0;
+        let regionStart = 1; // 1-indexed to match finding line numbers
+        const fileDeps = new Set<string>();
 
         for (let i = 0; i < lines.length; i++) {
           const line = lines[i];
+          const lineNum1 = i + 1; // 1-indexed line number
 
           // Check all patterns
           for (const [regex, groupIdx] of [
@@ -636,21 +642,39 @@ export class StaticAnalyzer {
               const depName = m[groupIdx]?.replace(/\/.*$/, ''); // strip sub-paths
               if (depName && depName.length > 1 && depName.length < 80) {
                 deps.add(depName);
+                fileDeps.add(depName);
 
                 // Close previous region and start new one
                 if (currentDep) {
-                  this.bundleRegions.set(`${relativePath}:${regionStart}-${i}`, currentDep);
+                  this.bundleRegions.set(`${relativePath}:${regionStart}-${lineNum1 - 1}`, currentDep);
                 }
                 currentDep = depName;
-                regionStart = i;
+                regionStart = lineNum1;
               }
             }
           }
         }
 
-        // Close final region
+        // Close final region — extend to end of file (use MAX_SAFE_INTEGER
+        // when the scan was truncated so findings beyond the scan are still tagged)
         if (currentDep) {
-          this.bundleRegions.set(`${relativePath}:${regionStart}-${lines.length}`, currentDep);
+          const endLine = wasTruncated ? Number.MAX_SAFE_INTEGER : lines.length;
+          this.bundleRegions.set(`${relativePath}:${regionStart}-${endLine}`, currentDep);
+        }
+
+        // For minified files (very few lines), line-based regions are unreliable
+        // because multiple dep markers share the same line — intermediate regions
+        // collapse to empty ranges. Replace with a single file-wide region.
+        if (fileDeps.size > 0 && lines.length <= 10) {
+          for (const key of [...this.bundleRegions.keys()]) {
+            if (key.startsWith(`${relativePath}:`)) {
+              this.bundleRegions.delete(key);
+            }
+          }
+          const depLabel = fileDeps.size === 1
+            ? [...fileDeps][0]
+            : `${fileDeps.size} bundled modules`;
+          this.bundleRegions.set(`${relativePath}:1-${Number.MAX_SAFE_INTEGER}`, depLabel);
         }
       } catch {
         // Skip unreadable files

@@ -88,7 +88,7 @@ html {
 body {
   margin: 0;
   font-family: var(--font-body);
-  font-size: 0.9375rem;
+  font-size: 1rem;
   line-height: 1.6;
   color: var(--fg);
   background: var(--bg-base);
@@ -189,7 +189,7 @@ nav ul a {
   align-items: center;
   gap: var(--space-2);
   padding: var(--space-2) var(--space-4);
-  font-size: 0.875rem;
+  font-size: 0.9375rem;
   font-weight: 500;
   color: var(--fg-muted);
   border-radius: var(--radius-full);
@@ -250,7 +250,7 @@ article header h3,
   height: 40px;
   padding: 0 var(--space-4);
   font-family: var(--font-body);
-  font-size: 0.875rem;
+  font-size: 0.9375rem;
   font-weight: 500;
   line-height: 1;
   text-decoration: none;
@@ -332,7 +332,7 @@ article header h3,
 .btn-sm {
   height: 32px;
   padding: 0 var(--space-3);
-  font-size: 0.8125rem;
+  font-size: 0.875rem;
 }
 
 .btn-lg {
@@ -354,7 +354,7 @@ article header h3,
 }
 
 label {
-  font-size: 0.8125rem;
+  font-size: 0.875rem;
   font-weight: 500;
   color: var(--fg-secondary);
 }
@@ -371,7 +371,7 @@ textarea {
   height: 40px;
   padding: 0 var(--space-3);
   font-family: var(--font-body);
-  font-size: 0.875rem;
+  font-size: 0.9375rem;
   color: var(--fg);
   background: var(--bg-elevated);
   border: 1px solid var(--border);
@@ -456,7 +456,7 @@ select {
 }
 
 .file-input-label span {
-  font-size: 0.875rem;
+  font-size: 0.9375rem;
   color: var(--fg-muted);
 }
 
@@ -464,7 +464,7 @@ select {
   display: block;
   text-align: center;
   margin-top: var(--space-2);
-  font-size: 0.8125rem;
+  font-size: 0.875rem;
   color: var(--fg-muted);
 }
 
@@ -502,7 +502,7 @@ progress::-moz-progress-bar {
 /* Log Area */
 .log-area {
   font-family: var(--font-mono);
-  font-size: 0.75rem;
+  font-size: 0.8125rem;
   line-height: 1.6;
   max-height: 200px;
   overflow-y: auto;
@@ -544,7 +544,7 @@ progress::-moz-progress-bar {
 }
 
 .metric-label {
-  font-size: 0.75rem;
+  font-size: 0.8125rem;
   font-weight: 500;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -557,7 +557,7 @@ progress::-moz-progress-bar {
   align-items: center;
   gap: var(--space-1);
   padding: var(--space-1) var(--space-3);
-  font-size: 0.75rem;
+  font-size: 0.8125rem;
   font-weight: 600;
   border-radius: var(--radius-full);
   white-space: nowrap;
@@ -592,11 +592,11 @@ progress::-moz-progress-bar {
 table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.875rem;
+  font-size: 0.9375rem;
 }
 
 th {
-  font-size: 0.75rem;
+  font-size: 0.8125rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -657,19 +657,19 @@ tr:hover td {
   gap: var(--space-2);
   flex-wrap: wrap;
   margin: 0 0 var(--space-1);
-  font-size: 0.9375rem;
+  font-size: 1rem;
   font-weight: 600;
 }
 
 .ext-row .ext-id {
   font-family: var(--font-mono);
-  font-size: 0.75rem;
+  font-size: 0.8125rem;
   color: var(--fg-muted);
   margin-bottom: var(--space-1);
 }
 
 .ext-row .ext-info p {
-  font-size: 0.8125rem;
+  font-size: 0.875rem;
   color: var(--fg-secondary);
   margin: 0 0 var(--space-2);
   display: -webkit-box;
@@ -679,7 +679,7 @@ tr:hover td {
 }
 
 .ext-row .ext-meta {
-  font-size: 0.75rem;
+  font-size: 0.8125rem;
   color: var(--fg-muted);
 }
 
@@ -712,7 +712,7 @@ tr:hover td {
 }
 
 .sidebar-header {
-  font-size: 0.75rem;
+  font-size: 0.8125rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.08em;
@@ -837,7 +837,7 @@ tr:hover td {
 
 /* ── Markdown Body ──────────────────────────────────────────────────────────── */
 .markdown-body {
-  font-size: 0.9375rem;
+  font-size: 1rem;
   line-height: 1.7;
 }
 
@@ -861,7 +861,7 @@ tr:hover td {
 }
 
 .markdown-body h4 {
-  font-size: 0.9375rem;
+  font-size: 1rem;
   margin-top: var(--space-4);
   margin-bottom: var(--space-2);
 }
@@ -872,17 +872,17 @@ tr:hover td {
 
 .markdown-body table {
   width: 100%;
-  font-size: 0.875rem;
+  font-size: 0.9375rem;
   margin-bottom: var(--space-4);
 }
 
 .markdown-body th {
-  font-size: 0.8125rem;
+  font-size: 0.875rem;
 }
 
 .markdown-body pre {
   font-family: var(--font-mono);
-  font-size: 0.8125rem;
+  font-size: 0.875rem;
   padding: var(--space-4);
   background: var(--bg-base);
   border: 1px solid var(--border-subtle);
@@ -965,7 +965,7 @@ tr:hover td {
   display: flex;
   align-items: center;
   padding: var(--space-2) var(--space-4);
-  font-size: 0.875rem;
+  font-size: 0.9375rem;
   font-weight: 500;
   color: var(--fg-muted);
   background: transparent;
@@ -1028,7 +1028,7 @@ tr:hover td {
   display: inline-flex;
   align-items: center;
   padding: 1px var(--space-2);
-  font-size: 0.625rem;
+  font-size: 0.6875rem;
   font-weight: 600;
   letter-spacing: 0.04em;
   border-radius: var(--radius-full);
@@ -1040,7 +1040,7 @@ tr:hover td {
 .filter-select {
   width: auto;
   height: 32px;
-  font-size: 0.8125rem;
+  font-size: 0.875rem;
   padding: 0 var(--space-6) 0 var(--space-3);
   background-position: right var(--space-2) center;
   min-width: 130px;
@@ -1057,7 +1057,7 @@ tr:hover td {
 }
 
 .progress-compact span {
-  font-size: 0.8125rem;
+  font-size: 0.875rem;
   font-weight: 600;
   color: var(--fg);
 }
@@ -1068,7 +1068,7 @@ tr:hover td {
 
 .progress-log-toggle {
   display: inline-block;
-  font-size: 0.75rem;
+  font-size: 0.8125rem;
   color: var(--fg-muted);
   background: none;
   border: none;
@@ -1093,7 +1093,7 @@ tr:hover td {
   overflow-y: auto;
   transition: max-height 0.3s ease;
   margin-top: var(--space-2);
-  font-size: 0.75rem;
+  font-size: 0.8125rem;
   font-family: var(--font-mono);
   color: var(--fg-muted);
   background: var(--bg-base);
@@ -1164,7 +1164,7 @@ tr:hover td {
   gap: var(--space-2);
   padding: var(--space-2) var(--space-3);
   margin-bottom: var(--space-3);
-  font-size: 0.8125rem;
+  font-size: 0.875rem;
   color: var(--fg-muted);
 }
 
@@ -1180,7 +1180,7 @@ tr:hover td {
 }
 
 .bulk-actions-content .selection-count {
-  font-size: 0.875rem;
+  font-size: 0.9375rem;
   font-weight: 600;
   color: var(--accent);
   margin-bottom: var(--space-2);
@@ -1201,7 +1201,7 @@ tr:hover td {
 }
 
 .batch-filter-group label {
-  font-size: 0.75rem;
+  font-size: 0.8125rem;
   font-weight: 500;
   color: var(--fg-muted);
   text-transform: uppercase;
@@ -1235,7 +1235,7 @@ tr:hover td {
 }
 
 .pagination-info {
-  font-size: 0.875rem;
+  font-size: 0.9375rem;
   color: var(--fg-muted);
 }
 
@@ -1267,7 +1267,7 @@ tr:hover td {
 .history-table td:last-child .btn {
   padding: 0 var(--space-2);
   height: 28px;
-  font-size: 0.75rem;
+  font-size: 0.8125rem;
 }
 
 /* Risk Color Classes */
@@ -1327,7 +1327,7 @@ td.risk-low { color: var(--success); }
 }
 
 .form-hint {
-  font-size: 0.75rem;
+  font-size: 0.8125rem;
   color: var(--fg-muted);
   margin-top: var(--space-1);
 }
@@ -1365,13 +1365,13 @@ td.risk-low { color: var(--success); }
 }
 
 .checkbox-label strong {
-  font-size: 0.875rem;
+  font-size: 0.9375rem;
   font-weight: 500;
   color: var(--fg);
 }
 
 .checkbox-label span {
-  font-size: 0.8125rem;
+  font-size: 0.875rem;
   color: var(--fg-muted);
 }
 
@@ -1387,7 +1387,7 @@ td.risk-low { color: var(--success); }
   align-items: center;
   gap: var(--space-2);
   padding: var(--space-2) var(--space-3);
-  font-size: 0.8125rem;
+  font-size: 0.875rem;
   border-radius: var(--radius-full);
 }
 
@@ -1450,7 +1450,7 @@ td.risk-low { color: var(--success); }
   gap: var(--space-3);
   padding: var(--space-3) var(--space-4);
   border-radius: var(--radius-md);
-  font-size: 0.875rem;
+  font-size: 0.9375rem;
   font-weight: 500;
   box-shadow: var(--shadow-lg);
   transform: translateX(100%);
@@ -1464,7 +1464,7 @@ td.risk-low { color: var(--success); }
 }
 
 .toast-icon {
-  font-size: 1rem;
+  font-size: 1.125rem;
 }
 
 .toast-success {
@@ -1558,7 +1558,7 @@ td.risk-low { color: var(--success); }
 /* ── Utility Classes ────────────────────────────────────────────────────────── */
 .text-center { text-align: center; }
 .text-muted { color: var(--fg-muted); }
-.text-sm { font-size: 0.8125rem; }
+.text-sm { font-size: 0.875rem; }
 
 .mt-0 { margin-top: 0; }
 .mt-1 { margin-top: var(--space-2); }
@@ -1599,12 +1599,12 @@ td.risk-low { color: var(--success); }
   }
   
   nav .brand {
-    font-size: 0.9375rem;
+    font-size: 1rem;
   }
-  
+
   nav ul a {
     padding: var(--space-2) var(--space-3);
-    font-size: 0.8125rem;
+    font-size: 0.875rem;
   }
   
   main {

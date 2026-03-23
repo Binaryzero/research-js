@@ -643,7 +643,7 @@ function readModelCard(slotId, label) {
         enabled: slotId === 'main' ? true : document.getElementById(`${slotId}-enabled`).checked,
         provider: 'ollama',
         model: model,
-        baseUrl: document.getElementById(`${slotId}-url`).value.trim() || 'http://localhost:11434',
+        baseUrl: getSlotUrl(slotId),
         apiStyle: document.getElementById(`${slotId}-api-style`).value,
         timeout: Number(document.getElementById(`${slotId}-timeout`).value) || 180000,
         maxTokens: Number(document.getElementById(`${slotId}-max-tokens`).value) || 32000,
@@ -661,13 +661,29 @@ function toggleJudgeCard(judgeId) {
     card.classList.toggle('disabled', !enabled);
 
     if (enabled) {
+        // Pre-fill URL from main model if judge URL is empty
+        const judgeUrl = document.getElementById(`${judgeId}-url`);
+        if (!judgeUrl.value.trim()) {
+            judgeUrl.value = document.getElementById('main-url').value.trim() || 'http://localhost:11434';
+        }
         loadModelsForSlot(judgeId);
     }
 }
 
+// ── Get effective URL for a slot (judges inherit main URL if empty) ──
+function getSlotUrl(slotId) {
+    const val = document.getElementById(`${slotId}-url`).value.trim();
+    if (val) return val;
+    // Judges inherit main model URL; main falls back to localhost
+    if (slotId !== 'main') {
+        return document.getElementById('main-url').value.trim() || 'http://localhost:11434';
+    }
+    return 'http://localhost:11434';
+}
+
 // ── Load models list for a slot ────────────────────────────────
 async function loadModelsForSlot(slotId) {
-    const url = document.getElementById(`${slotId}-url`).value.trim() || 'http://localhost:11434';
+    const url = getSlotUrl(slotId);
     const select = document.getElementById(`${slotId}-model-select`);
     const manual = document.getElementById(`${slotId}-model-manual`);
 
@@ -714,7 +730,7 @@ async function testSlotConnection(slotId) {
     statusEl.className = 'connection-status';
     textEl.textContent = 'Testing...';
 
-    const baseUrl = document.getElementById(`${slotId}-url`).value.trim() || 'http://localhost:11434';
+    const baseUrl = getSlotUrl(slotId);
 
     try {
         const resp = await fetch('/api/test-connection', {

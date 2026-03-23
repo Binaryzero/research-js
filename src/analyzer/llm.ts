@@ -1285,7 +1285,7 @@ export class ConsensusOrchestrator {
 
   /**
    * Batch assess findings with multi-model consensus.
-   * Main model assesses all findings. Judges re-assess a filtered subset.
+   * All models (main + judges) assess findings in parallel, then results are filtered and merged.
    */
   async batchAssessFindings(
     findings: Finding[],
@@ -1296,52 +1296,72 @@ export class ConsensusOrchestrator {
       return this.mainClient.batchAssessFindings(findings, options);
     }
 
-    // Step 1: Main model assesses all findings
-    options.onProgress?.(0, `Main model assessing ${findings.length} findings...`);
-    const mainAssessments = await this.mainClient.batchAssessFindings(findings, {
-      onProgress: (p, m) => options.onProgress?.(p * 0.5, `[Main] ${m}`),
-      extensionName: options.extensionName,
-    });
+    // Step 1: Launch all models in parallel — main + all judges assess the full finding set
+    const totalModels = 1 + this.judges.length;
+    const perModelProgress = new Array<number>(totalModels).fill(0);
 
-    // Step 2: Determine which findings need judge validation
+    const reportOverallProgress = (modelIndex: number, p: number, m: string) => {
+      perModelProgress[modelIndex] = p;
+      const overall = perModelProgress.reduce((sum, v) => sum + v, 0) / totalModels;
+      options.onProgress?.(overall * 0.95, m); // Reserve 0.95-1.0 for merge step
+    };
+
+    options.onProgress?.(0, `${totalModels} model(s) assessing ${findings.length} findings in parallel...`);
+
+    const allResults = await Promise.all([
+      // Main model
+      this.mainClient.batchAssessFindings(findings, {
+        onProgress: (p, m) => reportOverallProgress(0, p, `[Main] ${m}`),
+        extensionName: options.extensionName,
+      }),
+      // Judges — each wrapped with catch for graceful degradation
+      ...this.judges.map((judge, jIdx) =>
+        judge.batchAssessFindings(findings, {
+          onProgress: (p, m) => reportOverallProgress(1 + jIdx, p, `[Judge ${jIdx + 1}] ${m}`),
+          extensionName: options.extensionName,
+        }).catch((err): null => {
+          const judgeLabel = `Judge ${jIdx + 1}`;
+          options.onProgress?.(perModelProgress.reduce((s, v) => s + v, 0) / totalModels, `[${judgeLabel}] failed: ${err?.message ?? err}`);
+          return null; // Graceful degradation — continue without this judge
+        })
+      ),
+    ]);
+
+    const mainAssessments = allResults[0] as LlmAssessment[];
+    const judgeResults = allResults.slice(1) as (LlmAssessment[] | null)[];
+
+    // Step 2: Determine which findings need consensus merge
     const judgeIndices: number[] = [];
     for (let i = 0; i < mainAssessments.length; i++) {
       if (this.consensusConfig.judgesValidateAllFindings) {
         judgeIndices.push(i);
       } else {
-        const risk = mainAssessments[i].riskLevel?.toLowerCase();
-        if (risk === 'high' || risk === 'critical') {
+        // Check if ANY model rated this finding HIGH/CRITICAL
+        const risks = [mainAssessments[i].riskLevel?.toLowerCase()];
+        for (const jr of judgeResults) {
+          if (jr?.[i]) risks.push(jr[i].riskLevel?.toLowerCase());
+        }
+        if (risks.some(r => r === 'high' || r === 'critical')) {
           judgeIndices.push(i);
         }
       }
     }
 
     if (judgeIndices.length === 0) {
-      options.onProgress?.(1, 'No findings require judge validation');
+      options.onProgress?.(1, 'No findings require consensus merge');
       return mainAssessments;
     }
 
-    // Step 3: Each judge assesses the filtered subset in parallel
-    const judgeFindings = judgeIndices.map(i => findings[i]);
-    options.onProgress?.(0.5, `${this.judges.length} judge(s) reviewing ${judgeFindings.length} findings...`);
-
-    const judgeResults = await Promise.all(
-      this.judges.map((judge, jIdx) =>
-        judge.batchAssessFindings(judgeFindings, {
-          onProgress: (p, m) => options.onProgress?.(0.5 + p * 0.5 / this.judges.length, `[Judge ${jIdx + 1}] ${m}`),
-          extensionName: options.extensionName,
-        })
-      )
-    );
-
-    // Step 4: Merge main + judge votes for each judged finding
+    // Step 3: Merge main + judge votes for each finding that needs consensus
     for (let j = 0; j < judgeIndices.length; j++) {
       const idx = judgeIndices[j];
       const allVotes: LlmAssessment[] = [mainAssessments[idx]];
+      const modelIds: string[] = ['main'];
 
       for (let jIdx = 0; jIdx < judgeResults.length; jIdx++) {
-        if (judgeResults[jIdx][j]) {
-          allVotes.push(judgeResults[jIdx][j]);
+        if (judgeResults[jIdx]?.[idx]) {
+          allVotes.push(judgeResults[jIdx]![idx]);
+          modelIds.push(`judge${jIdx + 1}`);
         }
       }
 
@@ -1349,7 +1369,6 @@ export class ConsensusOrchestrator {
         mainAssessments[idx] = mergeConsensusAssessments(allVotes);
         // Stamp modelId on votes
         if (mainAssessments[idx].consensus) {
-          const modelIds = ['main', ...this.judges.map((_, i) => `judge${i + 1}`)];
           mainAssessments[idx].consensus!.votes = mainAssessments[idx].consensus!.votes.map((v, vi) => ({
             ...v,
             modelId: modelIds[vi] || `model${vi}`,
@@ -1358,7 +1377,7 @@ export class ConsensusOrchestrator {
       }
     }
 
-    options.onProgress?.(1, `Consensus complete: ${judgeIndices.length} findings reviewed by ${this.judges.length + 1} models`);
+    options.onProgress?.(1, `Consensus complete: ${judgeIndices.length} findings reviewed by ${totalModels} models`);
     return mainAssessments;
   }
 

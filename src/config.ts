@@ -1,8 +1,8 @@
 /**
- * Configuration management with auto-port detection
+ * Configuration management
  */
 
-import { createServer } from 'net';
+
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { existsSync, readFileSync, writeFileSync } from 'fs';
@@ -43,42 +43,6 @@ export interface PromptProfileOverride {
 }
 
 /**
- * Find an available port starting from startPort
- */
-export async function findAvailablePort(startPort: number, maxTries = 100): Promise<number> {
-  return new Promise((resolve, reject) => {
-    let currentPort = startPort;
-    
-    const tryPort = () => {
-      if (currentPort > startPort + maxTries) {
-        reject(new Error(`No available port found after ${maxTries} tries`));
-        return;
-      }
-      
-      const server = createServer();
-      
-      server.once('error', (err: NodeJS.ErrnoException) => {
-        if (err.code === 'EADDRINUSE') {
-          currentPort++;
-          tryPort();
-        } else {
-          reject(err);
-        }
-      });
-      
-      server.once('listening', () => {
-        server.close();
-        resolve(currentPort);
-      });
-      
-      server.listen(currentPort);
-    };
-    
-    tryPort();
-  });
-}
-
-/**
  * Load prompts from YAML file - throws if not found
  */
 export function loadPrompts(promptsFile: string): PromptConfig {
@@ -104,9 +68,7 @@ export function loadPrompts(promptsFile: string): PromptConfig {
  * Load configuration from environment and defaults
  */
 export async function loadConfig(): Promise<ServerConfig> {
-  // Auto-detect port if not specified
-  const envPort = process.env.PORT ? parseInt(process.env.PORT, 10) : null;
-  const port = envPort || await findAvailablePort(8001);
+  const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 8001;
   
   const llmConfig: LlmConfig = {
     model: process.env.LLM_MODEL || 'llama3.2',

@@ -62,7 +62,7 @@ TypeScript compiles `src/` to `dist/`. Runtime paths use `join(__dirname, '..')`
 ## Configuration
 
 Environment variables (all optional):
-- `PORT` - Server port (auto-detects starting at 8001 if not set)
+- `PORT` - Server port (default: 8001)
 - `HOST` - Bind address (default: 127.0.0.1)
 - `LLM_MODEL` - Model name (default: llama3.2)
 - `LLM_URL` - OpenAI-compatible API URL (default: http://localhost:11434)
