@@ -19,7 +19,7 @@
       "label": "Judge 1",
       "enabled": true,
       "provider": "ollama",
-      "model": "cogito-2.1:671b-cloud",
+      "model": "deepseek-v3.2:cloud",
       "baseUrl": "http://localhost:11434",
       "apiStyle": "auto",
       "timeout": 180000,
