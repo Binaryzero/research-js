@@ -44,7 +44,7 @@
   },
   "assessmentMode": "strategic",
   "promptProfile": "default",
-  "concurrency": 40,
+  "concurrency": 20,
   "defaultNoLlm": false,
   "defaultFull": true
 }

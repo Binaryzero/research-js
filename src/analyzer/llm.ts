@@ -319,7 +319,11 @@ export class LlmClient {
     this.prompts = prompts || this.getDefaultPrompts();
     console.log(`[LLM] Client initialized with assessmentMode: ${config.assessmentMode}`);
   }
-  
+
+  get concurrency(): number {
+    return this.config.concurrency || 10;
+  }
+
   private getDefaultPrompts(): PromptConfig {
     return {
       version: '1.0',
@@ -383,6 +387,7 @@ Respond with JSON only.`,
     options: {
       onProgress?: (progress: number, message: string) => void;
       extensionName?: string;
+      concurrencyLimit?: number;
     } = {}
   ): Promise<LlmAssessment[]> {
     // Route to appropriate mode based on config
@@ -640,6 +645,7 @@ If there are too many findings to assess completely, prioritize assessing the fi
     options: {
       onProgress?: (progress: number, message: string) => void;
       extensionName?: string;
+      concurrencyLimit?: number;
     } = {}
   ): Promise<LlmAssessment[]> {
     const results: LlmAssessment[] = new Array(findings.length);
@@ -746,21 +752,31 @@ If there are too many findings to assess completely, prioritize assessing the fi
         console.warn(`[LLM] Triage batch parse failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
       }
 
-      // Fall back to individual assessment for any missing findings
+      // Fall back to individual assessment for any missing findings (parallel with concurrency limit)
       const missing = batch.indices.filter(idx => !assessed.has(idx));
       if (missing.length > 0) {
-        console.warn(`[LLM] Triage batch: ${missing.length} findings missing, falling back to individual assessment`);
-        for (const idx of missing) {
-          try {
-            results[idx] = await this.assessFinding(findings[idx]);
-          } catch {
-            results[idx] = {
-              riskLevel: findings[idx].riskLevel as LlmAssessment['riskLevel'],
-              isFalsePositive: false,
-              falsePositiveReason: '',
-              explanation: 'Individual assessment fallback failed',
-              recommendation: 'investigate',
-            };
+        console.warn(`[LLM] Triage batch: ${missing.length} findings missing, falling back to individual assessment (parallel)`);
+        const concurrency = options.concurrencyLimit || this.config.concurrency || 10;
+        for (let start = 0; start < missing.length; start += concurrency) {
+          const chunk = missing.slice(start, start + concurrency);
+          const chunkResults = await Promise.all(
+            chunk.map(idx =>
+              this.assessFinding(findings[idx])
+                .then(result => ({ idx, result }))
+                .catch(() => ({
+                  idx,
+                  result: {
+                    riskLevel: findings[idx].riskLevel as LlmAssessment['riskLevel'],
+                    isFalsePositive: false,
+                    falsePositiveReason: '',
+                    explanation: 'Individual assessment fallback failed',
+                    recommendation: 'investigate' as const,
+                  },
+                }))
+            )
+          );
+          for (const { idx, result } of chunkResults) {
+            results[idx] = result;
           }
         }
       }
@@ -1307,18 +1323,21 @@ export class ConsensusOrchestrator {
     };
 
     options.onProgress?.(0, `${totalModels} model(s) assessing ${findings.length} findings in parallel...`);
+    const perModelConcurrency = Math.max(1, Math.ceil(this.mainClient.concurrency / totalModels));
 
     const allResults = await Promise.all([
       // Main model
       this.mainClient.batchAssessFindings(findings, {
         onProgress: (p, m) => reportOverallProgress(0, p, `[Main] ${m}`),
         extensionName: options.extensionName,
+        concurrencyLimit: perModelConcurrency,
       }),
       // Judges — each wrapped with catch for graceful degradation
       ...this.judges.map((judge, jIdx) =>
         judge.batchAssessFindings(findings, {
           onProgress: (p, m) => reportOverallProgress(1 + jIdx, p, `[Judge ${jIdx + 1}] ${m}`),
           extensionName: options.extensionName,
+          concurrencyLimit: perModelConcurrency,
         }).catch((err): null => {
           const judgeLabel = `Judge ${jIdx + 1}`;
           options.onProgress?.(perModelProgress.reduce((s, v) => s + v, 0) / totalModels, `[${judgeLabel}] failed: ${err?.message ?? err}`);
