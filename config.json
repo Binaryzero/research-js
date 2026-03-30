@@ -8,7 +8,7 @@
     "model": "qwen3-coder:480b-cloud",
     "baseUrl": "http://localhost:11434",
     "apiStyle": "auto",
-    "timeout": 180000,
+    "timeout": 1800000,
     "maxTokens": 65000,
     "temperature": 0,
     "promptProfile": "default"
@@ -22,7 +22,7 @@
       "model": "deepseek-v3.2:cloud",
       "baseUrl": "http://localhost:11434",
       "apiStyle": "auto",
-      "timeout": 180000,
+      "timeout": 1800000,
       "maxTokens": 65000,
       "temperature": 0
     },
@@ -34,7 +34,7 @@
       "model": "nemotron-3-super:cloud",
       "baseUrl": "http://localhost:11434",
       "apiStyle": "auto",
-      "timeout": 180000,
+      "timeout": 1800000,
       "maxTokens": 65000,
       "temperature": 0
     }

@@ -32,6 +32,8 @@ npm run typecheck
 
 This is a VS Code extension security analyzer with a Fastify web server, static analysis engine, and optional LLM enhancement.
 
+**Documentation:** See [docs/README.md](docs/README.md) for complete documentation organized by the Diátaxis Framework.
+
 ### Core Flow
 
 1. **Static Analysis** (`src/analyzer/static.ts`) - Extracts VSIX files, scans JS/TS for security patterns defined in `docs/patterns.yaml`, performs file type detection using magic bytes
