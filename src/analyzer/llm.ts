@@ -1,6 +1,8 @@
 /**
  * Concurrent LLM client for Ollama/OpenAI-compatible APIs
  * Key performance feature: parallel batch processing with concurrency limiting
+ * 
+ * ConcurrencyLimiter: Queue-based control to prevent 429 errors from Ollama
  */
 
 import { join, dirname } from 'path';
