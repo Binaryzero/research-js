@@ -1,6 +1,8 @@
 /**
  * Concurrent LLM client for Ollama/OpenAI-compatible APIs
  * Key performance feature: parallel batch processing with concurrency limiting
+ * 
+ * ConcurrencyLimiter: Queue-based control to prevent 429 errors from Ollama
  */
 
 import { join, dirname } from 'path';
@@ -846,7 +848,7 @@ If there are too many findings to assess completely, prioritize assessing the fi
       options.onProgress?.(0.90, `Consensus pass: ${consensusIndices.length} high/critical findings`);
       console.log(`[Consensus] Triage batch consensus pass: ${consensusIndices.length} findings need quorum`);
 
-      // Use concurrency limiter to avoid 429 errors
+      // Use concurrency limiter to avoid 429 errors - submit both additional votes simultaneously
       for (const idx of consensusIndices) {
         const finding = findings[idx];
         const firstVote = results[idx]; // Already have 1 vote from triage batch
@@ -854,9 +856,11 @@ If there are too many findings to assess completely, prioritize assessing the fi
         try {
           const { system, user } = this.buildFindingPrompt(finding);
 
-          // Use concurrency limiter for the 2 additional votes
-          const resp2 = await this.concurrencyLimiter.run(() => this.generate(user, system));
-          const resp3 = await this.concurrencyLimiter.run(() => this.generate(user, system));
+          // Use concurrency limiter for the 2 additional votes - submit simultaneously
+          const [resp2, resp3] = await Promise.all([
+            this.generate(user, system),
+            this.generate(user, system),
+          ]);
 
           const vote2 = parseSingleAssessment(resp2);
           const vote3 = parseSingleAssessment(resp3);
@@ -914,7 +918,6 @@ If there are too many findings to assess completely, prioritize assessing the fi
 
     let totalProcessed = 0;
     let totalLlmCalls = 0;
-    const concurrency = this.concurrency;
 
     // Flatten patterns and file groups for parallel processing
     const allFileGroups = patterns.flatMap(p => 
@@ -922,30 +925,26 @@ If there are too many findings to assess completely, prioritize assessing the fi
     );
 
     // Process file groups with concurrency limiting to avoid 429 errors
-    for (let i = 0; i < allFileGroups.length; i += concurrency) {
-      const batch = allFileGroups.slice(i, i + concurrency);
-      
-      // Process batch sequentially using concurrency limiter
-      const batchResults: Array<{ assessments: Map<number, LlmAssessment>; llmCalls: number; fileGroup: FileGroup }> = [];
-      for (const { pattern, fileGroup } of batch) {
-        const result = await this.concurrencyLimiter.run(() => 
+    // Submit all tasks simultaneously; limiter gates them to maxConcurrent
+    const allResults = await Promise.all(
+      allFileGroups.map(({ pattern, fileGroup }) =>
+        this.concurrencyLimiter.run(() =>
           this.processFileGroupForStrategic(pattern, fileGroup)
-        );
-        batchResults.push(result);
-      }
+        )
+      )
+    );
 
-      // Merge results from batch
-      for (const result of batchResults) {
-        const { assessments, llmCalls, fileGroup } = result;
-        for (const [groupIdx, assessment] of assessments) {
-          const originalIdx = pendingIndices[groupIdx];
-          if (originalIdx !== undefined) {
-            results[originalIdx] = assessment;
-          }
+    // Merge results from all file groups
+    for (const result of allResults) {
+      const { assessments, llmCalls, fileGroup } = result;
+      for (const [groupIdx, assessment] of assessments) {
+        const originalIdx = pendingIndices[groupIdx];
+        if (originalIdx !== undefined) {
+          results[originalIdx] = assessment;
         }
-        totalProcessed += fileGroup.findings.length;
-        totalLlmCalls += llmCalls;
       }
+      totalProcessed += fileGroup.findings.length;
+      totalLlmCalls += llmCalls;
     }
 
     // Fill any missing assessments with a conservative default
@@ -1018,13 +1017,9 @@ If there are too many findings to assess completely, prioritize assessing the fi
 
     if (useConsensus) {
       // Consensus mode: 3 calls, merge per-finding via majority vote
-      // Use concurrency limiter to avoid 429 errors
+      // Use concurrency limiter to avoid 429 errors - submit all 3 simultaneously
       console.log(`[Consensus] Quorum for ${pattern.category}/${pattern.patternName} (${pattern.risk} risk, ${samples.length} findings)`);
-      const runs: string[] = [];
-      for (let i = 0; i < 3; i++) {
-        const response = await this.concurrencyLimiter.run(() => this.generate(user, system));
-        runs.push(response);
-      }
+      const runs = await Promise.all([0, 1, 2].map(() => this.generate(user, system)));
       llmCalls = 3;
 
       const parsed = runs.map(r => parseStrategicAssessments(r, samples));
@@ -1058,12 +1053,8 @@ If there are too many findings to assess completely, prioritize assessing the fi
 
     if (useConsensus) {
       console.log(`[Consensus] Individual quorum for "${finding.title}" at ${finding.location} (${finding.riskLevel} risk)`);
-      // Use concurrency limiter to avoid 429 errors
-      const responses: string[] = [];
-      for (let i = 0; i < 3; i++) {
-        const response = await this.concurrencyLimiter.run(() => this.generate(user, system));
-        responses.push(response);
-      }
+      // Use concurrency limiter to avoid 429 errors - submit all 3 simultaneously
+      const responses = await Promise.all([0, 1, 2].map(() => this.generate(user, system)));
       const candidates = responses.map(r => parseSingleAssessment(r)).filter((a): a is LlmAssessment => !!a);
       if (candidates.length >= 2) return mergeConsensusAssessments(candidates);
       if (candidates.length === 1) return candidates[0];
