@@ -758,6 +758,50 @@ tr:hover td {
   margin-bottom: var(--space-4);
 }
 
+.progress-compact {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.progress-compact span {
+  font-size: 0.94rem;
+  color: var(--fg);
+}
+
+.progress-compact button {
+  flex-shrink: 0;
+}
+
+.progress-log-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: var(--space-3);
+  color: var(--fg-secondary);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.progress-log-toggle:hover {
+  color: var(--accent);
+}
+
+.progress-log-collapsed {
+  display: none;
+}
+
+.progress-log-expanded {
+  display: block;
+  max-height: 200px;
+  overflow: auto;
+  margin-top: var(--space-3);
+}
+
 .progress-header {
   display: flex;
   align-items: center;
@@ -1083,9 +1127,7 @@ tr:hover td {
 }
 
 .progress-log-collapsed {
-  max-height: 0;
-  overflow: hidden;
-  transition: max-height 0.3s ease;
+  display: none;
 }
 
 .progress-log-expanded {

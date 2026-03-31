@@ -94,18 +94,36 @@ export const RECOMMEND_ORDER: Record<string, number> = { investigate: 2, likely_
  */
 function parseSingleAssessment(response: string): LlmAssessment | null {
   try {
-    const jsonMatch = response.match(/\{[^{}]*\}/s);
-    if (jsonMatch) {
-      const parsed = JSON.parse(jsonMatch[0]) as Record<string, unknown>;
-      return {
-        riskLevel: (parsed.riskLevel || parsed.risk_level || 'unknown') as LlmAssessment['riskLevel'],
-        isFalsePositive: (parsed.isFalsePositive ?? parsed.is_false_positive ?? false) as boolean,
-        falsePositiveReason: (parsed.falsePositiveReason || parsed.false_positive_reason || '') as string,
-        explanation: (parsed.explanation || '') as string,
-        recommendation: (parsed.recommendation || 'investigate') as LlmAssessment['recommendation'],
-        injectionDetected: (parsed.injectionDetected ?? parsed.injection_detected ?? false) as boolean,
-      };
+    // Try to find a JSON object - handle nested objects by finding balanced braces
+    let start = response.indexOf('{');
+    if (start === -1) return null;
+
+    // Find the end of the JSON object by counting braces
+    let depth = 0;
+    let end = -1;
+    for (let i = start; i < response.length; i++) {
+      if (response[i] === '{') depth++;
+      else if (response[i] === '}') {
+        depth--;
+        if (depth === 0) {
+          end = i + 1;
+          break;
+        }
+      }
     }
+
+    if (end === -1) return null;
+
+    const jsonStr = response.slice(start, end);
+    const parsed = JSON.parse(jsonStr) as Record<string, unknown>;
+    return {
+      riskLevel: (parsed.riskLevel || parsed.risk_level || 'unknown') as LlmAssessment['riskLevel'],
+      isFalsePositive: (parsed.isFalsePositive ?? parsed.is_false_positive ?? false) as boolean,
+      falsePositiveReason: (parsed.falsePositiveReason || parsed.false_positive_reason || '') as string,
+      explanation: (parsed.explanation || '') as string,
+      recommendation: (parsed.recommendation || 'investigate') as LlmAssessment['recommendation'],
+      injectionDetected: (parsed.injectionDetected ?? parsed.injection_detected ?? false) as boolean,
+    };
   } catch {
     // Return null on parse failure
   }
@@ -780,26 +798,123 @@ If there are too many findings to assess completely, prioritize assessing the fi
       // Parse response — expect JSON array with index field per assessment
       const assessed = new Set<number>();
       try {
-        const arrayMatch = response.match(/\[[\s\S]*\]/);
-        if (arrayMatch) {
-          const parsed = JSON.parse(arrayMatch[0]) as Array<Record<string, unknown>>;
-          for (const item of parsed) {
-            const idx = item.index as number;
-            if (idx !== undefined && batch.indices.includes(idx)) {
-              results[idx] = {
-                riskLevel: (item.riskLevel || item.risk_level || 'unknown') as LlmAssessment['riskLevel'],
-                isFalsePositive: (item.isFalsePositive ?? item.is_false_positive ?? false) as boolean,
-                falsePositiveReason: (item.falsePositiveReason || item.false_positive_reason || '') as string,
-                explanation: (item.explanation || '') as string,
-                recommendation: (item.recommendation || 'investigate') as LlmAssessment['recommendation'],
-                injectionDetected: (item.injectionDetected ?? item.injection_detected ?? false) as boolean,
-              };
-              assessed.add(idx);
+        // Try multiple approaches to extract JSON array from response
+        let parsed: unknown[] = [];
+        let jsonStr: string | null = null;
+
+        // Helper: try to fix common JSON issues and parse
+        const tryParse = (text: string): unknown[] | null => {
+          try {
+            return JSON.parse(text) as unknown[];
+          } catch {
+            // Try fixing trailing commas before closing brackets
+            const fixed = text.replace(/,(\s*[}\]])/g, '$1');
+            try {
+              return JSON.parse(fixed) as unknown[];
+            } catch {
+              return null;
+            }
+          }
+        };
+
+        // Approach 1: Try direct parse first
+        parsed = tryParse(response) || [];
+        if (parsed.length > 0) {
+          console.log(`[LLM] Triage batch: Direct parse succeeded with ${parsed.length} items`);
+        }
+
+        // Approach 2: Try regex extraction if direct parse failed
+        if (parsed.length === 0) {
+          const arrayMatch = response.match(/\[[\s\S]*\]/);
+          if (arrayMatch) {
+            jsonStr = arrayMatch[0];
+            parsed = tryParse(jsonStr) || [];
+            if (parsed.length > 0) {
+              console.log(`[LLM] Triage batch: Regex extract succeeded with ${parsed.length} items`);
             }
           }
         }
+
+        // Approach 3: Try to find JSON array after first '[' and before last ']'
+        if (parsed.length === 0) {
+          const firstBracket = response.indexOf('[');
+          const lastBracket = response.lastIndexOf(']');
+          if (firstBracket !== -1 && lastBracket !== -1 && lastBracket > firstBracket) {
+            jsonStr = response.slice(firstBracket, lastBracket + 1);
+            parsed = tryParse(jsonStr) || [];
+            if (parsed.length > 0) {
+              console.log(`[LLM] Triage batch: Bracket extraction succeeded with ${parsed.length} items`);
+            }
+          }
+        }
+
+        // Approach 4: Extract individual JSON objects when array parsing fails
+        // This salvages partial results from malformed responses (e.g., unescaped quotes, bad escapes)
+        if (parsed.length === 0) {
+          const objects: unknown[] = [];
+          let searchFrom = 0;
+          while (searchFrom < response.length) {
+            const objStart = response.indexOf('{', searchFrom);
+            if (objStart === -1) break;
+            // Find balanced closing brace
+            let depth = 0;
+            let objEnd = -1;
+            for (let ci = objStart; ci < response.length; ci++) {
+              if (response[ci] === '{') depth++;
+              else if (response[ci] === '}') {
+                depth--;
+                if (depth === 0) { objEnd = ci + 1; break; }
+              }
+            }
+            if (objEnd === -1) break;
+            const candidate = response.slice(objStart, objEnd);
+            try {
+              const obj = JSON.parse(candidate);
+              if (obj && typeof obj === 'object' && ('index' in obj)) {
+                objects.push(obj);
+              }
+            } catch {
+              // Skip malformed individual objects
+            }
+            searchFrom = objEnd;
+          }
+          if (objects.length > 0) {
+            parsed = objects;
+            console.log(`[LLM] Triage batch: Individual object extraction salvaged ${objects.length} items`);
+          }
+        }
+
+        // Parse the items
+        for (const item of parsed) {
+          if (typeof item !== 'object' || item === null) continue;
+          const obj = item as Record<string, unknown>;
+          const idx = obj.index as number;
+          if (idx !== undefined && batch.indices.includes(idx)) {
+            results[idx] = {
+              riskLevel: (obj.riskLevel || obj.risk_level || 'unknown') as LlmAssessment['riskLevel'],
+              isFalsePositive: (obj.isFalsePositive ?? obj.is_false_positive ?? false) as boolean,
+              falsePositiveReason: (obj.falsePositiveReason || obj.false_positive_reason || '') as string,
+              explanation: (obj.explanation || '') as string,
+              recommendation: (obj.recommendation || 'investigate') as LlmAssessment['recommendation'],
+              injectionDetected: (obj.injectionDetected ?? obj.injection_detected ?? false) as boolean,
+            };
+            assessed.add(idx);
+          }
+        }
+
+        if (parsed.length > 0 && assessed.size === 0) {
+          console.warn(`[LLM] Triage batch: Parsed ${parsed.length} items but none matched batch indices`);
+        }
       } catch (error) {
         console.warn(`[LLM] Triage batch parse failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      }
+
+      // Track which findings were assessed via triage batch vs fallback
+      const batchAssessedIndices = new Set<number>();
+      for (const idx of batch.indices) {
+        if (assessed.has(idx)) {
+          batchAssessedIndices.add(idx);
+        }
       }
 
       // Fall back to individual assessment for any missing findings (sequential with concurrency limiter)
@@ -838,41 +953,47 @@ If there are too many findings to assess completely, prioritize assessing the fi
       }
     }
 
-    // Consensus pass: for high/critical pattern_risk findings, run 2 more calls and merge
+    // Consensus pass: for high/critical findings that were assessed via triage batch (not fallback)
+    // Note: assessFinding already runs consensus (3 calls) for high/critical findings,
+    // so we only need to run consensus on findings that were assessed via triage batch
     const consensusIndices = pendingIndices.filter(idx => {
-      const risk = findings[idx].riskLevel?.toLowerCase();
-      return risk === 'high' || risk === 'critical';
+      // Only run consensus on findings that were assessed via triage batch (not fallback)
+      // Check if this finding was in any batch that successfully assessed it
+      const finding = findings[idx];
+      const risk = finding.riskLevel?.toLowerCase();
+      return (risk === 'high' || risk === 'critical') && results[idx] && !results[idx].consensus;
     });
 
     if (consensusIndices.length > 0) {
       options.onProgress?.(0.90, `Consensus pass: ${consensusIndices.length} high/critical findings`);
       console.log(`[Consensus] Triage batch consensus pass: ${consensusIndices.length} findings need quorum`);
 
-      // Use concurrency limiter to avoid 429 errors - submit both additional votes simultaneously
-      for (const idx of consensusIndices) {
-        const finding = findings[idx];
-        const firstVote = results[idx]; // Already have 1 vote from triage batch
+      // Use concurrency limiter to avoid 429 errors - submit both additional votes via limiter
+      const consensusPromises = consensusIndices
+        .filter(idx => !results[idx]?.consensus) // Skip findings that already have consensus
+        .map(idx => this.concurrencyLimiter.run(async () => {
+          const finding = findings[idx];
+          const firstVote = results[idx];
+          try {
+            const { system, user } = this.buildFindingPrompt(finding);
 
-        try {
-          const { system, user } = this.buildFindingPrompt(finding);
+            const [resp2, resp3] = await Promise.all([
+              this.concurrencyLimiter.run(() => this.generate(user, system)),
+              this.concurrencyLimiter.run(() => this.generate(user, system)),
+            ]);
 
-          // Use concurrency limiter for the 2 additional votes - submit simultaneously
-          const [resp2, resp3] = await Promise.all([
-            this.generate(user, system),
-            this.generate(user, system),
-          ]);
+            const vote2 = parseSingleAssessment(resp2);
+            const vote3 = parseSingleAssessment(resp3);
 
-          const vote2 = parseSingleAssessment(resp2);
-          const vote3 = parseSingleAssessment(resp3);
-
-          const allVotes = [firstVote, vote2, vote3].filter((v): v is LlmAssessment => !!v);
-          if (allVotes.length >= 2) {
-            results[idx] = mergeConsensusAssessments(allVotes);
+            const allVotes = [firstVote, vote2, vote3].filter((v): v is LlmAssessment => !!v);
+            if (allVotes.length >= 2) {
+              results[idx] = mergeConsensusAssessments(allVotes);
+            }
+          } catch {
+            // Keep the previous result if consensus fails
           }
-        } catch {
-          // Keep the triage batch result if consensus fails
-        }
-      }
+        }));
+      await Promise.all(consensusPromises);
 
       console.log(`[Consensus] Triage consensus complete: ${consensusIndices.length} findings, ${consensusIndices.filter(idx => results[idx].consensus?.splitDecision).length} split decisions`);
     }

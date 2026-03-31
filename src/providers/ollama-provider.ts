@@ -164,7 +164,8 @@ export class OllamaProvider implements LlmProvider {
         console.error(`[LLM:${this.id}] error (${prompt.length} chars): ${msg}`);
         
         // Retry on network errors and timeouts (including 429 from previous attempt)
-        if (attempt < retries && (msg.includes('timeout') || msg.includes('fetch failed'))) {
+        const msgLower = msg.toLowerCase();
+        if (attempt < retries && (msgLower.includes('timeout') || msgLower.includes('fetch failed') || msgLower.includes('socket hang up') || msgLower.includes('econnreset'))) {
           // Longer delay for 429 to give Ollama time to recover
           const baseDelay = 2000; // Start with 2s for 429
           const delayMs = baseDelay * Math.pow(2, attempt); // 2s, 4s, 8s
