@@ -237,7 +237,7 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
     const inputSource = params.input_source || params.url || '';
     const noLlm = params.no_llm !== undefined
       ? String(params.no_llm).toLowerCase() === 'true'
-      : config.defaultNoLlm;
+      : config.defaultNoLlm ?? false;
 
     // Model config comes from server-side AppConfig (config.json), not client
     const appCfg = getAppConfig();
@@ -1109,6 +1109,10 @@ async function runScan(
     const result = await analyzer.analyze();
     task.emitProgress(0.4, `Static analysis complete: ${result.findings.length} findings`);
     
+    // Clear shared fast-assessment cache between scans to free memory
+    // This prevents cache growth across multiple scans
+    LlmClient.clearFastAssessmentCache();
+    
     if (task.cancelled) {
       task.status = 'cancelled';
       return;
@@ -1330,6 +1334,9 @@ async function runBatchLlmAnalysis(
       result.extensionId = extensionId;
 
       task.emitProgress(i / total, `[${i + 1}/${total}] ${result.findings.length} findings`);
+      
+      // Clear shared fast-assessment cache between batch scans to free memory
+      LlmClient.clearFastAssessmentCache();
       
       if (task.cancelled) {
         task.status = 'cancelled';

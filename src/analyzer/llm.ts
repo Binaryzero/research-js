@@ -3,6 +3,7 @@
  * Key performance feature: parallel batch processing with concurrency limiting
  * 
  * ConcurrencyLimiter: Queue-based control to prevent 429 errors from Ollama
+ * FastAssessmentCache: Shared cache to avoid redundant heuristic assessments across models
  */
 
 import { join, dirname } from 'path';
@@ -15,13 +16,23 @@ import type { LlmProvider } from '../providers/llm-provider.js';
 import { OllamaProvider } from '../providers/ollama-provider.js';
 
 /**
- * Concurrency limiter - ensures only N concurrent operations at a time
+ * Global concurrency limiter - single limiter shared across ALL LlmClient instances
+ * Key optimization: prevents overwhelming the LLM server by capping total concurrent requests
+ * across all models (main + judges) to a configurable limit (default: 15)
  */
-class ConcurrencyLimiter {
+class GlobalConcurrencyLimiter {
   private active = 0;
   private queue: Array<() => Promise<void>> = [];
+  private static instance: GlobalConcurrencyLimiter;
 
-  constructor(private maxConcurrent: number) {}
+  private constructor(private maxConcurrent: number = 15) {}
+
+  static getInstance(maxConcurrent?: number): GlobalConcurrencyLimiter {
+    if (!GlobalConcurrencyLimiter.instance) {
+      GlobalConcurrencyLimiter.instance = new GlobalConcurrencyLimiter(maxConcurrent);
+    }
+    return GlobalConcurrencyLimiter.instance;
+  }
 
   async run<T>(fn: () => Promise<T>): Promise<T> {
     return new Promise((resolve, reject) => {
@@ -55,8 +66,53 @@ class ConcurrencyLimiter {
   }
 }
 
+/**
+ * Fast assessment cache - shared across LlmClient instances to avoid redundant work
+ * Key optimization: each unique finding is assessed only once via fast heuristic
+ */
+class FastAssessmentCache {
+  private cache = new Map<string, LlmAssessment>();
+
+  /**
+   * Get cached assessment for a finding, or null if not cached
+   */
+  get(finding: Finding): LlmAssessment | null {
+    const key = this.makeKey(finding);
+    return this.cache.get(key) ?? null;
+  }
+
+  /**
+   * Store an assessment in the cache
+   */
+  set(finding: Finding, assessment: LlmAssessment): void {
+    const key = this.makeKey(finding);
+    this.cache.set(key, assessment);
+  }
+
+  /**
+   * Clear the cache (call between scans)
+   */
+  clear(): void {
+    this.cache.clear();
+  }
+
+  private makeKey(finding: Finding): string {
+    // Create a unique key based on finding characteristics
+    return [
+      finding.category,
+      finding.title,
+      finding.location,
+      finding.evidence.slice(0, 200), // Truncate evidence for key
+      finding.riskLevel,
+    ].join('|');
+  }
+}
+
+// Global cache instance - shared across all LlmClient instances
+const globalFastAssessmentCache = new FastAssessmentCache();
+
 // Import types for strategic mode
-import type { PatternGroup, FileGroup } from './llm-batch.js';
+import { PatternGroup, FileGroup } from './llm-batch.js';
 
 /**
  * Parse the VERDICT line from an executive summary.
@@ -370,8 +426,9 @@ export class LlmClient {
   private provider: LlmProvider;
   private fastAssessor: FastRiskAssessor;
   private prompts: PromptConfig;
+  private useSharedCache: boolean;
 
-  constructor(config: LlmConfig, prompts?: PromptConfig, provider?: LlmProvider) {
+  constructor(config: LlmConfig, prompts?: PromptConfig, provider?: LlmProvider, useSharedCache: boolean = true) {
     this.config = config;
     this.provider = provider || new OllamaProvider(
       { id: 'main', model: config.model },
@@ -380,16 +437,32 @@ export class LlmClient {
     );
     this.fastAssessor = new FastRiskAssessor();
     this.prompts = prompts || this.getDefaultPrompts();
-    // Concurrency limiter for Ollama requests - prevents 429 errors
-    this.concurrencyLimiter = new ConcurrencyLimiter(this.concurrency);
-    console.log(`[LLM] Client initialized with assessmentMode: ${config.assessmentMode}`);
+    this.useSharedCache = useSharedCache;
+    // Use global concurrency limiter to prevent overwhelming the LLM server
+    // All LlmClient instances share the same limiter for total concurrency control
+    this.concurrencyLimiter = GlobalConcurrencyLimiter.getInstance(this.concurrency);
+    console.log(`[LLM] Client initialized with assessmentMode: ${config.assessmentMode}, sharedCache: ${useSharedCache}`);
   }
 
   get concurrency(): number {
     return this.config.concurrency || 10;
   }
 
-  private readonly concurrencyLimiter: ConcurrencyLimiter;
+  private readonly concurrencyLimiter: GlobalConcurrencyLimiter;
+
+  /**
+   * Get the global concurrency limiter for external use (e.g., ConsensusOrchestrator)
+   */
+  getConcurrencyLimiter(): GlobalConcurrencyLimiter {
+    return this.concurrencyLimiter;
+  }
+
+  /**
+   * Clear the shared fast-assessment cache (call between scans)
+   */
+  static clearFastAssessmentCache(): void {
+    globalFastAssessmentCache.clear();
+  }
 
   private getDefaultPrompts(): PromptConfig {
     return {
@@ -491,7 +564,22 @@ Respond with JSON only.`,
 
     // First pass: fast heuristic assessment (same as strategic mode)
     for (let i = 0; i < findings.length; i++) {
-      const fastResult = this.fastAssessor.assess(findings[i]);
+      let fastResult: LlmAssessment | null = null;
+      
+      // Use shared cache if enabled - avoids redundant fast assessment work
+      if (this.useSharedCache) {
+        fastResult = globalFastAssessmentCache.get(findings[i]);
+      }
+      
+      // If not cached, run fast assessment
+      if (!fastResult) {
+        fastResult = this.fastAssessor.assess(findings[i]);
+        // Cache the result if enabled
+        if (this.useSharedCache && fastResult) {
+          globalFastAssessmentCache.set(findings[i], fastResult);
+        }
+      }
+      
       if (fastResult) {
         results[i] = fastResult;
       } else {
@@ -719,9 +807,24 @@ If there are too many findings to assess completely, prioritize assessing the fi
     const results: LlmAssessment[] = new Array(findings.length);
     const pendingIndices: number[] = [];
 
-    // First pass: fast heuristic
+    // First pass: fast heuristic with shared cache
     for (let i = 0; i < findings.length; i++) {
-      const fastResult = this.fastAssessor.assess(findings[i]);
+      let fastResult: LlmAssessment | null = null;
+      
+      // Use shared cache if enabled - avoids redundant fast assessment work
+      if (this.useSharedCache) {
+        fastResult = globalFastAssessmentCache.get(findings[i]);
+      }
+      
+      // If not cached, run fast assessment
+      if (!fastResult) {
+        fastResult = this.fastAssessor.assess(findings[i]);
+        // Cache the result if enabled
+        if (this.useSharedCache && fastResult) {
+          globalFastAssessmentCache.set(findings[i], fastResult);
+        }
+      }
+      
       if (fastResult) {
         results[i] = fastResult;
       } else {
@@ -1016,9 +1119,24 @@ If there are too many findings to assess completely, prioritize assessing the fi
     const results: LlmAssessment[] = new Array(findings.length);
     const pendingIndices: number[] = [];
 
-    // First pass: fast heuristic assessment
+    // First pass: fast heuristic assessment with shared cache
     for (let i = 0; i < findings.length; i++) {
-      const fastResult = this.fastAssessor.assess(findings[i]);
+      let fastResult: LlmAssessment | null = null;
+      
+      // Use shared cache if enabled - avoids redundant fast assessment work
+      if (this.useSharedCache) {
+        fastResult = globalFastAssessmentCache.get(findings[i]);
+      }
+      
+      // If not cached, run fast assessment
+      if (!fastResult) {
+        fastResult = this.fastAssessor.assess(findings[i]);
+        // Cache the result if enabled
+        if (this.useSharedCache && fastResult) {
+          globalFastAssessmentCache.set(findings[i], fastResult);
+        }
+      }
+      
       if (fastResult) {
         results[i] = fastResult;
       } else {
@@ -1479,6 +1597,9 @@ export class ConsensusOrchestrator {
   /**
    * Batch assess findings with multi-model consensus.
    * All models (main + judges) assess findings in parallel, then results are filtered and merged.
+   * 
+   * Performance optimization: Uses shared fast-assessment cache to avoid redundant work,
+   * and limits concurrent LLM calls to prevent 429 errors.
    */
   async batchAssessFindings(
     findings: Finding[],
@@ -1500,21 +1621,24 @@ export class ConsensusOrchestrator {
     };
 
     options.onProgress?.(0, `${totalModels} model(s) assessing ${findings.length} findings in parallel...`);
-    const perModelConcurrency = Math.max(1, Math.ceil(this.mainClient.concurrency / totalModels));
-
+    
+    // Limit concurrent LLM calls across ALL models to prevent 429 errors
+    // Total concurrency = sum of all model concurrency, but cap at reasonable limit
+    const totalConcurrency = Math.min(15, this.mainClient.concurrency + this.judges.reduce((sum, j) => sum + j.concurrency, 0));
+    
     const allResults = await Promise.all([
       // Main model
       this.mainClient.batchAssessFindings(findings, {
         onProgress: (p, m) => reportOverallProgress(0, p, `[Main] ${m}`),
         extensionName: options.extensionName,
-        concurrencyLimit: perModelConcurrency,
+        concurrencyLimit: Math.max(1, Math.floor(totalConcurrency / totalModels)),
       }),
       // Judges — each wrapped with catch for graceful degradation
       ...this.judges.map((judge, jIdx) =>
         judge.batchAssessFindings(findings, {
           onProgress: (p, m) => reportOverallProgress(1 + jIdx, p, `[Judge ${jIdx + 1}] ${m}`),
           extensionName: options.extensionName,
-          concurrencyLimit: perModelConcurrency,
+          concurrencyLimit: Math.max(1, Math.floor(totalConcurrency / totalModels)),
         }).catch((err): null => {
           const judgeLabel = `Judge ${jIdx + 1}`;
           options.onProgress?.(perModelProgress.reduce((s, v) => s + v, 0) / totalModels, `[${judgeLabel}] failed: ${err?.message ?? err}`);
@@ -1549,29 +1673,33 @@ export class ConsensusOrchestrator {
     }
 
     // Step 3: Merge main + judge votes for each finding that needs consensus
-    for (let j = 0; j < judgeIndices.length; j++) {
-      const idx = judgeIndices[j];
-      const allVotes: LlmAssessment[] = [mainAssessments[idx]];
-      const modelIds: string[] = ['main'];
+    // Use the global concurrency limiter (already active via LlmClient) to avoid overwhelming the LLM
+    // The global limiter ensures total concurrent requests across all models stays within limits
+    
+    await Promise.all(
+      judgeIndices.map(idx => this.mainClient.getConcurrencyLimiter().run(async () => {
+        const allVotes: LlmAssessment[] = [mainAssessments[idx]];
+        const modelIds: string[] = ['main'];
 
-      for (let jIdx = 0; jIdx < judgeResults.length; jIdx++) {
-        if (judgeResults[jIdx]?.[idx]) {
-          allVotes.push(judgeResults[jIdx]![idx]);
-          modelIds.push(`judge${jIdx + 1}`);
+        for (let jIdx = 0; jIdx < judgeResults.length; jIdx++) {
+          if (judgeResults[jIdx]?.[idx]) {
+            allVotes.push(judgeResults[jIdx]![idx]);
+            modelIds.push(`judge${jIdx + 1}`);
+          }
         }
-      }
 
-      if (allVotes.length >= 2) {
-        mainAssessments[idx] = mergeConsensusAssessments(allVotes);
-        // Stamp modelId on votes
-        if (mainAssessments[idx].consensus) {
-          mainAssessments[idx].consensus!.votes = mainAssessments[idx].consensus!.votes.map((v, vi) => ({
-            ...v,
-            modelId: modelIds[vi] || `model${vi}`,
-          }));
+        if (allVotes.length >= 2) {
+          mainAssessments[idx] = mergeConsensusAssessments(allVotes);
+          // Stamp modelId on votes
+          if (mainAssessments[idx].consensus) {
+            mainAssessments[idx].consensus!.votes = mainAssessments[idx].consensus!.votes.map((v, vi) => ({
+              ...v,
+              modelId: modelIds[vi] || `model${vi}`,
+            }));
+          }
         }
-      }
-    }
+      }))
+    );
 
     options.onProgress?.(1, `Consensus complete: ${judgeIndices.length} findings reviewed by ${totalModels} models`);
     return mainAssessments;

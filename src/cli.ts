@@ -82,6 +82,9 @@ async function main() {
   const result = await analyzer.analyze();
   if (verbose) console.log(`Found ${result.findings.length} findings, ${result.endpoints.length} endpoints`);
   
+  // Clear shared fast-assessment cache after static analysis to free memory
+  LlmClient.clearFastAssessmentCache();
+  
   // LLM enhancement
   let llm: LlmClient | null = null;
   
