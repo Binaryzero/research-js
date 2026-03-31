@@ -6,7 +6,7 @@
 import type { Finding, LlmAssessment } from '../types/index.js';
 import type { PromptConfig } from '../config.js';
 
-interface FileGroup {
+export interface FileGroup {
   filePath: string;
   findings: Finding[];
   indices: number[];
@@ -15,7 +15,7 @@ interface FileGroup {
   isConfig: boolean;
 }
 
-interface PatternGroup {
+export interface PatternGroup {
   patternName: string;
   category: string;
   risk: string;

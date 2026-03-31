@@ -79,6 +79,7 @@ export async function loadConfig(): Promise<ServerConfig> {
     temperature: parseFloat(process.env.LLM_TEMPERATURE || '0.3'),
     concurrency: parseInt(process.env.LLM_CONCURRENCY || '10', 10),
     assessmentMode: (process.env.LLM_ASSESSMENT_MODE as LlmConfig['assessmentMode']) || 'strategic',
+    stream: process.env.LLM_STREAM === 'true' || process.env.LLM_STREAM === '1',
   };
   
   return {

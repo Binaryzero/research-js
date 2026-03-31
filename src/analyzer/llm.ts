@@ -1,6 +1,6 @@
 /**
  * Concurrent LLM client for Ollama/OpenAI-compatible APIs
- * Key performance feature: parallel batch processing
+ * Key performance feature: parallel batch processing with concurrency limiting
  */
 
 import { join, dirname } from 'path';
@@ -11,6 +11,50 @@ import type { PromptConfig } from '../config.js';
 import { getEndpointFiltering } from './patterns.js';
 import type { LlmProvider } from '../providers/llm-provider.js';
 import { OllamaProvider } from '../providers/ollama-provider.js';
+
+/**
+ * Concurrency limiter - ensures only N concurrent operations at a time
+ */
+class ConcurrencyLimiter {
+  private active = 0;
+  private queue: Array<() => Promise<void>> = [];
+
+  constructor(private maxConcurrent: number) {}
+
+  async run<T>(fn: () => Promise<T>): Promise<T> {
+    return new Promise((resolve, reject) => {
+      const execute = async () => {
+        try {
+          const result = await fn();
+          resolve(result);
+        } catch (err) {
+          reject(err);
+        } finally {
+          this.next();
+        }
+      };
+
+      if (this.active < this.maxConcurrent) {
+        this.active++;
+        execute();
+      } else {
+        this.queue.push(execute);
+      }
+    });
+  }
+
+  private next() {
+    this.active--;
+    if (this.queue.length > 0) {
+      this.active++;
+      const nextFn = this.queue.shift();
+      if (nextFn) nextFn();
+    }
+  }
+}
+
+// Import types for strategic mode
+import type { PatternGroup, FileGroup } from './llm-batch.js';
 
 /**
  * Parse the VERDICT line from an executive summary.
@@ -128,7 +172,6 @@ import {
   buildStrategicBulkPrompt,
   parseStrategicAssessments,
   estimateStrategicLlmCalls,
-  getSamplingSummary,
 } from './llm-batch.js';
 
 /**
@@ -317,12 +360,16 @@ export class LlmClient {
     );
     this.fastAssessor = new FastRiskAssessor();
     this.prompts = prompts || this.getDefaultPrompts();
+    // Concurrency limiter for Ollama requests - prevents 429 errors
+    this.concurrencyLimiter = new ConcurrencyLimiter(this.concurrency);
     console.log(`[LLM] Client initialized with assessmentMode: ${config.assessmentMode}`);
   }
 
   get concurrency(): number {
     return this.config.concurrency || 10;
   }
+
+  private readonly concurrencyLimiter: ConcurrencyLimiter;
 
   private getDefaultPrompts(): PromptConfig {
     return {
@@ -528,22 +575,23 @@ If there are too many findings to assess completely, prioritize assessing the fi
       byCategory[finding.category].push(finding);
     }
 
-    let userPrompt = `Assess ${findings.length} security findings for false positive likelihood:\n\n`;
+    // Use array join for efficient string building
+    const parts: string[] = [`Assess ${findings.length} security findings for false positive likelihood:\n\n`];
 
     let findingNum = 0;
     for (const [category, catFindings] of Object.entries(byCategory)) {
-      userPrompt += `\n=== ${category} (${catFindings.length} findings) ===\n`;
+      parts.push(`\n=== ${category} (${catFindings.length} findings) ===\n`);
       for (const finding of catFindings) {
-        userPrompt += `\n[${findingNum + 1}] ${finding.title}\n`;
-        userPrompt += `File: ${finding.location}\n`;
-        userPrompt += `Code:\n\`\`\`\n${finding.evidence.slice(0, 800)}\n\`\`\`\n`;
+        parts.push(`\n[${findingNum + 1}] ${finding.title}\n`);
+        parts.push(`File: ${finding.location}\n`);
+        parts.push(`Code:\n\`\`\`\n${finding.evidence.slice(0, 800)}\n\`\`\`\n`);
         findingNum++;
       }
     }
 
-    userPrompt += `\n\nRespond with a JSON array of ${findings.length} assessment objects, one per finding, in the exact order presented above.`;
+    parts.push(`\n\nRespond with a JSON array of ${findings.length} assessment objects, one per finding, in the exact order presented above.`);
 
-    return { system, user: userPrompt };
+    return { system, user: parts.join('') };
   }
 
   /**
@@ -752,31 +800,22 @@ If there are too many findings to assess completely, prioritize assessing the fi
         console.warn(`[LLM] Triage batch parse failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
       }
 
-      // Fall back to individual assessment for any missing findings (parallel with concurrency limit)
+      // Fall back to individual assessment for any missing findings (sequential with concurrency limiter)
       const missing = batch.indices.filter(idx => !assessed.has(idx));
       if (missing.length > 0) {
-        console.warn(`[LLM] Triage batch: ${missing.length} findings missing, falling back to individual assessment (parallel)`);
-        const concurrency = options.concurrencyLimit || this.config.concurrency || 10;
-        for (let start = 0; start < missing.length; start += concurrency) {
-          const chunk = missing.slice(start, start + concurrency);
-          const chunkResults = await Promise.all(
-            chunk.map(idx =>
-              this.assessFinding(findings[idx])
-                .then(result => ({ idx, result }))
-                .catch(() => ({
-                  idx,
-                  result: {
-                    riskLevel: findings[idx].riskLevel as LlmAssessment['riskLevel'],
-                    isFalsePositive: false,
-                    falsePositiveReason: '',
-                    explanation: 'Individual assessment fallback failed',
-                    recommendation: 'investigate' as const,
-                  },
-                }))
-            )
-          );
-          for (const { idx, result } of chunkResults) {
+        console.warn(`[LLM] Triage batch: ${missing.length} findings missing, falling back to individual assessment (sequential)`);
+        for (const idx of missing) {
+          try {
+            const result = await this.concurrencyLimiter.run(() => this.assessFinding(findings[idx]));
             results[idx] = result;
+          } catch {
+            results[idx] = {
+              riskLevel: findings[idx].riskLevel as LlmAssessment['riskLevel'],
+              isFalsePositive: false,
+              falsePositiveReason: '',
+              explanation: 'Individual assessment fallback failed',
+              recommendation: 'investigate' as const,
+            };
           }
         }
       }
@@ -807,6 +846,7 @@ If there are too many findings to assess completely, prioritize assessing the fi
       options.onProgress?.(0.90, `Consensus pass: ${consensusIndices.length} high/critical findings`);
       console.log(`[Consensus] Triage batch consensus pass: ${consensusIndices.length} findings need quorum`);
 
+      // Use concurrency limiter to avoid 429 errors
       for (const idx of consensusIndices) {
         const finding = findings[idx];
         const firstVote = results[idx]; // Already have 1 vote from triage batch
@@ -814,10 +854,9 @@ If there are too many findings to assess completely, prioritize assessing the fi
         try {
           const { system, user } = this.buildFindingPrompt(finding);
 
-          const [resp2, resp3] = await Promise.all([
-            this.generate(user, system),
-            this.generate(user, system),
-          ]);
+          // Use concurrency limiter for the 2 additional votes
+          const resp2 = await this.concurrencyLimiter.run(() => this.generate(user, system));
+          const resp3 = await this.concurrencyLimiter.run(() => this.generate(user, system));
 
           const vote2 = parseSingleAssessment(resp2);
           const vote3 = parseSingleAssessment(resp3);
@@ -875,62 +914,37 @@ If there are too many findings to assess completely, prioritize assessing the fi
 
     let totalProcessed = 0;
     let totalLlmCalls = 0;
+    const concurrency = this.concurrency;
 
-    for (const pattern of patterns) {
-      const summary = getSamplingSummary(pattern);
-      options.onProgress?.(
-        0.1 + (totalProcessed / pendingIndices.length) * 0.8,
-        `${pattern.patternName} (${pattern.risk}): ${summary}`
-      );
+    // Flatten patterns and file groups for parallel processing
+    const allFileGroups = patterns.flatMap(p => 
+      p.fileGroups.map(fg => ({ pattern: p, fileGroup: fg }))
+    );
 
-      // Process each file group
-      for (const fileGroup of pattern.fileGroups) {
-        const sampleSize = calculateSecuritySampleSize(pattern, fileGroup);
-        const samples = selectDiverseSamples(fileGroup, sampleSize);
+    // Process file groups with concurrency limiting to avoid 429 errors
+    for (let i = 0; i < allFileGroups.length; i += concurrency) {
+      const batch = allFileGroups.slice(i, i + concurrency);
+      
+      // Process batch sequentially using concurrency limiter
+      const batchResults: Array<{ assessments: Map<number, LlmAssessment>; llmCalls: number; fileGroup: FileGroup }> = [];
+      for (const { pattern, fileGroup } of batch) {
+        const result = await this.concurrencyLimiter.run(() => 
+          this.processFileGroupForStrategic(pattern, fileGroup)
+        );
+        batchResults.push(result);
+      }
 
-        // Build strategic prompt
-        const { system, user } = buildStrategicBulkPrompt(pattern, samples, this.prompts);
-
-        const useConsensus = pattern.risk === 'high' || pattern.risk === 'critical';
-        let assessments: Map<number, LlmAssessment>;
-
-        if (useConsensus) {
-          // Consensus mode: 3 calls, merge per-finding via majority vote
-          console.log(`[Consensus] Quorum for ${pattern.category}/${pattern.patternName} (${pattern.risk} risk, ${samples.length} findings)`);
-          const runs = await Promise.all([
-            this.generate(user, system),
-            this.generate(user, system),
-            this.generate(user, system),
-          ]);
-          totalLlmCalls += 3;
-
-          const parsed = runs.map(r => parseStrategicAssessments(r, samples));
-
-          // Merge: for each index present in any run, collect assessments and vote
-          const allIndices = new Set<number>();
-          for (const m of parsed) for (const k of m.keys()) allIndices.add(k);
-
-          assessments = new Map();
-          for (const idx of allIndices) {
-            const candidates = parsed.map(m => m.get(idx)).filter((a): a is LlmAssessment => !!a);
-            assessments.set(idx, candidates.length >= 2 ? mergeConsensusAssessments(candidates) : candidates[0]);
-          }
-          console.log(`[Consensus] Merged ${assessments.size} findings, ${[...assessments.values()].filter(a => a.consensus?.splitDecision).length} split decisions`);
-        } else {
-          const response = await this.generate(user, system);
-          totalLlmCalls++;
-          assessments = parseStrategicAssessments(response, samples);
-        }
-
-        // Map back to original indices
+      // Merge results from batch
+      for (const result of batchResults) {
+        const { assessments, llmCalls, fileGroup } = result;
         for (const [groupIdx, assessment] of assessments) {
           const originalIdx = pendingIndices[groupIdx];
           if (originalIdx !== undefined) {
             results[originalIdx] = assessment;
           }
         }
-
         totalProcessed += fileGroup.findings.length;
+        totalLlmCalls += llmCalls;
       }
     }
 
@@ -985,6 +999,56 @@ If there are too many findings to assess completely, prioritize assessing the fi
   }
 
   /**
+   * Process a single file group for strategic assessment mode.
+   * Returns assessments map, LLM call count, and fileGroup reference.
+   */
+  private async processFileGroupForStrategic(
+    pattern: PatternGroup,
+    fileGroup: FileGroup
+  ): Promise<{ assessments: Map<number, LlmAssessment>; llmCalls: number; fileGroup: FileGroup }> {
+    const sampleSize = calculateSecuritySampleSize(pattern, fileGroup);
+    const samples = selectDiverseSamples(fileGroup, sampleSize);
+
+    // Build strategic prompt
+    const { system, user } = buildStrategicBulkPrompt(pattern, samples, this.prompts);
+
+    const useConsensus = pattern.risk === 'high' || pattern.risk === 'critical';
+    let assessments: Map<number, LlmAssessment>;
+    let llmCalls = 0;
+
+    if (useConsensus) {
+      // Consensus mode: 3 calls, merge per-finding via majority vote
+      // Use concurrency limiter to avoid 429 errors
+      console.log(`[Consensus] Quorum for ${pattern.category}/${pattern.patternName} (${pattern.risk} risk, ${samples.length} findings)`);
+      const runs: string[] = [];
+      for (let i = 0; i < 3; i++) {
+        const response = await this.concurrencyLimiter.run(() => this.generate(user, system));
+        runs.push(response);
+      }
+      llmCalls = 3;
+
+      const parsed = runs.map(r => parseStrategicAssessments(r, samples));
+
+      // Merge: for each index present in any run, collect assessments and vote
+      const allIndices = new Set<number>();
+      for (const m of parsed) for (const k of m.keys()) allIndices.add(k);
+
+      assessments = new Map();
+      for (const idx of allIndices) {
+        const candidates = parsed.map(m => m.get(idx)).filter((a): a is LlmAssessment => !!a);
+        assessments.set(idx, candidates.length >= 2 ? mergeConsensusAssessments(candidates) : candidates[0]);
+      }
+      console.log(`[Consensus] Merged ${assessments.size} findings, ${[...assessments.values()].filter(a => a.consensus?.splitDecision).length} split decisions`);
+    } else {
+      const response = await this.concurrencyLimiter.run(() => this.generate(user, system));
+      llmCalls = 1;
+      assessments = parseStrategicAssessments(response, samples);
+    }
+
+    return { assessments, llmCalls, fileGroup };
+  }
+
+  /**
    * Assess a single finding
    */
   async assessFinding(finding: Finding): Promise<LlmAssessment> {
@@ -994,16 +1058,17 @@ If there are too many findings to assess completely, prioritize assessing the fi
 
     if (useConsensus) {
       console.log(`[Consensus] Individual quorum for "${finding.title}" at ${finding.location} (${finding.riskLevel} risk)`);
-      const responses = await Promise.all([
-        this.generate(user, system),
-        this.generate(user, system),
-        this.generate(user, system),
-      ]);
+      // Use concurrency limiter to avoid 429 errors
+      const responses: string[] = [];
+      for (let i = 0; i < 3; i++) {
+        const response = await this.concurrencyLimiter.run(() => this.generate(user, system));
+        responses.push(response);
+      }
       const candidates = responses.map(r => parseSingleAssessment(r)).filter((a): a is LlmAssessment => !!a);
       if (candidates.length >= 2) return mergeConsensusAssessments(candidates);
       if (candidates.length === 1) return candidates[0];
     } else {
-      const response = await this.generate(user, system);
+      const response = await this.concurrencyLimiter.run(() => this.generate(user, system));
       const result = parseSingleAssessment(response);
       if (result) return result;
     }

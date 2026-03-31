@@ -212,6 +212,7 @@ export interface LlmConfig {
   temperature: number;
   concurrency: number;
   assessmentMode: 'strategic' | 'bulk';
+  stream?: boolean; // Enable streaming for large responses
 }
 
 // Multi-model configuration for consensus
