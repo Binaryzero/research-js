@@ -235,7 +235,9 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
     }
     
     const inputSource = params.input_source || params.url || '';
-    const noLlm = params.no_llm !== 'false';
+    const noLlm = params.no_llm !== undefined
+      ? String(params.no_llm).toLowerCase() === 'true'
+      : config.defaultNoLlm;
 
     // Model config comes from server-side AppConfig (config.json), not client
     const appCfg = getAppConfig();

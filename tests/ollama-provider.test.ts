@@ -1,29 +1,24 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { OllamaProvider } from '../src/providers/ollama-provider.js';
 import type { ProviderIdentity, ProviderConnection, ProviderInference } from '../src/providers/types.js';
-import { Pool } from 'undici';
+
+let poolMock: any;
 
 // Mock undici at the top level before any imports
-vi.mock('undici', () => {
-  let poolMock: any;
-
-  return {
-    Pool: vi.fn().mockImplementation((url: string, options: any) => {
-      poolMock = {
-        request: vi.fn(),
-        close: vi.fn(),
-      };
-      return poolMock;
-    }),
-  };
-});
+vi.mock('undici', () => ({
+  Pool: vi.fn().mockImplementation(function (this: unknown, url: string, options: any) {
+    return poolMock;
+  }),
+}));
 
 function makeIdentity(overrides?: Partial<ProviderIdentity>): ProviderIdentity {
   return { id: 'test', model: 'test-model', ...overrides };
 }
 
 function makeConnection(overrides?: Partial<ProviderConnection>): ProviderConnection {
-  return { baseUrl: 'http://localhost:11434', apiStyle: 'openai', timeout: 30000, ...overrides };
+  const defaultPort = 11434 + Math.floor(Math.random() * 1000);
+  const defaultBaseUrl = `http://localhost:${defaultPort}`;
+  return { baseUrl: defaultBaseUrl, apiStyle: 'openai', timeout: 30000, ...overrides };
 }
 
 function makeInference(overrides?: Partial<ProviderInference>): ProviderInference {
@@ -31,8 +26,6 @@ function makeInference(overrides?: Partial<ProviderInference>): ProviderInferenc
 }
 
 describe('OllamaProvider', () => {
-  let poolMock: any;
-
   beforeEach(() => {
     // Reset the pool mock for each test
     poolMock = {
@@ -61,8 +54,8 @@ describe('OllamaProvider', () => {
       expect(result).toBe('test response');
       expect(poolMock.request).toHaveBeenCalledOnce();
 
-      const [url, opts] = poolMock.request.mock.calls[0];
-      expect(url).toBe('/v1/chat/completions');
+      const [opts] = poolMock.request.mock.calls[0];
+      expect(opts.path).toBe('/v1/chat/completions');
 
       const body = JSON.parse(opts.body as string);
       expect(body.model).toBe('test-model');
@@ -89,8 +82,8 @@ describe('OllamaProvider', () => {
 
       expect(result).toBe('chat response');
 
-      const [url] = poolMock.request.mock.calls[0];
-      expect(url).toBe('/api/chat');
+      const [opts] = poolMock.request.mock.calls[0];
+      expect(opts.path).toBe('/api/chat');
     });
   });
 
@@ -109,8 +102,8 @@ describe('OllamaProvider', () => {
 
       expect(result).toBe('gen response');
 
-      const [url, opts] = poolMock.request.mock.calls[0];
-      expect(url).toBe('/api/generate');
+      const [opts] = poolMock.request.mock.calls[0];
+      expect(opts.path).toBe('/api/generate');
 
       const body = JSON.parse(opts.body as string);
       expect(body.prompt).toContain('hello');

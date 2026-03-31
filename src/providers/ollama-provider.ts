@@ -59,22 +59,42 @@ export class OllamaProvider implements LlmProvider {
     this.infer = inference;
   }
 
-  async isAvailable(): Promise<boolean> {
+  private async probeStyle(style: ResolvedStyle): Promise<boolean> {
     try {
+      const body = this.probeBody(style);
+      const url = endpointFor(this.conn.baseUrl, style);
       const pool = getPool(this.conn.baseUrl);
       const { statusCode, body: resBody } = await pool.request({
-        path: '/',
-        method: 'GET',
-        headers: {},
+        path: new URL(url).pathname + new URL(url).search,
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body,
         bodyTimeout: this.conn.timeout,
-        headersTimeout: 10_000,
+        headersTimeout: this.conn.timeout,
       });
-      // Validate response by parsing JSON (discard result)
-      await resBody.json() as Record<string, unknown>;
-      return statusCode >= 200 && statusCode < 300;
+
+      if (statusCode < 200 || statusCode >= 300) {
+        return false;
+      }
+
+      await resBody.json().catch(() => null);
+      return true;
     } catch {
       return false;
     }
+  }
+
+  async isAvailable(): Promise<boolean> {
+    if (this.conn.apiStyle === 'auto') {
+      try {
+        await this.detectApiStyle();
+        return true;
+      } catch {
+        return false;
+      }
+    }
+
+    return this.probeStyle(this.conn.apiStyle);
   }
 
   async detectApiStyle(): Promise<ResolvedStyle> {
@@ -82,38 +102,26 @@ export class OllamaProvider implements LlmProvider {
     const cacheKey = `${this.conn.baseUrl}::${this.conn.apiStyle}`;
     const cached = _styleCache.get(cacheKey);
     if (cached !== undefined) return cached;
-    
+
     if (this.conn.apiStyle !== 'auto') {
       _styleCache.set(cacheKey, this.conn.apiStyle);
       return this.conn.apiStyle;
     }
+
     const probeStyles: ResolvedStyle[] = ['openai', 'chat', 'generate'];
     for (const style of probeStyles) {
       try {
-        const body = this.probeBody(style);
-        const url = endpointFor(this.conn.baseUrl, style);
-        const pool = getPool(this.conn.baseUrl);
-        const { statusCode, body: resBody } = await pool.request({
-          path: new URL(url).pathname + new URL(url).search,
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body,
-          bodyTimeout: this.conn.timeout,
-          headersTimeout: 10_000,
-        });
-        if (statusCode >= 400) {
-          const text = await resBody.text().catch(() => '');
-          console.error(`[LLM:${this.id}] Probe ${style} failed: HTTP ${statusCode}${text ? ' — ' + text.slice(0, 200) : ''}`);
-          continue;
+        const success = await this.probeStyle(style);
+        if (success) {
+          _styleCache.set(cacheKey, style);
+          return style;
         }
-        // Validate response by parsing JSON (discard result)
-        await resBody.json() as Record<string, unknown>;
-        _styleCache.set(cacheKey, style);
-        return style;
-      } catch { /* try next */ }
+      } catch {
+        // try next style
+      }
     }
-    _styleCache.set(cacheKey, 'generate');
-    return 'generate';
+
+    throw new Error(`Unable to detect API style for ${this.conn.baseUrl}`);
   }
 
   async generate(prompt: string, system?: string, retries = 2): Promise<string> {
@@ -130,7 +138,7 @@ export class OllamaProvider implements LlmProvider {
           headers: { 'content-type': 'application/json' },
           body,
           bodyTimeout: this.conn.timeout,
-          headersTimeout: 10_000,
+          headersTimeout: this.conn.timeout,
         });
         if (statusCode >= 400) {
           const text = await resBody.text().catch(() => '');
