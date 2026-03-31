@@ -1,6 +1,22 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { OllamaProvider } from '../src/providers/ollama-provider.js';
 import type { ProviderIdentity, ProviderConnection, ProviderInference } from '../src/providers/types.js';
+import { Pool } from 'undici';
+
+// Mock undici at the top level before any imports
+vi.mock('undici', () => {
+  let poolMock: any;
+
+  return {
+    Pool: vi.fn().mockImplementation((url: string, options: any) => {
+      poolMock = {
+        request: vi.fn(),
+        close: vi.fn(),
+      };
+      return poolMock;
+    }),
+  };
+});
 
 function makeIdentity(overrides?: Partial<ProviderIdentity>): ProviderIdentity {
   return { id: 'test', model: 'test-model', ...overrides };
@@ -14,20 +30,15 @@ function makeInference(overrides?: Partial<ProviderInference>): ProviderInferenc
   return { maxTokens: 4096, temperature: 0.3, ...overrides };
 }
 
-/** Build a mock Response with JSON body */
-function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'Content-Type': 'application/json' },
-  });
-}
-
 describe('OllamaProvider', () => {
-  let fetchMock: ReturnType<typeof vi.fn>;
+  let poolMock: any;
 
   beforeEach(() => {
-    fetchMock = vi.fn();
-    vi.stubGlobal('fetch', fetchMock);
+    // Reset the pool mock for each test
+    poolMock = {
+      request: vi.fn(),
+      close: vi.fn(),
+    };
   });
 
   afterEach(() => {
@@ -36,18 +47,22 @@ describe('OllamaProvider', () => {
 
   describe('generate() with openai style', () => {
     it('sends request to /v1/chat/completions and extracts content', async () => {
-      fetchMock.mockResolvedValueOnce(
-        jsonResponse({ choices: [{ message: { content: 'test response' } }] }),
-      );
+      poolMock.request.mockResolvedValueOnce({
+        statusCode: 200,
+        body: {
+          json: vi.fn().mockResolvedValue({ choices: [{ message: { content: 'test response' } }] }),
+          text: vi.fn().mockResolvedValue(''),
+        },
+      });
 
       const provider = new OllamaProvider(makeIdentity(), makeConnection({ apiStyle: 'openai' }), makeInference());
       const result = await provider.generate('hello', 'system prompt');
 
       expect(result).toBe('test response');
-      expect(fetchMock).toHaveBeenCalledOnce();
+      expect(poolMock.request).toHaveBeenCalledOnce();
 
-      const [url, opts] = fetchMock.mock.calls[0];
-      expect(url).toBe('http://localhost:11434/v1/chat/completions');
+      const [url, opts] = poolMock.request.mock.calls[0];
+      expect(url).toBe('/v1/chat/completions');
 
       const body = JSON.parse(opts.body as string);
       expect(body.model).toBe('test-model');
@@ -61,33 +76,41 @@ describe('OllamaProvider', () => {
 
   describe('generate() with chat style', () => {
     it('sends request to /api/chat and extracts message content', async () => {
-      fetchMock.mockResolvedValueOnce(
-        jsonResponse({ message: { content: 'chat response' } }),
-      );
+      poolMock.request.mockResolvedValueOnce({
+        statusCode: 200,
+        body: {
+          json: vi.fn().mockResolvedValue({ message: { content: 'chat response' } }),
+          text: vi.fn().mockResolvedValue(''),
+        },
+      });
 
       const provider = new OllamaProvider(makeIdentity(), makeConnection({ apiStyle: 'chat' }), makeInference());
       const result = await provider.generate('hello');
 
       expect(result).toBe('chat response');
 
-      const [url] = fetchMock.mock.calls[0];
-      expect(url).toBe('http://localhost:11434/api/chat');
+      const [url] = poolMock.request.mock.calls[0];
+      expect(url).toBe('/api/chat');
     });
   });
 
   describe('generate() with generate style', () => {
     it('sends request to /api/generate with prompt field', async () => {
-      fetchMock.mockResolvedValueOnce(
-        jsonResponse({ response: 'gen response' }),
-      );
+      poolMock.request.mockResolvedValueOnce({
+        statusCode: 200,
+        body: {
+          json: vi.fn().mockResolvedValue({ response: 'gen response' }),
+          text: vi.fn().mockResolvedValue(''),
+        },
+      });
 
       const provider = new OllamaProvider(makeIdentity(), makeConnection({ apiStyle: 'generate' }), makeInference());
       const result = await provider.generate('hello', 'sys');
 
       expect(result).toBe('gen response');
 
-      const [url, opts] = fetchMock.mock.calls[0];
-      expect(url).toBe('http://localhost:11434/api/generate');
+      const [url, opts] = poolMock.request.mock.calls[0];
+      expect(url).toBe('/api/generate');
 
       const body = JSON.parse(opts.body as string);
       expect(body.prompt).toContain('hello');
@@ -99,33 +122,51 @@ describe('OllamaProvider', () => {
   describe('detectApiStyle() auto-probing', () => {
     it('probes endpoints and caches the result', async () => {
       // openai probe returns 404, chat probe returns 200
-      fetchMock
-        .mockResolvedValueOnce(new Response('', { status: 404 }))
-        .mockResolvedValueOnce(new Response('{}', { status: 200 }));
+      poolMock.request
+        .mockResolvedValueOnce({
+          statusCode: 404,
+          body: {
+            json: vi.fn().mockResolvedValue({}),
+            text: vi.fn().mockResolvedValue(''),
+          },
+        })
+        .mockResolvedValueOnce({
+          statusCode: 200,
+          body: {
+            json: vi.fn().mockResolvedValue({}),
+            text: vi.fn().mockResolvedValue(''),
+          },
+        });
 
       const provider = new OllamaProvider(makeIdentity(), makeConnection({ apiStyle: 'auto' }), makeInference());
 
       const style = await provider.detectApiStyle();
       expect(style).toBe('chat');
 
-      // Second call should use cached value — no additional fetch calls
-      const callsBefore = fetchMock.mock.calls.length;
+      // Second call should use cached value — no additional pool requests
+      const callsBefore = poolMock.request.mock.calls.length;
       const style2 = await provider.detectApiStyle();
       expect(style2).toBe('chat');
-      expect(fetchMock.mock.calls.length).toBe(callsBefore);
+      expect(poolMock.request.mock.calls.length).toBe(callsBefore);
     });
   });
 
   describe('isAvailable()', () => {
     it('returns true when server responds with 200', async () => {
-      fetchMock.mockResolvedValueOnce(new Response('Ollama is running', { status: 200 }));
+      poolMock.request.mockResolvedValueOnce({
+        statusCode: 200,
+        body: {
+          json: vi.fn().mockResolvedValue({}),
+          text: vi.fn().mockResolvedValue(''),
+        },
+      });
 
       const provider = new OllamaProvider(makeIdentity(), makeConnection(), makeInference());
       expect(await provider.isAvailable()).toBe(true);
     });
 
-    it('returns false when fetch throws', async () => {
-      fetchMock.mockRejectedValueOnce(new Error('ECONNREFUSED'));
+    it('returns false when pool.request throws', async () => {
+      poolMock.request.mockRejectedValueOnce(new Error('ECONNREFUSED'));
 
       const provider = new OllamaProvider(makeIdentity(), makeConnection(), makeInference());
       expect(await provider.isAvailable()).toBe(false);
@@ -134,9 +175,21 @@ describe('OllamaProvider', () => {
 
   describe('generate() error handling', () => {
     it('returns empty string on HTTP 500', async () => {
-      fetchMock
-        .mockResolvedValueOnce(new Response('{}', { status: 200 }))   // detectApiStyle probe
-        .mockResolvedValueOnce(new Response('Internal Server Error', { status: 500 }));
+      poolMock.request
+        .mockResolvedValueOnce({
+          statusCode: 200,
+          body: {
+            json: vi.fn().mockResolvedValue({}),
+            text: vi.fn().mockResolvedValue(''),
+          },
+        })   // detectApiStyle probe
+        .mockResolvedValueOnce({
+          statusCode: 500,
+          body: {
+            json: vi.fn().mockResolvedValue({}),
+            text: vi.fn().mockResolvedValue('Internal Server Error'),
+          },
+        });
 
       const provider = new OllamaProvider(makeIdentity(), makeConnection({ apiStyle: 'auto' }), makeInference());
       const result = await provider.generate('hello');

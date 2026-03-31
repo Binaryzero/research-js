@@ -2,9 +2,9 @@
  * OllamaProvider — LLM provider for Ollama and OpenAI-compatible endpoints.
  * Extracted from LlmClient HTTP transport logic.
  */
-import { Agent } from 'http';
+import { Pool } from 'undici';
 import type { LlmProvider } from './llm-provider.js';
-import type { ResolvedStyle, ProviderIdentity, ProviderConnection, ProviderInference } from './types.js';
+import type { ResolvedStyle, ProviderConnection, ProviderInference, ProviderIdentity } from './types.js';
 
 // -- Module-level helpers -----------------------------------------------
 function endpointFor(base: string, style: ResolvedStyle): string {
@@ -33,52 +33,86 @@ function extractContent(style: ResolvedStyle, data: Record<string, unknown>): st
   return (data.response as string) ?? '';
 }
 
+// Module-level connection pool cache for connection reuse
+const _pools = new Map<string, Pool>();
+
+function getPool(baseUrl: string): Pool {
+  if (!_pools.has(baseUrl)) {
+    _pools.set(baseUrl, new Pool(baseUrl, { connections: 10 }));
+  }
+  return _pools.get(baseUrl)!;
+}
+
+// Module-level API style cache - detected once per baseUrl per process lifetime
+const _styleCache = new Map<string, ResolvedStyle>();
+
 export class OllamaProvider implements LlmProvider {
   readonly id: string;
   readonly model: string;
   private readonly conn: Readonly<ProviderConnection>;
   private readonly infer: Readonly<ProviderInference>;
-  private cachedStyle: ResolvedStyle | undefined;
-  private readonly agent: Agent;
 
   constructor(identity: ProviderIdentity, connection: ProviderConnection, inference: ProviderInference) {
     this.id = identity.id;
     this.model = identity.model;
     this.conn = connection;
     this.infer = inference;
-    // HTTP connection pooling for connection reuse
-    this.agent = new Agent({ keepAlive: true, maxSockets: 10 });
   }
 
   async isAvailable(): Promise<boolean> {
     try {
-      const res = await fetch(this.conn.baseUrl, { method: 'GET' });
-      return res.ok;
+      const pool = getPool(this.conn.baseUrl);
+      const { statusCode, body: resBody } = await pool.request({
+        path: '/',
+        method: 'GET',
+        headers: {},
+        bodyTimeout: this.conn.timeout,
+        headersTimeout: 10_000,
+      });
+      // Validate response by parsing JSON (discard result)
+      await resBody.json() as Record<string, unknown>;
+      return statusCode >= 200 && statusCode < 300;
     } catch {
       return false;
     }
   }
 
   async detectApiStyle(): Promise<ResolvedStyle> {
-    if (this.cachedStyle) return this.cachedStyle;
+    // Check module-level cache first
+    const cacheKey = `${this.conn.baseUrl}::${this.conn.apiStyle}`;
+    const cached = _styleCache.get(cacheKey);
+    if (cached !== undefined) return cached;
+    
     if (this.conn.apiStyle !== 'auto') {
-      this.cachedStyle = this.conn.apiStyle;
-      return this.cachedStyle;
+      _styleCache.set(cacheKey, this.conn.apiStyle);
+      return this.conn.apiStyle;
     }
     const probeStyles: ResolvedStyle[] = ['openai', 'chat', 'generate'];
     for (const style of probeStyles) {
       try {
         const body = this.probeBody(style);
         const url = endpointFor(this.conn.baseUrl, style);
-        const res = await fetch(url, {
+        const pool = getPool(this.conn.baseUrl);
+        const { statusCode, body: resBody } = await pool.request({
+          path: new URL(url).pathname + new URL(url).search,
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'content-type': 'application/json' },
           body,
-          signal: AbortSignal.timeout(10_000),
+          bodyTimeout: this.conn.timeout,
+          headersTimeout: 10_000,
         });
-        if (res.ok) { this.cachedStyle = style; return style; }
+        if (statusCode >= 400) {
+          const text = await resBody.text().catch(() => '');
+          console.error(`[LLM:${this.id}] Probe ${style} failed: HTTP ${statusCode}${text ? ' — ' + text.slice(0, 200) : ''}`);
+          continue;
+        }
+        // Validate response by parsing JSON (discard result)
+        await resBody.json() as Record<string, unknown>;
+        _styleCache.set(cacheKey, style);
+        return style;
       } catch { /* try next */ }
     }
+    _styleCache.set(cacheKey, 'generate');
     return 'generate';
   }
 
@@ -87,30 +121,28 @@ export class OllamaProvider implements LlmProvider {
     const url = endpointFor(this.conn.baseUrl, style);
     const body = this.requestBody(style, prompt, system);
     
-    // Use streaming for bulk mode to improve time-to-first-result
-    const useStreaming = this.conn.stream && style === 'openai';
-    
     for (let attempt = 0; attempt <= retries; attempt++) {
       try {
-        const res = await fetch(url, {
+        const pool = getPool(this.conn.baseUrl);
+        const { statusCode, body: resBody } = await pool.request({
+          path: new URL(url).pathname + new URL(url).search,
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Connection': 'keep-alive' },
+          headers: { 'content-type': 'application/json' },
           body,
-          signal: AbortSignal.timeout(this.conn.timeout),
-          // @ts-ignore - Node 18+ fetch supports agent option
-          agent: this.agent,
+          bodyTimeout: this.conn.timeout,
+          headersTimeout: 10_000,
         });
-        if (!res.ok) {
-          const text = await res.text().catch(() => '');
-          console.error(`[LLM:${this.id}] HTTP ${res.status} (${prompt.length} chars)${text ? ' — ' + text.slice(0, 200) : ''}`);
+        if (statusCode >= 400) {
+          const text = await resBody.text().catch(() => '');
+          console.error(`[LLM:${this.id}] HTTP ${statusCode} (${prompt.length} chars)${text ? ' — ' + text.slice(0, 200) : ''}`);
           
           // Retry on 5xx errors and 429 (rate limit)
-          if (res.status >= 500 || res.status === 429) {
+          if (statusCode >= 500 || statusCode === 429) {
             if (attempt < retries) {
               // Longer delay for 429 to give Ollama time to recover
-              const baseDelay = res.status === 429 ? 2000 : 1000;
+              const baseDelay = statusCode === 429 ? 2000 : 1000;
               const delayMs = baseDelay * Math.pow(2, attempt); // 2s, 4s, 8s for 429; 1s, 2s, 4s for 5xx
-              console.log(`[LLM:${this.id}] Retry ${attempt + 1}/${retries} after ${delayMs}ms (status: ${res.status})`);
+              console.log(`[LLM:${this.id}] Retry ${attempt + 1}/${retries} after ${delayMs}ms (status: ${statusCode})`);
               await new Promise(resolve => setTimeout(resolve, delayMs));
               continue;
             }
@@ -118,12 +150,7 @@ export class OllamaProvider implements LlmProvider {
           return '';
         }
         
-        // Handle streaming response
-        if (useStreaming && res.body) {
-          return await this.handleStreamingResponse(res);
-        }
-        
-        return extractContent(style, await res.json() as Record<string, unknown>);
+        return extractContent(style, await resBody.json() as Record<string, unknown>);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         console.error(`[LLM:${this.id}] error (${prompt.length} chars): ${msg}`);
@@ -141,47 +168,6 @@ export class OllamaProvider implements LlmProvider {
       }
     }
     return '';
-  }
-
-  /**
-   * Handle streaming response for OpenAI-compatible endpoints.
-   * Accumulates chunks and returns the complete response.
-   */
-  private async handleStreamingResponse(res: Response): Promise<string> {
-    const chunks: string[] = [];
-    const reader = res.body?.getReader();
-    if (!reader) {
-      return extractContent('openai', await res.json() as Record<string, unknown>);
-    }
-
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        
-        const chunk = new TextDecoder().decode(value);
-        const lines = chunk.split('\n').filter(line => line.trim() !== '');
-        
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const data = line.slice(6);
-            if (data === '[DONE]') continue;
-            
-            try {
-              const parsed = JSON.parse(data);
-              const content = parsed.choices?.[0]?.delta?.content || '';
-              chunks.push(content);
-            } catch {
-              // Ignore parse errors
-            }
-          }
-        }
-      }
-    } finally {
-      reader.cancel();
-    }
-
-    return chunks.join('');
   }
 
   private probeBody(style: ResolvedStyle): string {
