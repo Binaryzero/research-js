@@ -274,13 +274,89 @@ export function parseStrategicAssessments(
   const assessments = new Map<number, LlmAssessment>();
 
   try {
-    const arrayMatch = response.match(/\[[\s\S]*\]/);
-    if (!arrayMatch) {
+    // Try multiple approaches to extract JSON array from response
+    let parsed: unknown[] = [];
+    let jsonStr: string | null = null;
+
+    // Helper: try to fix common JSON issues and parse
+    const tryParse = (text: string): unknown[] | null => {
+      try {
+        return JSON.parse(text) as unknown[];
+      } catch {
+        // Try fixing trailing commas before closing brackets
+        const fixed = text.replace(/,(\s*[}\]])/g, '$1');
+        try {
+          return JSON.parse(fixed) as unknown[];
+        } catch {
+          return null;
+        }
+      }
+    };
+
+    // Approach 1: Try direct parse first
+    parsed = tryParse(response) || [];
+    if (parsed.length > 0 && Array.isArray(parsed)) {
+      console.log(`[LLM] Strategic parse: Direct parse succeeded with ${parsed.length} items`);
+    }
+
+    // Approach 2: Try regex extraction if direct parse failed
+    if (parsed.length === 0 || !Array.isArray(parsed)) {
+      const arrayMatch = response.match(/\[[\s\S]*\]/);
+      if (arrayMatch) {
+        jsonStr = arrayMatch[0];
+        parsed = tryParse(jsonStr) || [];
+        if (parsed.length > 0 && Array.isArray(parsed)) {
+          console.log(`[LLM] Strategic parse: Regex extract succeeded with ${parsed.length} items`);
+        }
+      }
+    }
+
+    // Approach 3: Try to find JSON array after first '[' and before last ']'
+    if (parsed.length === 0 || !Array.isArray(parsed)) {
+      const firstBracket = response.indexOf('[');
+      const lastBracket = response.lastIndexOf(']');
+      if (firstBracket !== -1 && lastBracket !== -1 && lastBracket > firstBracket) {
+        jsonStr = response.slice(firstBracket, lastBracket + 1);
+        parsed = tryParse(jsonStr) || [];
+        if (parsed.length > 0 && Array.isArray(parsed)) {
+          console.log(`[LLM] Strategic parse: Bracket extraction succeeded with ${parsed.length} items`);
+        }
+      }
+    }
+
+    // Approach 4: Extract individual JSON objects when array parsing fails
+    if (parsed.length === 0 || !Array.isArray(parsed)) {
+      const objects: unknown[] = [];
+      let searchFrom = 0;
+      while (searchFrom < response.length) {
+        const objStart = response.indexOf('{', searchFrom);
+        if (objStart === -1) break;
+        let depth = 0;
+        let objEnd = -1;
+        for (let ci = objStart; ci < response.length; ci++) {
+          if (response[ci] === '{') depth++;
+          else if (response[ci] === '}') {
+            depth--;
+            if (depth === 0) { objEnd = ci + 1; break; }
+          }
+        }
+        if (objEnd === -1) break;
+        try {
+          const obj = JSON.parse(response.slice(objStart, objEnd));
+          if (obj && typeof obj === 'object') objects.push(obj);
+        } catch { /* skip malformed */ }
+        searchFrom = objEnd;
+      }
+      if (objects.length > 0) {
+        parsed = objects;
+        console.log(`[LLM] Strategic parse: Individual object extraction salvaged ${objects.length} items`);
+      }
+    }
+
+    if (!Array.isArray(parsed) || parsed.length === 0) {
       console.warn(`[LLM] Failed to parse JSON array from response (${response.length} chars)`);
       return assessments;
     }
-
-    const parsed = JSON.parse(arrayMatch[0]) as Array<Record<string, unknown>>;
 
     if (parsed.length < samples.length) {
       console.warn(`[LLM] Response contained ${parsed.length} assessments but expected ${samples.length}`);
@@ -288,14 +364,16 @@ export function parseStrategicAssessments(
 
     for (let i = 0; i < parsed.length && i < samples.length; i++) {
       const item = parsed[i];
+      if (typeof item !== 'object' || item === null) continue;
+      const obj = item as Record<string, unknown>;
       const sample = samples[i];
 
       assessments.set(sample.originalIndex, {
-        riskLevel: (item.riskLevel || item.risk_level || 'unknown') as LlmAssessment['riskLevel'],
-        isFalsePositive: (item.isFalsePositive ?? item.is_false_positive ?? false) as boolean,
-        falsePositiveReason: (item.falsePositiveReason || item.false_positive_reason || '') as string,
-        explanation: (item.explanation || '') as string,
-        recommendation: (item.recommendation || 'investigate') as LlmAssessment['recommendation'],
+        riskLevel: (obj.riskLevel || obj.risk_level || 'unknown') as LlmAssessment['riskLevel'],
+        isFalsePositive: (obj.isFalsePositive ?? obj.is_false_positive ?? false) as boolean,
+        falsePositiveReason: (obj.falsePositiveReason || obj.false_positive_reason || '') as string,
+        explanation: (obj.explanation || '') as string,
+        recommendation: (obj.recommendation || 'investigate') as LlmAssessment['recommendation'],
       });
     }
   } catch (error) {

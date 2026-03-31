@@ -40,7 +40,19 @@
             </form>
         </div>
 
-        <!-- Card 2: Result Filters -->
+        <!-- Card 2: Progress (hidden until scan starts) -->
+        <div class="sidebar-card" id="progress-sidebar-card" style="display:none">
+            <div class="sidebar-header">Progress</div>
+            <div class="progress-compact">
+                <span id="progress-text">Scanning 0 of 0...</span>
+                <button class="btn btn-outline btn-sm" id="cancel-btn" onclick="cancelBatchScan()">Cancel</button>
+            </div>
+            <progress id="progress-bar" value="0" max="100"></progress>
+            <button class="progress-log-toggle" onclick="toggleProgressLog()">Show log</button>
+            <div id="progress-log" class="progress-log-collapsed"></div>
+        </div>
+
+        <!-- Card 3: Result Filters -->
         <div class="sidebar-card">
             <div class="sidebar-header">Filters</div>
             <div class="batch-filter-group">
@@ -83,18 +95,6 @@
             </div>
         </div>
 
-        <!-- Card 3: Progress (hidden until scan starts) -->
-        <div class="sidebar-card" id="progress-sidebar-card" style="display:none">
-            <div class="sidebar-header">Progress</div>
-            <div class="progress-compact">
-                <span id="progress-text">Scanning 0 of 0...</span>
-                <button class="btn btn-outline btn-sm" id="cancel-btn" onclick="cancelBatchScan()">Cancel</button>
-            </div>
-            <progress id="progress-bar" value="0" max="100"></progress>
-            <button class="progress-log-toggle" onclick="toggleProgressLog()">Show log</button>
-            <div id="progress-log" class="progress-log-collapsed"></div>
-        </div>
-
         <!-- Card 4: Bulk Actions (hidden until selection > 0) -->
         <div class="sidebar-card" id="bulk-actions-card" style="display:none">
             <div class="sidebar-header">Bulk Actions</div>
@@ -110,6 +110,7 @@
     </aside>
 
     <section class="main-content">
+
         <!-- Results area -->
         <div id="results-area" style="display:none;">
             <div class="results-header">
@@ -437,6 +438,20 @@ function badgeColor(color) {
     return map[color] || map.gray;
 }
 
+function showBatchStatusBanner(message) {
+    const banner = document.getElementById('batch-status-banner');
+    const summary = document.getElementById('batch-status-summary');
+    if (!banner || !summary) return;
+    summary.textContent = message;
+    banner.style.display = '';
+}
+
+function hideBatchStatusBanner() {
+    const banner = document.getElementById('batch-status-banner');
+    if (!banner) return;
+    banner.style.display = 'none';
+}
+
 // -- Scan actions --
 function scanSingle(ext) {
     const url = `https://marketplace.visualstudio.com/items?itemName=${ext.extensionId}`;
@@ -446,7 +461,6 @@ function scanSingle(ext) {
     formData.append('full_output', 'true');
 
     document.getElementById('progress-sidebar-card').style.display = '';
-
     fetch('/api/scan', { method: 'POST', body: formData })
         .then(r => {
             if (!r.ok) return r.json().then(err => { throw new Error(err.detail || `Error ${r.status}`); });
@@ -484,7 +498,6 @@ function scanAllNew() {
     if (unscanned.length === 0) return;
 
     document.getElementById('progress-sidebar-card').style.display = '';
-
     fetch('/api/batch-scan', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

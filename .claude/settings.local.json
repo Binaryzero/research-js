@@ -14,7 +14,9 @@
       "Bash(ls -la tests/*.ts)",
       "Bash(find /Users/william/Tools/research-js -maxdepth 1 -type f -name \".*\" 2>/dev/null | head -10)",
       "Bash(npm audit:*)",
-      "Bash(npm:*)"
+      "Bash(npm:*)",
+      "Bash(npx tsc:*)",
+      "Bash(git diff:*)"
     ]
   },
   "outputStyle": "Learning",

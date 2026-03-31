@@ -3,6 +3,7 @@
  * Key performance feature: parallel batch processing with concurrency limiting
  * 
  * ConcurrencyLimiter: Queue-based control to prevent 429 errors from Ollama
+ * FastAssessmentCache: Shared cache to avoid redundant heuristic assessments across models
  */
 
 import { join, dirname } from 'path';
@@ -15,13 +16,23 @@ import type { LlmProvider } from '../providers/llm-provider.js';
 import { OllamaProvider } from '../providers/ollama-provider.js';
 
 /**
- * Concurrency limiter - ensures only N concurrent operations at a time
+ * Global concurrency limiter - single limiter shared across ALL LlmClient instances
+ * Key optimization: prevents overwhelming the LLM server by capping total concurrent requests
+ * across all models (main + judges) to a configurable limit (default: 15)
  */
-class ConcurrencyLimiter {
+class GlobalConcurrencyLimiter {
   private active = 0;
   private queue: Array<() => Promise<void>> = [];
+  private static instance: GlobalConcurrencyLimiter;
 
-  constructor(private maxConcurrent: number) {}
+  private constructor(private maxConcurrent: number = 15) {}
+
+  static getInstance(maxConcurrent?: number): GlobalConcurrencyLimiter {
+    if (!GlobalConcurrencyLimiter.instance) {
+      GlobalConcurrencyLimiter.instance = new GlobalConcurrencyLimiter(maxConcurrent);
+    }
+    return GlobalConcurrencyLimiter.instance;
+  }
 
   async run<T>(fn: () => Promise<T>): Promise<T> {
     return new Promise((resolve, reject) => {
@@ -55,8 +66,53 @@ class ConcurrencyLimiter {
   }
 }
 
+/**
+ * Fast assessment cache - shared across LlmClient instances to avoid redundant work
+ * Key optimization: each unique finding is assessed only once via fast heuristic
+ */
+class FastAssessmentCache {
+  private cache = new Map<string, LlmAssessment>();
+
+  /**
+   * Get cached assessment for a finding, or null if not cached
+   */
+  get(finding: Finding): LlmAssessment | null {
+    const key = this.makeKey(finding);
+    return this.cache.get(key) ?? null;
+  }
+
+  /**
+   * Store an assessment in the cache
+   */
+  set(finding: Finding, assessment: LlmAssessment): void {
+    const key = this.makeKey(finding);
+    this.cache.set(key, assessment);
+  }
+
+  /**
+   * Clear the cache (call between scans)
+   */
+  clear(): void {
+    this.cache.clear();
+  }
+
+  private makeKey(finding: Finding): string {
+    // Create a unique key based on finding characteristics
+    return [
+      finding.category,
+      finding.title,
+      finding.location,
+      finding.evidence.slice(0, 200), // Truncate evidence for key
+      finding.riskLevel,
+    ].join('|');
+  }
+}
+
+// Global cache instance - shared across all LlmClient instances
+const globalFastAssessmentCache = new FastAssessmentCache();
+
 // Import types for strategic mode
-import type { PatternGroup, FileGroup } from './llm-batch.js';
+import { PatternGroup, FileGroup } from './llm-batch.js';
 
 /**
  * Parse the VERDICT line from an executive summary.
@@ -94,18 +150,36 @@ export const RECOMMEND_ORDER: Record<string, number> = { investigate: 2, likely_
  */
 function parseSingleAssessment(response: string): LlmAssessment | null {
   try {
-    const jsonMatch = response.match(/\{[^{}]*\}/s);
-    if (jsonMatch) {
-      const parsed = JSON.parse(jsonMatch[0]) as Record<string, unknown>;
-      return {
-        riskLevel: (parsed.riskLevel || parsed.risk_level || 'unknown') as LlmAssessment['riskLevel'],
-        isFalsePositive: (parsed.isFalsePositive ?? parsed.is_false_positive ?? false) as boolean,
-        falsePositiveReason: (parsed.falsePositiveReason || parsed.false_positive_reason || '') as string,
-        explanation: (parsed.explanation || '') as string,
-        recommendation: (parsed.recommendation || 'investigate') as LlmAssessment['recommendation'],
-        injectionDetected: (parsed.injectionDetected ?? parsed.injection_detected ?? false) as boolean,
-      };
+    // Try to find a JSON object - handle nested objects by finding balanced braces
+    let start = response.indexOf('{');
+    if (start === -1) return null;
+
+    // Find the end of the JSON object by counting braces
+    let depth = 0;
+    let end = -1;
+    for (let i = start; i < response.length; i++) {
+      if (response[i] === '{') depth++;
+      else if (response[i] === '}') {
+        depth--;
+        if (depth === 0) {
+          end = i + 1;
+          break;
+        }
+      }
     }
+
+    if (end === -1) return null;
+
+    const jsonStr = response.slice(start, end);
+    const parsed = JSON.parse(jsonStr) as Record<string, unknown>;
+    return {
+      riskLevel: (parsed.riskLevel || parsed.risk_level || 'unknown') as LlmAssessment['riskLevel'],
+      isFalsePositive: (parsed.isFalsePositive ?? parsed.is_false_positive ?? false) as boolean,
+      falsePositiveReason: (parsed.falsePositiveReason || parsed.false_positive_reason || '') as string,
+      explanation: (parsed.explanation || '') as string,
+      recommendation: (parsed.recommendation || 'investigate') as LlmAssessment['recommendation'],
+      injectionDetected: (parsed.injectionDetected ?? parsed.injection_detected ?? false) as boolean,
+    };
   } catch {
     // Return null on parse failure
   }
@@ -352,8 +426,9 @@ export class LlmClient {
   private provider: LlmProvider;
   private fastAssessor: FastRiskAssessor;
   private prompts: PromptConfig;
+  private useSharedCache: boolean;
 
-  constructor(config: LlmConfig, prompts?: PromptConfig, provider?: LlmProvider) {
+  constructor(config: LlmConfig, prompts?: PromptConfig, provider?: LlmProvider, useSharedCache: boolean = true) {
     this.config = config;
     this.provider = provider || new OllamaProvider(
       { id: 'main', model: config.model },
@@ -362,16 +437,32 @@ export class LlmClient {
     );
     this.fastAssessor = new FastRiskAssessor();
     this.prompts = prompts || this.getDefaultPrompts();
-    // Concurrency limiter for Ollama requests - prevents 429 errors
-    this.concurrencyLimiter = new ConcurrencyLimiter(this.concurrency);
-    console.log(`[LLM] Client initialized with assessmentMode: ${config.assessmentMode}`);
+    this.useSharedCache = useSharedCache;
+    // Use global concurrency limiter to prevent overwhelming the LLM server
+    // All LlmClient instances share the same limiter for total concurrency control
+    this.concurrencyLimiter = GlobalConcurrencyLimiter.getInstance(this.concurrency);
+    console.log(`[LLM] Client initialized with assessmentMode: ${config.assessmentMode}, sharedCache: ${useSharedCache}`);
   }
 
   get concurrency(): number {
     return this.config.concurrency || 10;
   }
 
-  private readonly concurrencyLimiter: ConcurrencyLimiter;
+  private readonly concurrencyLimiter: GlobalConcurrencyLimiter;
+
+  /**
+   * Get the global concurrency limiter for external use (e.g., ConsensusOrchestrator)
+   */
+  getConcurrencyLimiter(): GlobalConcurrencyLimiter {
+    return this.concurrencyLimiter;
+  }
+
+  /**
+   * Clear the shared fast-assessment cache (call between scans)
+   */
+  static clearFastAssessmentCache(): void {
+    globalFastAssessmentCache.clear();
+  }
 
   private getDefaultPrompts(): PromptConfig {
     return {
@@ -473,7 +564,22 @@ Respond with JSON only.`,
 
     // First pass: fast heuristic assessment (same as strategic mode)
     for (let i = 0; i < findings.length; i++) {
-      const fastResult = this.fastAssessor.assess(findings[i]);
+      let fastResult: LlmAssessment | null = null;
+      
+      // Use shared cache if enabled - avoids redundant fast assessment work
+      if (this.useSharedCache) {
+        fastResult = globalFastAssessmentCache.get(findings[i]);
+      }
+      
+      // If not cached, run fast assessment
+      if (!fastResult) {
+        fastResult = this.fastAssessor.assess(findings[i]);
+        // Cache the result if enabled
+        if (this.useSharedCache && fastResult) {
+          globalFastAssessmentCache.set(findings[i], fastResult);
+        }
+      }
+      
       if (fastResult) {
         results[i] = fastResult;
       } else {
@@ -701,9 +807,24 @@ If there are too many findings to assess completely, prioritize assessing the fi
     const results: LlmAssessment[] = new Array(findings.length);
     const pendingIndices: number[] = [];
 
-    // First pass: fast heuristic
+    // First pass: fast heuristic with shared cache
     for (let i = 0; i < findings.length; i++) {
-      const fastResult = this.fastAssessor.assess(findings[i]);
+      let fastResult: LlmAssessment | null = null;
+      
+      // Use shared cache if enabled - avoids redundant fast assessment work
+      if (this.useSharedCache) {
+        fastResult = globalFastAssessmentCache.get(findings[i]);
+      }
+      
+      // If not cached, run fast assessment
+      if (!fastResult) {
+        fastResult = this.fastAssessor.assess(findings[i]);
+        // Cache the result if enabled
+        if (this.useSharedCache && fastResult) {
+          globalFastAssessmentCache.set(findings[i], fastResult);
+        }
+      }
+      
       if (fastResult) {
         results[i] = fastResult;
       } else {
@@ -780,26 +901,123 @@ If there are too many findings to assess completely, prioritize assessing the fi
       // Parse response — expect JSON array with index field per assessment
       const assessed = new Set<number>();
       try {
-        const arrayMatch = response.match(/\[[\s\S]*\]/);
-        if (arrayMatch) {
-          const parsed = JSON.parse(arrayMatch[0]) as Array<Record<string, unknown>>;
-          for (const item of parsed) {
-            const idx = item.index as number;
-            if (idx !== undefined && batch.indices.includes(idx)) {
-              results[idx] = {
-                riskLevel: (item.riskLevel || item.risk_level || 'unknown') as LlmAssessment['riskLevel'],
-                isFalsePositive: (item.isFalsePositive ?? item.is_false_positive ?? false) as boolean,
-                falsePositiveReason: (item.falsePositiveReason || item.false_positive_reason || '') as string,
-                explanation: (item.explanation || '') as string,
-                recommendation: (item.recommendation || 'investigate') as LlmAssessment['recommendation'],
-                injectionDetected: (item.injectionDetected ?? item.injection_detected ?? false) as boolean,
-              };
-              assessed.add(idx);
+        // Try multiple approaches to extract JSON array from response
+        let parsed: unknown[] = [];
+        let jsonStr: string | null = null;
+
+        // Helper: try to fix common JSON issues and parse
+        const tryParse = (text: string): unknown[] | null => {
+          try {
+            return JSON.parse(text) as unknown[];
+          } catch {
+            // Try fixing trailing commas before closing brackets
+            const fixed = text.replace(/,(\s*[}\]])/g, '$1');
+            try {
+              return JSON.parse(fixed) as unknown[];
+            } catch {
+              return null;
+            }
+          }
+        };
+
+        // Approach 1: Try direct parse first
+        parsed = tryParse(response) || [];
+        if (parsed.length > 0) {
+          console.log(`[LLM] Triage batch: Direct parse succeeded with ${parsed.length} items`);
+        }
+
+        // Approach 2: Try regex extraction if direct parse failed
+        if (parsed.length === 0) {
+          const arrayMatch = response.match(/\[[\s\S]*\]/);
+          if (arrayMatch) {
+            jsonStr = arrayMatch[0];
+            parsed = tryParse(jsonStr) || [];
+            if (parsed.length > 0) {
+              console.log(`[LLM] Triage batch: Regex extract succeeded with ${parsed.length} items`);
             }
           }
         }
+
+        // Approach 3: Try to find JSON array after first '[' and before last ']'
+        if (parsed.length === 0) {
+          const firstBracket = response.indexOf('[');
+          const lastBracket = response.lastIndexOf(']');
+          if (firstBracket !== -1 && lastBracket !== -1 && lastBracket > firstBracket) {
+            jsonStr = response.slice(firstBracket, lastBracket + 1);
+            parsed = tryParse(jsonStr) || [];
+            if (parsed.length > 0) {
+              console.log(`[LLM] Triage batch: Bracket extraction succeeded with ${parsed.length} items`);
+            }
+          }
+        }
+
+        // Approach 4: Extract individual JSON objects when array parsing fails
+        // This salvages partial results from malformed responses (e.g., unescaped quotes, bad escapes)
+        if (parsed.length === 0) {
+          const objects: unknown[] = [];
+          let searchFrom = 0;
+          while (searchFrom < response.length) {
+            const objStart = response.indexOf('{', searchFrom);
+            if (objStart === -1) break;
+            // Find balanced closing brace
+            let depth = 0;
+            let objEnd = -1;
+            for (let ci = objStart; ci < response.length; ci++) {
+              if (response[ci] === '{') depth++;
+              else if (response[ci] === '}') {
+                depth--;
+                if (depth === 0) { objEnd = ci + 1; break; }
+              }
+            }
+            if (objEnd === -1) break;
+            const candidate = response.slice(objStart, objEnd);
+            try {
+              const obj = JSON.parse(candidate);
+              if (obj && typeof obj === 'object' && ('index' in obj)) {
+                objects.push(obj);
+              }
+            } catch {
+              // Skip malformed individual objects
+            }
+            searchFrom = objEnd;
+          }
+          if (objects.length > 0) {
+            parsed = objects;
+            console.log(`[LLM] Triage batch: Individual object extraction salvaged ${objects.length} items`);
+          }
+        }
+
+        // Parse the items
+        for (const item of parsed) {
+          if (typeof item !== 'object' || item === null) continue;
+          const obj = item as Record<string, unknown>;
+          const idx = obj.index as number;
+          if (idx !== undefined && batch.indices.includes(idx)) {
+            results[idx] = {
+              riskLevel: (obj.riskLevel || obj.risk_level || 'unknown') as LlmAssessment['riskLevel'],
+              isFalsePositive: (obj.isFalsePositive ?? obj.is_false_positive ?? false) as boolean,
+              falsePositiveReason: (obj.falsePositiveReason || obj.false_positive_reason || '') as string,
+              explanation: (obj.explanation || '') as string,
+              recommendation: (obj.recommendation || 'investigate') as LlmAssessment['recommendation'],
+              injectionDetected: (obj.injectionDetected ?? obj.injection_detected ?? false) as boolean,
+            };
+            assessed.add(idx);
+          }
+        }
+
+        if (parsed.length > 0 && assessed.size === 0) {
+          console.warn(`[LLM] Triage batch: Parsed ${parsed.length} items but none matched batch indices`);
+        }
       } catch (error) {
         console.warn(`[LLM] Triage batch parse failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      }
+
+      // Track which findings were assessed via triage batch vs fallback
+      const batchAssessedIndices = new Set<number>();
+      for (const idx of batch.indices) {
+        if (assessed.has(idx)) {
+          batchAssessedIndices.add(idx);
+        }
       }
 
       // Fall back to individual assessment for any missing findings (sequential with concurrency limiter)
@@ -838,41 +1056,47 @@ If there are too many findings to assess completely, prioritize assessing the fi
       }
     }
 
-    // Consensus pass: for high/critical pattern_risk findings, run 2 more calls and merge
+    // Consensus pass: for high/critical findings that were assessed via triage batch (not fallback)
+    // Note: assessFinding already runs consensus (3 calls) for high/critical findings,
+    // so we only need to run consensus on findings that were assessed via triage batch
     const consensusIndices = pendingIndices.filter(idx => {
-      const risk = findings[idx].riskLevel?.toLowerCase();
-      return risk === 'high' || risk === 'critical';
+      // Only run consensus on findings that were assessed via triage batch (not fallback)
+      // Check if this finding was in any batch that successfully assessed it
+      const finding = findings[idx];
+      const risk = finding.riskLevel?.toLowerCase();
+      return (risk === 'high' || risk === 'critical') && results[idx] && !results[idx].consensus;
     });
 
     if (consensusIndices.length > 0) {
       options.onProgress?.(0.90, `Consensus pass: ${consensusIndices.length} high/critical findings`);
       console.log(`[Consensus] Triage batch consensus pass: ${consensusIndices.length} findings need quorum`);
 
-      // Use concurrency limiter to avoid 429 errors - submit both additional votes simultaneously
-      for (const idx of consensusIndices) {
-        const finding = findings[idx];
-        const firstVote = results[idx]; // Already have 1 vote from triage batch
+      // Use concurrency limiter to avoid 429 errors - submit both additional votes via limiter
+      const consensusPromises = consensusIndices
+        .filter(idx => !results[idx]?.consensus) // Skip findings that already have consensus
+        .map(idx => this.concurrencyLimiter.run(async () => {
+          const finding = findings[idx];
+          const firstVote = results[idx];
+          try {
+            const { system, user } = this.buildFindingPrompt(finding);
 
-        try {
-          const { system, user } = this.buildFindingPrompt(finding);
+            const [resp2, resp3] = await Promise.all([
+              this.concurrencyLimiter.run(() => this.generate(user, system)),
+              this.concurrencyLimiter.run(() => this.generate(user, system)),
+            ]);
 
-          // Use concurrency limiter for the 2 additional votes - submit simultaneously
-          const [resp2, resp3] = await Promise.all([
-            this.generate(user, system),
-            this.generate(user, system),
-          ]);
+            const vote2 = parseSingleAssessment(resp2);
+            const vote3 = parseSingleAssessment(resp3);
 
-          const vote2 = parseSingleAssessment(resp2);
-          const vote3 = parseSingleAssessment(resp3);
-
-          const allVotes = [firstVote, vote2, vote3].filter((v): v is LlmAssessment => !!v);
-          if (allVotes.length >= 2) {
-            results[idx] = mergeConsensusAssessments(allVotes);
+            const allVotes = [firstVote, vote2, vote3].filter((v): v is LlmAssessment => !!v);
+            if (allVotes.length >= 2) {
+              results[idx] = mergeConsensusAssessments(allVotes);
+            }
+          } catch {
+            // Keep the previous result if consensus fails
           }
-        } catch {
-          // Keep the triage batch result if consensus fails
-        }
-      }
+        }));
+      await Promise.all(consensusPromises);
 
       console.log(`[Consensus] Triage consensus complete: ${consensusIndices.length} findings, ${consensusIndices.filter(idx => results[idx].consensus?.splitDecision).length} split decisions`);
     }
@@ -895,9 +1119,24 @@ If there are too many findings to assess completely, prioritize assessing the fi
     const results: LlmAssessment[] = new Array(findings.length);
     const pendingIndices: number[] = [];
 
-    // First pass: fast heuristic assessment
+    // First pass: fast heuristic assessment with shared cache
     for (let i = 0; i < findings.length; i++) {
-      const fastResult = this.fastAssessor.assess(findings[i]);
+      let fastResult: LlmAssessment | null = null;
+      
+      // Use shared cache if enabled - avoids redundant fast assessment work
+      if (this.useSharedCache) {
+        fastResult = globalFastAssessmentCache.get(findings[i]);
+      }
+      
+      // If not cached, run fast assessment
+      if (!fastResult) {
+        fastResult = this.fastAssessor.assess(findings[i]);
+        // Cache the result if enabled
+        if (this.useSharedCache && fastResult) {
+          globalFastAssessmentCache.set(findings[i], fastResult);
+        }
+      }
+      
       if (fastResult) {
         results[i] = fastResult;
       } else {
@@ -1358,6 +1597,9 @@ export class ConsensusOrchestrator {
   /**
    * Batch assess findings with multi-model consensus.
    * All models (main + judges) assess findings in parallel, then results are filtered and merged.
+   * 
+   * Performance optimization: Uses shared fast-assessment cache to avoid redundant work,
+   * and limits concurrent LLM calls to prevent 429 errors.
    */
   async batchAssessFindings(
     findings: Finding[],
@@ -1379,21 +1621,24 @@ export class ConsensusOrchestrator {
     };
 
     options.onProgress?.(0, `${totalModels} model(s) assessing ${findings.length} findings in parallel...`);
-    const perModelConcurrency = Math.max(1, Math.ceil(this.mainClient.concurrency / totalModels));
-
+    
+    // Limit concurrent LLM calls across ALL models to prevent 429 errors
+    // Total concurrency = sum of all model concurrency, but cap at reasonable limit
+    const totalConcurrency = Math.min(15, this.mainClient.concurrency + this.judges.reduce((sum, j) => sum + j.concurrency, 0));
+    
     const allResults = await Promise.all([
       // Main model
       this.mainClient.batchAssessFindings(findings, {
         onProgress: (p, m) => reportOverallProgress(0, p, `[Main] ${m}`),
         extensionName: options.extensionName,
-        concurrencyLimit: perModelConcurrency,
+        concurrencyLimit: Math.max(1, Math.floor(totalConcurrency / totalModels)),
       }),
       // Judges — each wrapped with catch for graceful degradation
       ...this.judges.map((judge, jIdx) =>
         judge.batchAssessFindings(findings, {
           onProgress: (p, m) => reportOverallProgress(1 + jIdx, p, `[Judge ${jIdx + 1}] ${m}`),
           extensionName: options.extensionName,
-          concurrencyLimit: perModelConcurrency,
+          concurrencyLimit: Math.max(1, Math.floor(totalConcurrency / totalModels)),
         }).catch((err): null => {
           const judgeLabel = `Judge ${jIdx + 1}`;
           options.onProgress?.(perModelProgress.reduce((s, v) => s + v, 0) / totalModels, `[${judgeLabel}] failed: ${err?.message ?? err}`);
@@ -1428,29 +1673,33 @@ export class ConsensusOrchestrator {
     }
 
     // Step 3: Merge main + judge votes for each finding that needs consensus
-    for (let j = 0; j < judgeIndices.length; j++) {
-      const idx = judgeIndices[j];
-      const allVotes: LlmAssessment[] = [mainAssessments[idx]];
-      const modelIds: string[] = ['main'];
+    // Use the global concurrency limiter (already active via LlmClient) to avoid overwhelming the LLM
+    // The global limiter ensures total concurrent requests across all models stays within limits
+    
+    await Promise.all(
+      judgeIndices.map(idx => this.mainClient.getConcurrencyLimiter().run(async () => {
+        const allVotes: LlmAssessment[] = [mainAssessments[idx]];
+        const modelIds: string[] = ['main'];
 
-      for (let jIdx = 0; jIdx < judgeResults.length; jIdx++) {
-        if (judgeResults[jIdx]?.[idx]) {
-          allVotes.push(judgeResults[jIdx]![idx]);
-          modelIds.push(`judge${jIdx + 1}`);
+        for (let jIdx = 0; jIdx < judgeResults.length; jIdx++) {
+          if (judgeResults[jIdx]?.[idx]) {
+            allVotes.push(judgeResults[jIdx]![idx]);
+            modelIds.push(`judge${jIdx + 1}`);
+          }
         }
-      }
 
-      if (allVotes.length >= 2) {
-        mainAssessments[idx] = mergeConsensusAssessments(allVotes);
-        // Stamp modelId on votes
-        if (mainAssessments[idx].consensus) {
-          mainAssessments[idx].consensus!.votes = mainAssessments[idx].consensus!.votes.map((v, vi) => ({
-            ...v,
-            modelId: modelIds[vi] || `model${vi}`,
-          }));
+        if (allVotes.length >= 2) {
+          mainAssessments[idx] = mergeConsensusAssessments(allVotes);
+          // Stamp modelId on votes
+          if (mainAssessments[idx].consensus) {
+            mainAssessments[idx].consensus!.votes = mainAssessments[idx].consensus!.votes.map((v, vi) => ({
+              ...v,
+              modelId: modelIds[vi] || `model${vi}`,
+            }));
+          }
         }
-      }
-    }
+      }))
+    );
 
     options.onProgress?.(1, `Consensus complete: ${judgeIndices.length} findings reviewed by ${totalModels} models`);
     return mainAssessments;
