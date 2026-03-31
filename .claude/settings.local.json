@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run:*)",
+      "Bash(npm test:*)",
+      "Bash(find /Users/william/Tools/research-js -type f -name \"*.ts\" -o -name \"*.js\" -o -name \"*.json\" -o -name \"*.md\" -o -name \"*.yaml\" -o -name \"*.yml\" | grep -E '\\\\.\\(ts|js|json|md|yaml|yml\\)$' | head -50)",
+      "Bash(ls -la /Users/william/Tools/research-js/*.md)",
+      "Bash(grep -n \"supply_chain\\\\|obfuscation\\\\|credentials\\\\|exfiltration\\\\|code_execution\\\\|network\\\\|permission_abuse\\\\|ai_agent\\\\|secrets\\\\|telemetry\\\\|network_indicators\\\\|prompt_injection\\\\|llm_prompt_surface\\\\|malicious_agent_instructions\" /Users/william/Tools/research-js/tests/*.ts 2>/dev/null)",
+      "Bash(curl -s http://127.0.0.1:8001/api/prompts | python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\('profiles' in d['prompts'], d['prompts'].get\\('profiles', 'NONE'\\)\\)\")",
+      "Bash(grep -n \"dependency_name\\\\|package\\\\.json.*webpack\\\\|bundled.*pre.pass\\\\|scanBundled\\\\|detectBundled\" /Users/william/Tools/research-js/src/analyzer/*.ts)",
+      "Bash(git worktree:*)",
+      "Bash(ls tests/*.test.ts)",
+      "Bash(npx vitest:*)",
+      "Bash(ls -la tests/*.ts)",
+      "Bash(find /Users/william/Tools/research-js -maxdepth 1 -type f -name \".*\" 2>/dev/null | head -10)",
+      "Bash(npm audit:*)",
+      "Bash(npm:*)"
+    ]
+  },
+  "outputStyle": "Learning",
+  "prefersReducedMotion": true
+}

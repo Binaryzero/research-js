@@ -1,3 +1,6 @@
 assets/reports/
 node_modules/
 dist/
+.cursor/
+.windsurf/
+.DS_Store
