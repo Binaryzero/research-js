@@ -39,10 +39,10 @@
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
                 Marketplace
             </a>
-            <a href="#" id="download-link" class="btn btn-outline btn-sm" target="_blank" rel="noopener" style="display:none" aria-label="Download VSIX">
+            <button id="download-link" class="btn btn-outline btn-sm" style="display:none" aria-label="Download VSIX">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
                 VSIX
-            </a>
+            </button>
             <a href="#" id="back-btn" class="btn btn-outline btn-sm" role="button" aria-label="Back">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></svg>
                 Back
@@ -191,10 +191,32 @@ function showReport(name, markdown, html) {
             mpLink.style.display = '';
 
             const dlLink = document.getElementById('download-link');
-            dlLink.href = `https://${encodeURIComponent(publisher)}.gallery.vsassets.io/_apis/public/gallery/publisher/${encodeURIComponent(publisher)}/extension/${encodeURIComponent(extension)}/latest/assetbyname/Microsoft.VisualStudio.Services.VSIXPackage`;
-            dlLink.download = `${extId}.vsix`;
+            dlLink.onclick = () => downloadVsix(publisher, extension, extId);
             dlLink.style.display = '';
         }
+    }
+}
+
+async function downloadVsix(publisher, extension, extId) {
+    const btn = document.getElementById('download-link');
+    const origText = btn.textContent;
+    btn.textContent = 'Downloading...';
+    btn.disabled = true;
+    try {
+        const url = `https://${publisher}.gallery.vsassets.io/_apis/public/gallery/publisher/${publisher}/extension/${extension}/latest/assetbyname/Microsoft.VisualStudio.Services.VSIXPackage`;
+        const resp = await fetch(url);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const blob = await resp.blob();
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `${extId}.vsix`;
+        a.click();
+        URL.revokeObjectURL(a.href);
+    } catch (err) {
+        toastError('Download failed: ' + err.message);
+    } finally {
+        btn.textContent = origText;
+        btn.disabled = false;
     }
 }
 
