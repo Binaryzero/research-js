@@ -98,7 +98,7 @@ const main = async () => {
 
   const normalized = normalizeText(candidates);
 
-  const hasBlockedToolName = blockedToolNames.some((name) => normalized.includes(name));
+  const hasBlockedToolName = blockedToolNames.some((name) => new RegExp("\\\\b" + name + "\\\\b").test(normalized));
   const hasBlockedPattern = blockedPatterns.some((pattern) => pattern.test(normalized));
 
   if (hasBlockedToolName || hasBlockedPattern) {
