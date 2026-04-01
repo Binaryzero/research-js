@@ -5,3 +5,4 @@ dist/
 .windsurf/
 .DS_Store
 .github/
+.remember/

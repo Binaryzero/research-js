@@ -3,11 +3,10 @@
  * Support for downloading VSIX files from VS Code Marketplace
  */
 
-import { mkdirSync, existsSync, statSync } from 'fs';
+import { mkdirSync, existsSync, statSync, createWriteStream } from 'fs';
 import { join, basename } from 'path';
-import { request } from 'undici';
+import { Readable } from 'stream';
 import { pipeline } from 'stream/promises';
-import { createWriteStream } from 'fs';
 
 export interface DownloadResult {
   path: string;
@@ -74,7 +73,7 @@ export async function getMarketplaceDownloadUrl(publisher: string, extension: st
 }
 
 /**
- * Download extension from URL using undici for better memory management
+ * Download extension from URL using native fetch
  */
 export async function downloadExtension(
   url: string,
@@ -85,15 +84,15 @@ export async function downloadExtension(
   if (redirectCount > 10) {
     throw new Error('Too many redirects');
   }
-  
+
   // Ensure destination directory exists
   if (!existsSync(destDir)) {
     mkdirSync(destDir, { recursive: true });
   }
-  
+
   let downloadUrl = url;
   let filename: string;
-  
+
   // Handle marketplace URLs
   if (isMarketplaceUrl(url)) {
     const parsed = parseMarketplaceUrl(url);
@@ -112,33 +111,29 @@ export async function downloadExtension(
   } else {
     throw new Error(`Unsupported URL format: ${url}`);
   }
-  
+
   const destPath = join(destDir, filename);
-  
-  // Download using undici for better memory management
+
+  // Download using native fetch
   try {
-    const response = await request(downloadUrl, {
+    const response = await fetch(downloadUrl, {
       method: 'GET',
       headers: {
         'user-agent': 'extension-security-analyzer/1.0',
       },
+      redirect: 'follow',
     });
-    
-    if (response.statusCode >= 300 && response.statusCode < 400) {
-      // Handle redirect manually
-      const location = response.headers['location'];
-      if (location) {
-        const redirectUrl = Array.isArray(location) ? location[0] : location;
-        return downloadExtension(redirectUrl, destDir, redirectCount + 1);
-      }
+
+    if (!response.ok) {
+      throw new Error(`Download failed: ${response.status}`);
     }
-    
-    if (response.statusCode >= 400) {
-      throw new Error(`Download failed: ${response.statusCode}`);
-    }
-    
+
     // Stream directly to disk - no buffering in memory
-    await pipeline(response.body, createWriteStream(destPath));
+    if (!response.body) {
+      throw new Error('No response body');
+    }
+    const nodeStream = Readable.fromWeb(response.body as import('stream/web').ReadableStream);
+    await pipeline(nodeStream, createWriteStream(destPath));
 
     const stats = statSync(destPath);
     return {
