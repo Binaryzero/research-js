@@ -79,7 +79,7 @@ const main = async () => {
   try {
     payload = JSON.parse(raw);
   } catch {
-    console.log(JSON.stringify(buildDecision("allow", "Unable to parse PreToolUse payload; allowing by default.")));
+    console.log(JSON.stringify(buildDecision("deny", "Unable to parse PreToolUse payload; denying for security.")));
     return;
   }
 
