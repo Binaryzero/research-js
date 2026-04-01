@@ -198,7 +198,7 @@ async function loadReport(name) {
     try {
         const resp = await fetch(`/api/reports/${encodeURIComponent(name)}`);
         const data = await resp.json();
-        showReportContent(data.name, data.content);
+        showReportContent(data.name, data.content, data.html);
     } catch(e) { toastError('Error loading report'); }
 }
 
@@ -213,7 +213,7 @@ function showReport(result) {
 
     document.getElementById('report-area').style.display = '';
     document.getElementById('report-title').textContent = result.extensionId || 'Report';
-    showReportContent(result.report_name, result.markdown);
+    showReportContent(result.report_name, result.markdown, result.html);
 
     setupDownload('dl-md', result.markdown, result.report_name || 'report.md', 'text/markdown');
     if (result.json) {
@@ -221,12 +221,11 @@ function showReport(result) {
     }
 }
 
-function showReportContent(name, markdown) {
+function showReportContent(name, markdown, html) {
     document.getElementById('empty-state').style.display = 'none';
     document.getElementById('report-area').style.display = '';
     document.getElementById('report-title').textContent = name;
-    const rawHtml = marked.parse(markdown);
-    document.getElementById('report-content').innerHTML = DOMPurify.sanitize(rawHtml);
+    document.getElementById('report-content').innerHTML = html || '';
 }
 
 function setupDownload(btnId, content, filename, mime) {

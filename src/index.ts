@@ -12,6 +12,7 @@ import { fileURLToPath } from 'url';
 import { EventEmitter } from 'events';
 import { randomUUID } from 'crypto';
 import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync, readFileSync, rmSync } from 'fs';
+import { marked } from 'marked';
 import nunjucks from 'nunjucks';
 
 import { getConfig, getPrompts, getAppConfig, saveAppConfig, slotToLlmConfig, getPromptsForProfile } from './config.js';
@@ -29,12 +30,8 @@ import type { PromptConfig } from './config.js';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const TEMPLATES_DIR = join(__dirname, '..', 'assets', 'templates');
 
-// Configure Nunjucks (Jinja2-compatible)
-nunjucks.configure(TEMPLATES_DIR, {
-  autoescape: true,
-  watch: false,  // Disabled - tsx watch handles hot reload
-  noCache: true,
-});
+// Nunjucks will be configured by @fastify/view
+// We just need to pass the nunjucks module itself
 
 // In-memory scan registry
 const scans = new Map<string, ScanTaskEmitter>();
@@ -126,12 +123,9 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
   let prompts = getPrompts();
   
   const fastify = Fastify({
-    logger: {
-      transport: {
-        target: 'pino-pretty',
-        options: { colorize: true },
-      },
-    },
+    logger: process.env.NODE_ENV !== 'production'
+      ? { transport: { target: 'pino-pretty', options: { colorize: true } } }
+      : true,
   });
   
   // Register plugins
@@ -140,7 +134,7 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
     prefix: '/static/',
   });
   
-  // Register view plugin with Nunjucks (Jinja2-compatible)
+  // Register view plugin with Nunjucks
   await fastify.register(viewPlugin, {
     engine: {
       nunjucks: nunjucks,
@@ -148,8 +142,9 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
     root: TEMPLATES_DIR,
     viewExt: 'html',
     options: {
-      useHtmlMinifier: false,
-    },
+      autoescape: true,
+      noCache: true
+    }
   });
   
   await fastify.register(multipartPlugin);
@@ -424,7 +419,8 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
     }
     
     const content = readFileSync(reportPath, 'utf-8');
-    return { name, content };
+    const html = await marked(content, { gfm: true, breaks: false });
+    return { name, content, html };
   });
   
   // ---------------------------------------------------------------

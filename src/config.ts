@@ -8,6 +8,7 @@ import { fileURLToPath } from 'url';
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { load } from 'js-yaml';
 import type { ServerConfig, LlmConfig, AppConfig, ModelSlotConfig } from './types/index.js';
+import { AppConfigSchema } from './schemas/config.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -197,12 +198,18 @@ export function loadAppConfig(): AppConfig {
   // Load from config.json if it exists
   if (existsSync(CONFIG_FILE)) {
     try {
-      const raw = JSON.parse(readFileSync(CONFIG_FILE, 'utf-8')) as Partial<AppConfig>;
-      appConfig = { ...appConfig, ...raw, main: { ...appConfig.main, ...raw.main }, consensus: { ...appConfig.consensus, ...raw.consensus } };
-      if (Array.isArray(raw.judges)) {
-        appConfig.judges = raw.judges;
+      const raw = JSON.parse(readFileSync(CONFIG_FILE, 'utf-8'));
+      const validated = AppConfigSchema.partial().safeParse(raw);
+      if (!validated.success) {
+        console.warn('[Config] config.json failed validation, using defaults:',
+          validated.error.flatten().fieldErrors);
+      } else {
+        appConfig = { ...appConfig, ...validated.data, main: { ...appConfig.main, ...validated.data.main }, consensus: { ...appConfig.consensus, ...validated.data.consensus } };
+        if (Array.isArray(validated.data.judges)) {
+          appConfig.judges = validated.data.judges;
+        }
+        console.log(`[Config] Loaded config.json (version: ${appConfig.version}, judges: ${appConfig.judges.length})`);
       }
-      console.log(`[Config] Loaded config.json (version: ${appConfig.version}, judges: ${appConfig.judges.length})`);
     } catch (err) {
       console.warn(`[Config] Failed to parse config.json, using defaults:`, err);
     }

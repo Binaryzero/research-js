@@ -4,8 +4,6 @@
  * Provides: Toast notifications, SSE-based scan tracking, and utility functions.
  */
 
-/* global DOMPurify, marked */
-
 // ---------------------------------------------------------------------------
 // Utility helpers (must be defined first)
 // ---------------------------------------------------------------------------
@@ -254,9 +252,8 @@ function riskBadge(score, label, color) {
 }
 
 function renderMarkdown(markdown) {
-    if (typeof marked !== 'undefined' && typeof DOMPurify !== 'undefined') {
-        return DOMPurify.sanitize(marked.parse(markdown));
-    }
+    // Server now renders markdown to HTML, so this function just escapes HTML
+    // for any legacy calls that might still pass markdown
     return '<pre>' + escapeHtml(markdown) + '</pre>';
 }
 

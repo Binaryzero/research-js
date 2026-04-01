@@ -2,69 +2,19 @@
  * Concurrent LLM client for Ollama/OpenAI-compatible APIs
  * Key performance feature: parallel batch processing with concurrency limiting
  * 
- * ConcurrencyLimiter: Queue-based control to prevent 429 errors from Ollama
+ * Concurrency control: Uses p-limit to prevent 429 errors from Ollama
  * FastAssessmentCache: Shared cache to avoid redundant heuristic assessments across models
  */
 
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { readFileSync } from 'fs';
+import pLimit from 'p-limit';
 import type { Finding, LlmAssessment, LlmConfig, EndpointInfo, ConsensusConfig, AnalysisResult } from '../types/index.js';
 import type { PromptConfig } from '../config.js';
 import { getEndpointFiltering } from './patterns.js';
 import type { LlmProvider } from '../providers/llm-provider.js';
 import { createProvider } from '../providers/index.js';
-
-/**
- * Global concurrency limiter - single limiter shared across ALL LlmClient instances
- * Key optimization: prevents overwhelming the LLM server by capping total concurrent requests
- * across all models (main + judges) to a configurable limit (default: 15)
- */
-class GlobalConcurrencyLimiter {
-  private active = 0;
-  private queue: Array<() => Promise<void>> = [];
-  private static instance: GlobalConcurrencyLimiter;
-
-  private constructor(private maxConcurrent: number = 15) {}
-
-  static getInstance(maxConcurrent?: number): GlobalConcurrencyLimiter {
-    if (!GlobalConcurrencyLimiter.instance) {
-      GlobalConcurrencyLimiter.instance = new GlobalConcurrencyLimiter(maxConcurrent);
-    }
-    return GlobalConcurrencyLimiter.instance;
-  }
-
-  async run<T>(fn: () => Promise<T>): Promise<T> {
-    return new Promise((resolve, reject) => {
-      const execute = async () => {
-        try {
-          const result = await fn();
-          resolve(result);
-        } catch (err) {
-          reject(err);
-        } finally {
-          this.next();
-        }
-      };
-
-      if (this.active < this.maxConcurrent) {
-        this.active++;
-        execute();
-      } else {
-        this.queue.push(execute);
-      }
-    });
-  }
-
-  private next() {
-    this.active--;
-    if (this.queue.length > 0) {
-      this.active++;
-      const nextFn = this.queue.shift();
-      if (nextFn) nextFn();
-    }
-  }
-}
 
 /**
  * Fast assessment cache - shared across LlmClient instances to avoid redundant work
@@ -439,23 +389,11 @@ export class LlmClient {
     this.fastAssessor = new FastRiskAssessor();
     this.prompts = prompts || this.getDefaultPrompts();
     this.useSharedCache = useSharedCache;
-    // Use global concurrency limiter to prevent overwhelming the LLM server
-    // All LlmClient instances share the same limiter for total concurrency control
-    this.concurrencyLimiter = GlobalConcurrencyLimiter.getInstance(this.concurrency);
     console.log(`[LLM] Client initialized with assessmentMode: ${config.assessmentMode}, sharedCache: ${useSharedCache}`);
   }
 
   get concurrency(): number {
     return this.config.concurrency || 10;
-  }
-
-  private readonly concurrencyLimiter: GlobalConcurrencyLimiter;
-
-  /**
-   * Get the global concurrency limiter for external use (e.g., ConsensusOrchestrator)
-   */
-  getConcurrencyLimiter(): GlobalConcurrencyLimiter {
-    return this.concurrencyLimiter;
   }
 
   /**
@@ -1025,20 +963,25 @@ If there are too many findings to assess completely, prioritize assessing the fi
       const missing = batch.indices.filter(idx => !assessed.has(idx));
       if (missing.length > 0) {
         console.warn(`[LLM] Triage batch: ${missing.length} findings missing, falling back to individual assessment (sequential)`);
-        for (const idx of missing) {
-          try {
-            const result = await this.concurrencyLimiter.run(() => this.assessFinding(findings[idx]));
-            results[idx] = result;
-          } catch {
-            results[idx] = {
-              riskLevel: findings[idx].riskLevel as LlmAssessment['riskLevel'],
-              isFalsePositive: false,
-              falsePositiveReason: '',
-              explanation: 'Individual assessment fallback failed',
-              recommendation: 'investigate' as const,
-            };
-          }
-        }
+        const limit = pLimit(this.concurrency);
+        const missingResults = await Promise.all(
+          missing.map(idx => limit(async () => {
+            try {
+              return await this.assessFinding(findings[idx]);
+            } catch {
+              return {
+                riskLevel: findings[idx].riskLevel as LlmAssessment['riskLevel'],
+                isFalsePositive: false,
+                falsePositiveReason: '',
+                explanation: 'Individual assessment fallback failed',
+                recommendation: 'investigate' as const,
+              };
+            }
+          }))
+        );
+        missing.forEach((idx, i) => {
+          results[idx] = missingResults[i];
+        });
       }
 
       totalProcessed += batch.indices.length;
@@ -1073,17 +1016,18 @@ If there are too many findings to assess completely, prioritize assessing the fi
       console.log(`[Consensus] Triage batch consensus pass: ${consensusIndices.length} findings need quorum`);
 
       // Use concurrency limiter to avoid 429 errors - submit both additional votes via limiter
+      const limit = pLimit(this.concurrency);
       const consensusPromises = consensusIndices
         .filter(idx => !results[idx]?.consensus) // Skip findings that already have consensus
-        .map(idx => this.concurrencyLimiter.run(async () => {
+        .map(idx => limit(async () => {
           const finding = findings[idx];
           const firstVote = results[idx];
           try {
             const { system, user } = this.buildFindingPrompt(finding);
 
             const [resp2, resp3] = await Promise.all([
-              this.concurrencyLimiter.run(() => this.generate(user, system)),
-              this.concurrencyLimiter.run(() => this.generate(user, system)),
+              this.generate(user, system),
+              this.generate(user, system),
             ]);
 
             const vote2 = parseSingleAssessment(resp2);
@@ -1160,17 +1104,16 @@ If there are too many findings to assess completely, prioritize assessing the fi
     let totalLlmCalls = 0;
 
     // Flatten patterns and file groups for parallel processing
-    const allFileGroups = patterns.flatMap(p => 
+    const allFileGroups = patterns.flatMap(p =>
       p.fileGroups.map(fg => ({ pattern: p, fileGroup: fg }))
     );
 
     // Process file groups with concurrency limiting to avoid 429 errors
     // Submit all tasks simultaneously; limiter gates them to maxConcurrent
+    const limit = pLimit(this.concurrency);
     const allResults = await Promise.all(
       allFileGroups.map(({ pattern, fileGroup }) =>
-        this.concurrencyLimiter.run(() =>
-          this.processFileGroupForStrategic(pattern, fileGroup)
-        )
+        limit(() => this.processFileGroupForStrategic(pattern, fileGroup))
       )
     );
 
@@ -1275,7 +1218,7 @@ If there are too many findings to assess completely, prioritize assessing the fi
       }
       console.log(`[Consensus] Merged ${assessments.size} findings, ${[...assessments.values()].filter(a => a.consensus?.splitDecision).length} split decisions`);
     } else {
-      const response = await this.concurrencyLimiter.run(() => this.generate(user, system));
+      const response = await this.generate(user, system);
       llmCalls = 1;
       assessments = parseStrategicAssessments(response, samples);
     }
@@ -1299,7 +1242,7 @@ If there are too many findings to assess completely, prioritize assessing the fi
       if (candidates.length >= 2) return mergeConsensusAssessments(candidates);
       if (candidates.length === 1) return candidates[0];
     } else {
-      const response = await this.concurrencyLimiter.run(() => this.generate(user, system));
+      const response = await this.generate(user, system);
       const result = parseSingleAssessment(response);
       if (result) return result;
     }
@@ -1674,11 +1617,10 @@ export class ConsensusOrchestrator {
     }
 
     // Step 3: Merge main + judge votes for each finding that needs consensus
-    // Use the global concurrency limiter (already active via LlmClient) to avoid overwhelming the LLM
-    // The global limiter ensures total concurrent requests across all models stays within limits
+    // This is CPU-bound work (merging assessments), no need for concurrency limiting
     
     await Promise.all(
-      judgeIndices.map(idx => this.mainClient.getConcurrencyLimiter().run(async () => {
+      judgeIndices.map(async idx => {
         const allVotes: LlmAssessment[] = [mainAssessments[idx]];
         const modelIds: string[] = ['main'];
 
@@ -1699,7 +1641,7 @@ export class ConsensusOrchestrator {
             }));
           }
         }
-      }))
+      })
     );
 
     options.onProgress?.(1, `Consensus complete: ${judgeIndices.length} findings reviewed by ${totalModels} models`);

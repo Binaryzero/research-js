@@ -88,7 +88,7 @@ Both modes output: `riskLevel` (critical/high/medium/low/none), `isFalsePositive
 ### 7. Configuration (`src/config.ts`)
 
 - Environment variable-based config with auto-detection
-- LLM config: model, baseUrl, apiStyle (openai/chat/generate/auto), timeout, maxTokens, temperature, concurrency, assessmentMode
+- LLM config: model, baseUrl, timeout, maxTokens, temperature, concurrency, assessmentMode
 - Server config: port, host, reportsDir, patternsFile, historyFile
 - Hot-reloadable prompts from `prompts.yaml`
 

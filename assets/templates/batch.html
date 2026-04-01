@@ -146,10 +146,20 @@ function initBatchPage() {
     executeSearch(getSearchFormData());
 }
 
+// Wait for DOM and deferred scripts (app.js) to be ready
+function waitForAppJs(callback) {
+    if (typeof toastError === 'function') {
+        callback();
+    } else {
+        // app.js hasn't loaded yet, wait and retry
+        setTimeout(function() { waitForAppJs(callback); }, 50);
+    }
+}
+
 if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', initBatchPage);
+    document.addEventListener('DOMContentLoaded', function() { waitForAppJs(initBatchPage); });
 } else {
-    initBatchPage();
+    waitForAppJs(initBatchPage);
 }
 
 // -- Load/Save filter settings --

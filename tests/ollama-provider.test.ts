@@ -1,16 +1,18 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { ProviderIdentity, ProviderConnection, ProviderInference } from '../src/providers/types.js';
 
-// Mock the ollama package before importing the provider
-const mockOllamaClient = {
-  list: vi.fn(),
-  chat: vi.fn(),
-};
+// Mock the AI SDK packages before importing the provider
+const mockGenerateText = vi.fn();
+const mockGenerateObject = vi.fn();
+const mockCreateOllama = vi.fn();
 
-vi.mock('ollama', () => ({
-  Ollama: vi.fn().mockImplementation(function() {
-    return mockOllamaClient;
-  }),
+vi.mock('ai', () => ({
+  generateText: (...args: unknown[]) => mockGenerateText(...args),
+  generateObject: (...args: unknown[]) => mockGenerateObject(...args),
+}));
+
+vi.mock('ollama-ai-provider', () => ({
+  createOllama: vi.fn().mockImplementation((...args: unknown[]) => mockCreateOllama(...args)),
 }));
 
 // Import after mocking
@@ -33,6 +35,8 @@ function makeInference(overrides?: Partial<ProviderInference>): ProviderInferenc
 describe('OllamaProvider', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockGenerateText.mockResolvedValue({ text: 'mocked response' });
+    mockCreateOllama.mockReturnValue(vi.fn().mockReturnValue('ollama-model'));
   });
 
   afterEach(() => {
@@ -41,41 +45,35 @@ describe('OllamaProvider', () => {
 
   describe('generate()', () => {
     it('sends chat request and extracts content', async () => {
-      mockOllamaClient.chat.mockResolvedValueOnce({
-        message: { content: 'test response' },
-      });
+      mockGenerateText.mockResolvedValueOnce({ text: 'test response' });
 
       const provider = new OllamaProvider(makeIdentity(), makeConnection(), makeInference());
       const result = await provider.generate('hello', 'system prompt');
 
       expect(result).toBe('test response');
-      expect(mockOllamaClient.chat).toHaveBeenCalledOnce();
+      expect(mockGenerateText).toHaveBeenCalledOnce();
 
-      const [call] = mockOllamaClient.chat.mock.calls;
+      const [call] = mockGenerateText.mock.calls;
       expect(call[0]).toMatchObject({
-        model: 'test-model',
+        model: 'ollama-model',
         messages: [
           { role: 'system', content: 'system prompt' },
           { role: 'user', content: 'hello' },
         ],
-        options: {
-          num_predict: 4096,
-          temperature: 0.3,
-        },
+        maxOutputTokens: 4096,
+        temperature: 0.3,
       });
     });
 
     it('works without system prompt', async () => {
-      mockOllamaClient.chat.mockResolvedValueOnce({
-        message: { content: 'chat response' },
-      });
+      mockGenerateText.mockResolvedValueOnce({ text: 'chat response' });
 
       const provider = new OllamaProvider(makeIdentity(), makeConnection(), makeInference());
       const result = await provider.generate('hello');
 
       expect(result).toBe('chat response');
 
-      const [call] = mockOllamaClient.chat.mock.calls;
+      const [call] = mockGenerateText.mock.calls;
       expect(call[0].messages).toEqual([
         { role: 'user', content: 'hello' },
       ]);
@@ -84,14 +82,14 @@ describe('OllamaProvider', () => {
 
   describe('isAvailable()', () => {
     it('returns true when server responds', async () => {
-      mockOllamaClient.list.mockResolvedValueOnce({ models: [] });
+      global.fetch = vi.fn().mockResolvedValueOnce({ ok: true });
 
       const provider = new OllamaProvider(makeIdentity(), makeConnection(), makeInference());
       expect(await provider.isAvailable()).toBe(true);
     });
 
-    it('returns false when list throws', async () => {
-      mockOllamaClient.list.mockRejectedValueOnce(new Error('ECONNREFUSED'));
+    it('returns false when fetch fails', async () => {
+      global.fetch = vi.fn().mockRejectedValueOnce(new Error('ECONNREFUSED'));
 
       const provider = new OllamaProvider(makeIdentity(), makeConnection(), makeInference());
       expect(await provider.isAvailable()).toBe(false);
@@ -100,10 +98,57 @@ describe('OllamaProvider', () => {
 
   describe('generate() error handling', () => {
     it('propagates errors to allow caller retry logic', async () => {
-      mockOllamaClient.chat.mockRejectedValueOnce(new Error('Connection failed'));
+      mockGenerateText.mockRejectedValueOnce(new Error('Connection failed'));
 
       const provider = new OllamaProvider(makeIdentity(), makeConnection(), makeInference());
       await expect(provider.generate('hello')).rejects.toThrow('Connection failed');
+    });
+  });
+
+  describe('generateObject()', () => {
+    it('generates structured output matching schema', async () => {
+      const mockSchema = { parse: vi.fn().mockReturnValue({ risk_level: 'high' }) };
+      mockGenerateObject.mockResolvedValueOnce({ object: { risk_level: 'high' } });
+
+      const provider = new OllamaProvider(makeIdentity(), makeConnection(), makeInference());
+      const result = await provider.generateObject(mockSchema as any, 'analyze this', 'system prompt');
+
+      expect(result).toEqual({ risk_level: 'high' });
+      expect(mockGenerateObject).toHaveBeenCalledOnce();
+
+      const [call] = mockGenerateObject.mock.calls;
+      expect(call[0]).toMatchObject({
+        schema: mockSchema,
+        messages: [
+          { role: 'system', content: 'system prompt' },
+          { role: 'user', content: 'analyze this' },
+        ],
+        maxOutputTokens: 4096,
+        temperature: 0.3,
+      });
+    });
+
+    it('works without system prompt', async () => {
+      const mockSchema = { parse: vi.fn().mockReturnValue({ risk_level: 'low' }) };
+      mockGenerateObject.mockResolvedValueOnce({ object: { risk_level: 'low' } });
+
+      const provider = new OllamaProvider(makeIdentity(), makeConnection(), makeInference());
+      const result = await provider.generateObject(mockSchema as any, 'analyze this');
+
+      expect(result).toEqual({ risk_level: 'low' });
+
+      const [call] = mockGenerateObject.mock.calls;
+      expect(call[0].messages).toEqual([
+        { role: 'user', content: 'analyze this' },
+      ]);
+    });
+
+    it('propagates errors', async () => {
+      const mockSchema = { parse: vi.fn() };
+      mockGenerateObject.mockRejectedValueOnce(new Error('Schema validation failed'));
+
+      const provider = new OllamaProvider(makeIdentity(), makeConnection(), makeInference());
+      await expect(provider.generateObject(mockSchema as any, 'hello')).rejects.toThrow('Schema validation failed');
     });
   });
 });
