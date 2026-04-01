@@ -60,7 +60,7 @@
                                 </select>
                             </div>
                         </div>
-                        <div class="form-row form-row-3">
+                        <div class="form-row form-row-4">
                             <div class="form-group">
                                 <label for="main-temperature">Temperature</label>
                                 <input type="number" id="main-temperature" min="0" max="2" step="0.1" value="0.3">
@@ -68,6 +68,10 @@
                             <div class="form-group">
                                 <label for="main-max-tokens">Max Tokens</label>
                                 <input type="number" id="main-max-tokens" min="1000" step="1000" value="32000">
+                            </div>
+                            <div class="form-group">
+                                <label for="main-batch-size">Batch Size</label>
+                                <input type="number" id="main-batch-size" min="1" max="50" step="1" value="20" title="Max findings per triage batch">
                             </div>
                             <div class="form-group">
                                 <label for="main-timeout">Timeout (ms)</label>
@@ -119,7 +123,7 @@
                                 </select>
                             </div>
                         </div>
-                        <div class="form-row form-row-3">
+                        <div class="form-row form-row-4">
                             <div class="form-group">
                                 <label for="judge1-temperature">Temperature</label>
                                 <input type="number" id="judge1-temperature" min="0" max="2" step="0.1" value="0.3">
@@ -127,6 +131,10 @@
                             <div class="form-group">
                                 <label for="judge1-max-tokens">Max Tokens</label>
                                 <input type="number" id="judge1-max-tokens" min="1000" step="1000" value="32000">
+                            </div>
+                            <div class="form-group">
+                                <label for="judge1-batch-size">Batch Size</label>
+                                <input type="number" id="judge1-batch-size" min="1" max="50" step="1" value="20" title="Max findings per triage batch">
                             </div>
                             <div class="form-group">
                                 <label for="judge1-timeout">Timeout (ms)</label>
@@ -178,7 +186,7 @@
                                 </select>
                             </div>
                         </div>
-                        <div class="form-row form-row-3">
+                        <div class="form-row form-row-4">
                             <div class="form-group">
                                 <label for="judge2-temperature">Temperature</label>
                                 <input type="number" id="judge2-temperature" min="0" max="2" step="0.1" value="0.3">
@@ -186,6 +194,10 @@
                             <div class="form-group">
                                 <label for="judge2-max-tokens">Max Tokens</label>
                                 <input type="number" id="judge2-max-tokens" min="1000" step="1000" value="32000">
+                            </div>
+                            <div class="form-group">
+                                <label for="judge2-batch-size">Batch Size</label>
+                                <input type="number" id="judge2-batch-size" min="1" max="50" step="1" value="20" title="Max findings per triage batch">
                             </div>
                             <div class="form-group">
                                 <label for="judge2-timeout">Timeout (ms)</label>
@@ -615,6 +627,7 @@ function populateModelCard(slotId, slot) {
     set(`${slotId}-provider`, slot.provider || 'ollama');
     set(`${slotId}-temperature`, slot.temperature ?? 0.3);
     set(`${slotId}-max-tokens`, slot.maxTokens ?? 32000);
+    set(`${slotId}-batch-size`, slot.batchSize ?? 20);
     set(`${slotId}-timeout`, slot.timeout ?? 180000);
 
     // Set model — try select first, fall back to manual input
@@ -643,6 +656,7 @@ function readModelCard(slotId, label) {
         baseUrl: getSlotUrl(slotId),
         timeout: Number(document.getElementById(`${slotId}-timeout`).value) || 180000,
         maxTokens: Number(document.getElementById(`${slotId}-max-tokens`).value) || 32000,
+        batchSize: Number(document.getElementById(`${slotId}-batch-size`).value) || 20,
         temperature: (() => { const v = parseFloat(document.getElementById(`${slotId}-temperature`).value); return isNaN(v) ? 0.3 : v; })(),
     };
 }

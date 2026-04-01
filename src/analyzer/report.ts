@@ -137,10 +137,12 @@ export class ReportGenerator {
 
     const truePositives = findings.length - totals.fp;
 
-    return `
+    let summary = `
 ## Findings Summary
 
-**Total findings:** ${findings.length} | **True positives:** ${truePositives} | **False positives:** ${totals.fp}
+**Total findings:** ${findings.length} | **True positives:** ${truePositives} | **False positives:** ${totals.fp}`;
+
+    summary += `
 
 | Category | Total | Critical | High | Medium | Low | FP |
 |----------|-------|----------|------|--------|-----|-----|
@@ -148,6 +150,8 @@ ${rows.join('\n')}
 | **Total** | **${findings.length}** | **${totals.critical || '-'}** | **${totals.high || '-'}** | **${totals.medium || '-'}** | **${totals.low || '-'}** | **${totals.fp || '-'}** |
 
 ---`;
+
+    return summary;
   }
 
   private executiveSummary(): string {
@@ -321,6 +325,15 @@ ${rows.join('\n')}
     });
 
     if (filteredEndpoints.length === 0) {
+      const totalRaw = this.result.endpoints.length;
+      if (totalRaw > 0) {
+        return `
+## External Endpoints
+
+No notable endpoints. ${totalRaw} URL(s) found but excluded (standard infrastructure domains).
+
+---`;
+      }
       return `
 ## External Endpoints
 
@@ -329,9 +342,11 @@ No external URLs found in code.
 ---`;
     }
     
-    // Extract unique domains
+    // Extract unique domains and count operational endpoints
     const domains = new Set<string>();
+    let operationalCount = 0;
     for (const e of filteredEndpoints) {
+      if (e.operational) operationalCount++;
       try {
         const url = new URL(e.url);
         domains.add(url.hostname);
@@ -343,22 +358,24 @@ No external URLs found in code.
 
     const rows = displayEndpoints.map(e => {
       const urlDisplay = this.options.fullOutput ? e.url : (e.url.length > 80 ? e.url.slice(0, 80) + '...' : e.url);
-      return `| ${urlDisplay} | \`${e.file}:${e.line}\` |`;
+      const method = e.method || '-';
+      const flags = e.operational ? '**active**' : 'ref';
+      return `| ${urlDisplay} | ${method} | ${flags} | \`${e.file}:${e.line}\` |`;
     });
 
     let table = `
 ## External Endpoints (${filteredEndpoints.length} total)
 
-**Unique domains:** ${domains.size}
+**Unique domains:** ${domains.size} | **Active network calls:** ${operationalCount} | **References only:** ${filteredEndpoints.length - operationalCount}
 
-| URL | Location |
-|-----|----------|
+| URL | Method | Usage | Location |
+|-----|--------|-------|----------|
 ${rows.join('\n')}`;
-    
-    if (limit && this.result.endpoints.length > limit) {
-      table += `\n| ... | *(${filteredEndpoints.length - limit} more - use --full)* |`;
+
+    if (limit && filteredEndpoints.length > limit) {
+      table += `\n| ... | | | *(${filteredEndpoints.length - limit} more - use --full)* |`;
     }
-    
+
     return table + '\n---';
   }
   
@@ -397,6 +414,12 @@ No significant security findings detected.
         sections.push(``);
         sections.push(`**Location:** \`${f.location}\``);
         sections.push(`**Risk Level:** ${f.riskLevel.toUpperCase()}`);
+        if (f.probableOrigin && f.probableOrigin !== 'unknown') {
+          const originLabel = f.probableOrigin === 'extension_code' ? 'Extension Code'
+            : f.probableOrigin === 'bundled_dependency' ? 'Bundled Dependency'
+            : f.probableOrigin;
+          sections.push(`**Origin:** ${originLabel}`);
+        }
         if (f.injectionDetected) {
           sections.push(`**Prompt Injection:** Detected`);
         }

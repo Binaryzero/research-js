@@ -990,6 +990,10 @@ tr:hover td {
   grid-template-columns: 1fr 120px;
 }
 
+.form-row.form-row-4 {
+  grid-template-columns: repeat(4, 1fr);
+}
+
 .form-actions {
   display: flex;
   gap: var(--space-3);
@@ -1677,7 +1681,8 @@ td.risk-low { color: var(--success); }
   .form-row,
   .form-row:first-child,
   .settings-card .form-row,
-  .settings-card .form-row.form-row-3 {
+  .settings-card .form-row.form-row-3,
+  .settings-card .form-row.form-row-4 {
     grid-template-columns: 1fr;
   }
   

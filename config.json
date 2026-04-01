@@ -17,10 +17,10 @@
       "label": "Judge 1",
       "enabled": true,
       "provider": "ollama",
-      "model": "deepseek-v3.2:cloud",
+      "model": "nemotron-3-nano:30b-cloud",
       "baseUrl": "http://localhost:11434",
       "timeout": 1800000,
-      "maxTokens": 65000,
+      "maxTokens": 35000,
       "temperature": 0
     },
     {
@@ -28,17 +28,17 @@
       "label": "Judge 2",
       "enabled": true,
       "provider": "ollama",
-      "model": "nemotron-3-super:cloud",
+      "model": "gpt-oss:20b-cloud",
       "baseUrl": "http://localhost:11434",
       "timeout": 1800000,
-      "maxTokens": 65000,
+      "maxTokens": 35000,
       "temperature": 0
     }
   ],
   "consensus": {
     "judgesValidateAllFindings": false
   },
-  "assessmentMode": "bulk",
+  "assessmentMode": "strategic",
   "promptProfile": "default",
   "concurrency": 10,
   "defaultNoLlm": false,

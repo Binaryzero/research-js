@@ -55,6 +55,7 @@ export class OllamaProvider implements LlmProvider {
       ],
       maxOutputTokens: this.infer.maxTokens,
       temperature: this.infer.temperature,
+      maxRetries: this.infer.maxRetries ?? 5,
       abortSignal: AbortSignal.timeout(this.connection.timeout),
     });
     return text ?? '';
@@ -71,6 +72,7 @@ export class OllamaProvider implements LlmProvider {
       ],
       maxOutputTokens: this.infer.maxTokens,
       temperature: this.infer.temperature,
+      maxRetries: this.infer.maxRetries ?? 5,
       abortSignal: AbortSignal.timeout(this.connection.timeout),
     });
     return object;

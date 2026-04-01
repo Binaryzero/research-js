@@ -14,4 +14,4 @@ export interface ProviderConnection {
   apiKey?: string; // Optional API key for OpenAI-compatible endpoints
 }
 
-export interface ProviderInference { maxTokens: number; temperature: number }
+export interface ProviderInference { maxTokens: number; temperature: number; maxRetries?: number }

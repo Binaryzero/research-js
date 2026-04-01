@@ -127,6 +127,9 @@ class ScanTracker {
                 return;
             }
             if (titleEl) titleEl.textContent = info.status === 'complete' ? 'Complete' : `Status: ${info.status}`;
+            // Hide cancel button once scan is done — keep log visible
+            const cancelBtn = progressArea?.querySelector('#cancel-btn');
+            if (cancelBtn) cancelBtn.style.display = 'none';
             if (info.status === 'complete' && onComplete) {
                 onComplete(info.result);
             } else if (info.status !== 'complete' && onError) {

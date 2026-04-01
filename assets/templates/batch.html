@@ -384,6 +384,31 @@ function renderResults(results) {
         const actions = document.createElement('div');
         actions.className = 'ext-actions';
 
+        // Marketplace and download links (always available)
+        const mpLink = document.createElement('a');
+        mpLink.className = 'btn btn-outline btn-sm';
+        mpLink.href = `https://marketplace.visualstudio.com/items?itemName=${encodeURIComponent(ext.extensionId)}`;
+        mpLink.target = '_blank';
+        mpLink.rel = 'noopener';
+        mpLink.title = 'View on Marketplace';
+        mpLink.textContent = 'Page';
+        actions.appendChild(mpLink);
+
+        const idParts = ext.extensionId.split('.');
+        if (idParts.length >= 2) {
+            const publisher = idParts[0];
+            const extension = idParts.slice(1).join('.');
+            const dlLink = document.createElement('a');
+            dlLink.className = 'btn btn-outline btn-sm';
+            dlLink.href = `https://${encodeURIComponent(publisher)}.gallery.vsassets.io/_apis/public/gallery/publisher/${encodeURIComponent(publisher)}/extension/${encodeURIComponent(extension)}/latest/assetbyname/Microsoft.VisualStudio.Services.VSIXPackage`;
+            dlLink.target = '_blank';
+            dlLink.rel = 'noopener';
+            dlLink.download = `${ext.extensionId}.vsix`;
+            dlLink.title = 'Download VSIX';
+            dlLink.textContent = 'VSIX';
+            actions.appendChild(dlLink);
+        }
+
         if (ext.scan) {
             const viewBtn = document.createElement('a');
             viewBtn.className = 'btn btn-outline btn-sm';
