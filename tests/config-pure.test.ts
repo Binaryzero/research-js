@@ -61,12 +61,12 @@ describe('slotToLlmConfig', () => {
   });
 
   it('returns a plain object with exactly 10 keys', () => {
-    const result = slotToLlmConfig(makeMod9 keys', () => {
     const result = slotToLlmConfig(makeModelSlot(), makeAppConfig());
     const keys = Object.keys(result);
-    expect(keys).toHaveLength(9);
+    expect(keys).toHaveLength(10);
     expect(keys).toEqual(expect.arrayContaining([
-      'model', 'baseUrl', 'provider, 'assessmentMode', 'apiKey',
+      'model', 'baseUrl', 'provider', 'timeout', 'maxTokens',
+      'temperature', 'concurrency', 'assessmentMode', 'apiKey', 'batchSize',
     ]));
   });
 });
@@ -101,7 +101,7 @@ describe('getPromptsForProfile', () => {
 
   it('returns base prompts when profiles field is undefined', () => {
     const base = makeBasePrompts();
-    delete (base as Record<string, unknown>).profiles;
+    delete (base as any).profiles;
     const result = getPromptsForProfile('strict', base);
     expect(result).toEqual(base);
   });

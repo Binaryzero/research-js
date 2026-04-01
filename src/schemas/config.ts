@@ -19,6 +19,7 @@ export const ModelSlotSchema = z.object({
   timeout: z.number().min(1000),
   maxTokens: z.number().min(100),
   temperature: z.number().min(0).max(2),
+  batchSize: z.number().min(1).max(50).optional(),
 });
 
 /**

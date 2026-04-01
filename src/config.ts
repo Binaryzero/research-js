@@ -181,6 +181,7 @@ export function slotToLlmConfig(slot: ModelSlotConfig, appConfig: AppConfig): Ll
     concurrency: appConfig.concurrency,
     assessmentMode: appConfig.assessmentMode,
     apiKey: slot.apiKey,
+    batchSize: slot.batchSize,
   };
 }
 

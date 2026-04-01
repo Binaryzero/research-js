@@ -497,6 +497,7 @@ Respond with JSON only.`,
     findings: Finding[],
     options: {
       onProgress?: (progress: number, message: string) => void;
+      skipConsensus?: boolean;
     } = {}
   ): Promise<LlmAssessment[]> {
     const results: LlmAssessment[] = new Array(findings.length);
@@ -780,7 +781,7 @@ If there are too many findings to assess completely, prioritize assessing the fi
 
     const TIER_A_CATEGORIES = new Set(['prompt_injection', 'malicious_agent_instructions', 'obfuscation', 'credentials']);
     const TIER_A_MAX = 5;
-    const TIER_B_MAX = 20;
+    const TIER_B_MAX = this.config.batchSize ?? 20;
 
     // Split into tier A and tier B
     const tierA: number[] = [];
@@ -969,8 +970,9 @@ If there are too many findings to assess completely, prioritize assessing the fi
         const missingResults = await Promise.all(
           missing.map(idx => limit(async () => {
             try {
-              return await this.assessFinding(findings[idx]);
-            } catch {
+              return await this.assessFinding(findings[idx], options.skipConsensus);
+            } catch (err) {
+              console.warn(`[LLM] Individual fallback failed for finding ${idx} (${findings[idx].category}/${findings[idx].title}): ${err instanceof Error ? err.message : err}`);
               return {
                 riskLevel: findings[idx].riskLevel as LlmAssessment['riskLevel'],
                 isFalsePositive: false,
@@ -1037,8 +1039,8 @@ If there are too many findings to assess completely, prioritize assessing the fi
               if (allVotes.length >= 2) {
                 results[idx] = mergeConsensusAssessments(allVotes);
               }
-            } catch {
-              // Keep the previous result if consensus fails
+            } catch (err) {
+              console.warn(`[Consensus] Failed for finding ${idx} (${finding.category}/${finding.title}): ${err instanceof Error ? err.message : err}`);
             }
           }));
         await Promise.all(consensusPromises);
@@ -1231,10 +1233,10 @@ If there are too many findings to assess completely, prioritize assessing the fi
   /**
    * Assess a single finding
    */
-  async assessFinding(finding: Finding): Promise<LlmAssessment> {
+  async assessFinding(finding: Finding, skipConsensus?: boolean): Promise<LlmAssessment> {
     const { system, user } = this.buildFindingPrompt(finding);
 
-    const useConsensus = finding.riskLevel === 'high' || finding.riskLevel === 'critical';
+    const useConsensus = !skipConsensus && (finding.riskLevel === 'high' || finding.riskLevel === 'critical');
 
     if (useConsensus) {
       console.log(`[Consensus] Individual quorum for "${finding.title}" at ${finding.location} (${finding.riskLevel} risk)`);
@@ -1662,23 +1664,28 @@ export class ConsensusOrchestrator {
       return this.mainClient.generateExecutiveSummary(result, extensionPath);
     }
 
-    // All models generate in parallel — judges wrapped with catch for graceful degradation
+    // All models generate in parallel — all wrapped with catch for graceful degradation
     const summaries = await Promise.all([
-      this.mainClient.generateExecutiveSummary(result, extensionPath),
+      this.mainClient.generateExecutiveSummary(result, extensionPath).catch((err): string => {
+        console.warn(`[Orchestrator] Main model summary failed: ${err instanceof Error ? err.message : err}`);
+        return '';
+      }),
       ...this.judges.map((j, jIdx) =>
         j.generateExecutiveSummary(result, extensionPath).catch((err): string => {
           console.warn(`[Orchestrator] Judge ${jIdx + 1} summary failed: ${err instanceof Error ? err.message : err}`);
-          return ''; // Graceful degradation — continue without this judge
+          return '';
         })
       ),
     ]);
 
-    const parsed = summaries
-      .filter(s => s && s.trim())
-      .map(s => parseVerdictFromSummary(s));
+    const validSummaries = summaries.filter(s => s && s.trim());
+    const parsed = validSummaries.map(s => parseVerdictFromSummary(s));
 
-    if (parsed.length === 0) return '';
-    if (parsed.length === 1) return summaries[0];
+    if (parsed.length === 0) {
+      console.warn('[Orchestrator] All models failed to produce executive summary');
+      return '';
+    }
+    if (parsed.length === 1) return validSummaries[0];
 
     // Majority vote on verdict, tie-break toward higher severity
     const verdictCounts = new Map<string, number>();

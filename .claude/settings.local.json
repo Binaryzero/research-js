@@ -16,7 +16,15 @@
       "Bash(npm audit:*)",
       "Bash(npm:*)",
       "Bash(npx tsc:*)",
-      "Bash(git diff:*)"
+      "Bash(git diff:*)",
+      "Bash(ls /Users/william/Tools/research-js/assets/reports/*.md)",
+      "Bash(ls -lt /Users/william/Tools/research-js/assets/reports/*.md)",
+      "Bash(git add:*)",
+      "Bash(git commit -m ':*)",
+      "Bash(git push:*)",
+      "Bash(gh pr create --title 'fix: eliminate redundant LLM consensus calls and improve report output' --body ':*)",
+      "Bash(git stash:*)",
+      "Bash(git checkout:*)"
     ]
   },
   "outputStyle": "Learning",

@@ -372,7 +372,7 @@ No external URLs found in code.
 |-----|--------|-------|----------|
 ${rows.join('\n')}`;
 
-    if (limit && this.result.endpoints.length > limit) {
+    if (limit && filteredEndpoints.length > limit) {
       table += `\n| ... | | | *(${filteredEndpoints.length - limit} more - use --full)* |`;
     }
 

@@ -214,6 +214,7 @@ export interface LlmConfig {
   assessmentMode: 'strategic' | 'bulk';
   stream?: boolean; // Enable streaming for large responses
   apiKey?: string; // Optional API key for OpenAI-compatible endpoints
+  batchSize?: number; // Max findings per triage batch (default: 20)
 }
 
 // Multi-model configuration for consensus
@@ -228,6 +229,7 @@ export interface ModelSlotConfig {
   timeout: number;
   maxTokens: number;
   temperature: number;
+  batchSize?: number;       // Max findings per triage batch (default: 20)
   promptProfile?: string;   // Deprecated — use AppConfig.promptProfile instead
 }
 
