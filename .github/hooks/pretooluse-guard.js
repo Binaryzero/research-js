@@ -71,7 +71,7 @@ const buildDecision = (decision, reason) => ({
 const main = async () => {
   const raw = await readStdin();
   if (!raw) {
-    console.log(JSON.stringify(buildDecision("allow", "No PreToolUse payload received.")));
+    console.log(JSON.stringify(buildDecision("deny", "No PreToolUse payload received.")));
     return;
   }
 
