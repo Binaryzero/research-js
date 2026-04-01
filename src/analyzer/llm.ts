@@ -467,6 +467,7 @@ Respond with JSON only.`,
       onProgress?: (progress: number, message: string) => void;
       extensionName?: string;
       concurrencyLimit?: number;
+      skipConsensus?: boolean; // When true, skip internal same-model consensus (orchestrator provides cross-model consensus)
     } = {}
   ): Promise<LlmAssessment[]> {
     // Route to appropriate mode based on config
@@ -478,7 +479,7 @@ Respond with JSON only.`,
 
     // Triage batch: when >5 findings and triage_batch prompt is configured
     if (findings.length > 5 && this.prompts.triage_batch?.system && this.prompts.triage_batch?.user) {
-      console.log('[LLM] Using TRIAGE BATCH mode - tiered batching');
+      console.log(`[LLM] Using TRIAGE BATCH mode - tiered batching${options.skipConsensus ? ' (consensus delegated to orchestrator)' : ''}`);
       return this.triageBatchAssess(findings, options);
     }
 
@@ -741,6 +742,7 @@ If there are too many findings to assess completely, prioritize assessing the fi
       onProgress?: (progress: number, message: string) => void;
       extensionName?: string;
       concurrencyLimit?: number;
+      skipConsensus?: boolean;
     } = {}
   ): Promise<LlmAssessment[]> {
     const results: LlmAssessment[] = new Array(findings.length);
@@ -1001,49 +1003,48 @@ If there are too many findings to assess completely, prioritize assessing the fi
     }
 
     // Consensus pass: for high/critical findings that were assessed via triage batch (not fallback)
-    // Note: assessFinding already runs consensus (3 calls) for high/critical findings,
-    // so we only need to run consensus on findings that were assessed via triage batch
-    const consensusIndices = pendingIndices.filter(idx => {
-      // Only run consensus on findings that were assessed via triage batch (not fallback)
-      // Check if this finding was in any batch that successfully assessed it
-      const finding = findings[idx];
-      const risk = finding.riskLevel?.toLowerCase();
-      return (risk === 'high' || risk === 'critical') && results[idx] && !results[idx].consensus;
-    });
+    // When skipConsensus is true (orchestrator with judges), cross-model consensus replaces same-model 3x voting
+    if (!options.skipConsensus) {
+      const consensusIndices = pendingIndices.filter(idx => {
+        const finding = findings[idx];
+        const risk = finding.riskLevel?.toLowerCase();
+        return (risk === 'high' || risk === 'critical') && results[idx] && !results[idx].consensus;
+      });
 
-    if (consensusIndices.length > 0) {
-      options.onProgress?.(0.90, `Consensus pass: ${consensusIndices.length} high/critical findings`);
-      console.log(`[Consensus] Triage batch consensus pass: ${consensusIndices.length} findings need quorum`);
+      if (consensusIndices.length > 0) {
+        options.onProgress?.(0.90, `Consensus pass: ${consensusIndices.length} high/critical findings`);
+        console.log(`[Consensus] Triage batch consensus pass: ${consensusIndices.length} findings need quorum`);
 
-      // Use concurrency limiter to avoid 429 errors - submit both additional votes via limiter
-      const limit = pLimit(this.concurrency);
-      const consensusPromises = consensusIndices
-        .filter(idx => !results[idx]?.consensus) // Skip findings that already have consensus
-        .map(idx => limit(async () => {
-          const finding = findings[idx];
-          const firstVote = results[idx];
-          try {
-            const { system, user } = this.buildFindingPrompt(finding);
+        // Use concurrency limiter to avoid 429 errors - submit both additional votes via limiter
+        const limit = pLimit(this.concurrency);
+        const consensusPromises = consensusIndices
+          .filter(idx => !results[idx]?.consensus) // Skip findings that already have consensus
+          .map(idx => limit(async () => {
+            const finding = findings[idx];
+            const firstVote = results[idx];
+            try {
+              const { system, user } = this.buildFindingPrompt(finding);
 
-            const [resp2, resp3] = await Promise.all([
-              this.generate(user, system),
-              this.generate(user, system),
-            ]);
+              const [resp2, resp3] = await Promise.all([
+                this.generate(user, system),
+                this.generate(user, system),
+              ]);
 
-            const vote2 = parseSingleAssessment(resp2);
-            const vote3 = parseSingleAssessment(resp3);
+              const vote2 = parseSingleAssessment(resp2);
+              const vote3 = parseSingleAssessment(resp3);
 
-            const allVotes = [firstVote, vote2, vote3].filter((v): v is LlmAssessment => !!v);
-            if (allVotes.length >= 2) {
-              results[idx] = mergeConsensusAssessments(allVotes);
+              const allVotes = [firstVote, vote2, vote3].filter((v): v is LlmAssessment => !!v);
+              if (allVotes.length >= 2) {
+                results[idx] = mergeConsensusAssessments(allVotes);
+              }
+            } catch {
+              // Keep the previous result if consensus fails
             }
-          } catch {
-            // Keep the previous result if consensus fails
-          }
-        }));
-      await Promise.all(consensusPromises);
+          }));
+        await Promise.all(consensusPromises);
 
-      console.log(`[Consensus] Triage consensus complete: ${consensusIndices.length} findings, ${consensusIndices.filter(idx => results[idx].consensus?.splitDecision).length} split decisions`);
+        console.log(`[Consensus] Triage consensus complete: ${consensusIndices.length} findings, ${consensusIndices.filter(idx => results[idx].consensus?.splitDecision).length} split decisions`);
+      }
     }
 
     options.onProgress?.(0.95, `Complete: ${batches.length} triage batches for ${findings.length} findings`);
@@ -1058,6 +1059,7 @@ If there are too many findings to assess completely, prioritize assessing the fi
     findings: Finding[],
     options: {
       onProgress?: (progress: number, message: string) => void;
+      skipConsensus?: boolean;
     } = {}
   ): Promise<LlmAssessment[]> {
     console.log(`[LLM] Strategic mode: Processing ${findings.length} findings`);
@@ -1113,7 +1115,7 @@ If there are too many findings to assess completely, prioritize assessing the fi
     const limit = pLimit(this.concurrency);
     const allResults = await Promise.all(
       allFileGroups.map(({ pattern, fileGroup }) =>
-        limit(() => this.processFileGroupForStrategic(pattern, fileGroup))
+        limit(() => this.processFileGroupForStrategic(pattern, fileGroup, options.skipConsensus))
       )
     );
 
@@ -1186,7 +1188,8 @@ If there are too many findings to assess completely, prioritize assessing the fi
    */
   private async processFileGroupForStrategic(
     pattern: PatternGroup,
-    fileGroup: FileGroup
+    fileGroup: FileGroup,
+    skipConsensus?: boolean
   ): Promise<{ assessments: Map<number, LlmAssessment>; llmCalls: number; fileGroup: FileGroup }> {
     const sampleSize = calculateSecuritySampleSize(pattern, fileGroup);
     const samples = selectDiverseSamples(fileGroup, sampleSize);
@@ -1194,13 +1197,12 @@ If there are too many findings to assess completely, prioritize assessing the fi
     // Build strategic prompt
     const { system, user } = buildStrategicBulkPrompt(pattern, samples, this.prompts);
 
-    const useConsensus = pattern.risk === 'high' || pattern.risk === 'critical';
+    const useConsensus = !skipConsensus && (pattern.risk === 'high' || pattern.risk === 'critical');
     let assessments: Map<number, LlmAssessment>;
     let llmCalls = 0;
 
     if (useConsensus) {
       // Consensus mode: 3 calls, merge per-finding via majority vote
-      // Use concurrency limiter to avoid 429 errors - submit all 3 simultaneously
       console.log(`[Consensus] Quorum for ${pattern.category}/${pattern.patternName} (${pattern.risk} risk, ${samples.length} findings)`);
       const runs = await Promise.all([0, 1, 2].map(() => this.generate(user, system)));
       llmCalls = 3;
@@ -1571,11 +1573,12 @@ export class ConsensusOrchestrator {
     const totalConcurrency = Math.min(15, this.mainClient.concurrency + this.judges.reduce((sum, j) => sum + j.concurrency, 0));
     
     const allResults = await Promise.all([
-      // Main model
+      // Main model — skip internal consensus since orchestrator merges across models
       this.mainClient.batchAssessFindings(findings, {
         onProgress: (p, m) => reportOverallProgress(0, p, `[Main] ${m}`),
         extensionName: options.extensionName,
         concurrencyLimit: Math.max(1, Math.floor(totalConcurrency / totalModels)),
+        skipConsensus: true,
       }),
       // Judges — each wrapped with catch for graceful degradation
       ...this.judges.map((judge, jIdx) =>
@@ -1583,6 +1586,7 @@ export class ConsensusOrchestrator {
           onProgress: (p, m) => reportOverallProgress(1 + jIdx, p, `[Judge ${jIdx + 1}] ${m}`),
           extensionName: options.extensionName,
           concurrencyLimit: Math.max(1, Math.floor(totalConcurrency / totalModels)),
+          skipConsensus: true,
         }).catch((err): null => {
           const judgeLabel = `Judge ${jIdx + 1}`;
           options.onProgress?.(perModelProgress.reduce((s, v) => s + v, 0) / totalModels, `[${judgeLabel}] failed: ${err?.message ?? err}`);
@@ -1658,10 +1662,15 @@ export class ConsensusOrchestrator {
       return this.mainClient.generateExecutiveSummary(result, extensionPath);
     }
 
-    // All models generate in parallel
+    // All models generate in parallel — judges wrapped with catch for graceful degradation
     const summaries = await Promise.all([
       this.mainClient.generateExecutiveSummary(result, extensionPath),
-      ...this.judges.map(j => j.generateExecutiveSummary(result, extensionPath)),
+      ...this.judges.map((j, jIdx) =>
+        j.generateExecutiveSummary(result, extensionPath).catch((err): string => {
+          console.warn(`[Orchestrator] Judge ${jIdx + 1} summary failed: ${err instanceof Error ? err.message : err}`);
+          return ''; // Graceful degradation — continue without this judge
+        })
+      ),
     ]);
 
     const parsed = summaries

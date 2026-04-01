@@ -358,27 +358,9 @@ export class StaticAnalyzer {
       if (repoFinding) findings.push(repoFinding);
     }
 
-    // Version consistency check: compare package.json vs VSIX manifest
-    const vsixManifestPath = join(this.extensionPath, '..', 'extension.vsixmanifest');
-    if (existsSync(vsixManifestPath)) {
-      try {
-        const xml = readFileSync(vsixManifestPath, 'utf-8');
-        const versionMatch = xml.match(/Version="([^"]+)"/);
-        if (versionMatch && packageJson.version && versionMatch[1] !== packageJson.version) {
-          findings.push({
-            category: 'supply_chain',
-            title: 'Version Mismatch Between Package And VSIX Manifest',
-            location: 'package.json vs extension.vsixmanifest',
-            observation: `package.json declares version "${packageJson.version}" but VSIX manifest declares "${versionMatch[1]}". This inconsistency could indicate post-build tampering.`,
-            evidence: `package.json: ${packageJson.version}\nextension.vsixmanifest: ${versionMatch[1]}`,
-            lineStart: 0, lineEnd: 0, context: '', isFalsePositive: false, falsePositiveReason: '',
-            riskLevel: 'high',
-          });
-        }
-      } catch {
-        // Ignore parse errors
-      }
-    }
+    // Note: package.json vs VSIX manifest version comparison was removed.
+    // The VSIX manifest Version attribute is set by `vsce package` at build time
+    // and routinely differs from package.json (CI versioning, pre-release builds, etc.).
 
     const elapsed = Date.now() - startTime;
     if (this.verbose) {

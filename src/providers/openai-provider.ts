@@ -52,6 +52,7 @@ export class OpenAIProvider implements LlmProvider {
       ],
       maxOutputTokens: this.infer.maxTokens,
       temperature: this.infer.temperature,
+      maxRetries: this.infer.maxRetries ?? 5,
       abortSignal: AbortSignal.timeout(this.connection.timeout),
     });
 
@@ -73,6 +74,7 @@ export class OpenAIProvider implements LlmProvider {
       ],
       maxOutputTokens: this.infer.maxTokens,
       temperature: this.infer.temperature,
+      maxRetries: this.infer.maxRetries ?? 5,
       abortSignal: AbortSignal.timeout(this.connection.timeout),
     });
 
