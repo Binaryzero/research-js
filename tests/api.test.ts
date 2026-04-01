@@ -138,7 +138,6 @@ describe('API Endpoints', () => {
           provider: 'ollama',
           model: 'llama3.2',
           baseUrl: 'http://localhost:11434',
-          apiStyle: 'auto',
           timeout: 180000,
           maxTokens: 32000,
           temperature: 0.3,
@@ -178,7 +177,7 @@ describe('API Endpoints', () => {
       const response = await server.inject({
         method: 'POST',
         url: '/api/test-connection',
-        payload: { baseUrl: 'http://localhost:19999', model: 'test', apiStyle: 'auto' },
+        payload: { baseUrl: 'http://localhost:19999', model: 'test' },
       });
 
       expect(response.statusCode).toBe(200);

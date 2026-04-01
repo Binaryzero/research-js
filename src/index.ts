@@ -18,7 +18,7 @@ import { getConfig, getPrompts, getAppConfig, saveAppConfig, slotToLlmConfig, ge
 import type { AppConfig } from './types/index.js';
 import { StaticAnalyzer, extractVsix } from './analyzer/static.js';
 import { LlmClient, ConsensusOrchestrator, parseVerdictFromSummary } from './analyzer/llm.js';
-import { OllamaProvider } from './providers/ollama-provider.js';
+import { createProvider } from './providers/index.js';
 import { ReportGenerator } from './analyzer/report.js';
 import { calculateSuspicionScore, getRiskLabel, getRiskColor } from './analyzer/scoring.js';
 import { downloadExtension, parseMarketplaceUrl, isMarketplaceUrl } from './services/download.js';
@@ -115,6 +115,14 @@ function cleanupOldScans() {
 export async function createServer(configOverride?: Partial<Awaited<ReturnType<typeof getConfig>>>) {
   const defaultConfig = await getConfig();
   const config = { ...defaultConfig, ...configOverride };
+
+  // Sync legacy config.llm from AppConfig (config.json) on startup
+  // so provider/model/baseUrl reflect saved settings from the first request
+  const initialAppCfg = getAppConfig();
+  config.llm = slotToLlmConfig(initialAppCfg.main, initialAppCfg);
+  config.defaultNoLlm = initialAppCfg.defaultNoLlm;
+  config.defaultFull = initialAppCfg.defaultFull;
+
   let prompts = getPrompts();
   
   const fastify = Fastify({
@@ -257,13 +265,22 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
     const task = new ScanTaskEmitter();
     scans.set(task.id, task);
 
+    // Inject provider from AppConfig so the correct LLM provider class is used
+    const configWithProvider = {
+      ...config,
+      llm: {
+        ...config.llm,
+        provider: appCfg.main.provider,
+      },
+    };
+
     // Run scan in background
     runScan(task, inputSource, {
       noLlm,
       modelName,
       ollamaUrl,
       reportsDir,
-      config,
+      config: configWithProvider,
       prompts,
       extensionInfo,
     }).catch(err => task.fail(err.message));
@@ -572,26 +589,47 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
   // API: List models
   // ---------------------------------------------------------------
   fastify.get('/api/models', async (request, _reply) => {
-    const query = request.query as { ollama_url?: string };
+    const query = request.query as { ollama_url?: string; provider?: string };
+    const appCfg = getAppConfig();
     const baseUrl = query.ollama_url || config.llm.baseUrl;
-    
-    try {
-      const response = await fetch(`${baseUrl}/api/tags`, { signal: AbortSignal.timeout(5000) });
-      if (response.ok) {
-        const data = await response.json() as { models?: Array<{ name: string }> };
-        return { models: data.models?.map(m => m.name) || [] };
-      }
-    } catch {}
-    
-    // Try OpenAI-compatible endpoint
-    try {
-      const response = await fetch(`${baseUrl}/v1/models`, { signal: AbortSignal.timeout(5000) });
-      if (response.ok) {
-        const data = await response.json() as { data?: Array<{ id: string }> };
-        return { models: data.data?.map(m => m.id) || [] };
-      }
-    } catch {}
-    
+    const provider = query.provider || appCfg.main.provider || 'ollama';
+
+    // Try the provider-appropriate endpoint first, then fall back
+    if (provider === 'ollama') {
+      try {
+        const response = await fetch(`${baseUrl}/api/tags`, { signal: AbortSignal.timeout(5000) });
+        if (response.ok) {
+          const data = await response.json() as { models?: Array<{ name: string }> };
+          return { models: data.models?.map(m => m.name) || [] };
+        }
+      } catch {}
+      // Fallback: try OpenAI-compatible endpoint (some Ollama proxies expose this)
+      try {
+        const response = await fetch(`${baseUrl}/v1/models`, { signal: AbortSignal.timeout(5000) });
+        if (response.ok) {
+          const data = await response.json() as { data?: Array<{ id: string }> };
+          return { models: data.data?.map(m => m.id) || [] };
+        }
+      } catch {}
+    } else {
+      // OpenAI-compatible provider: try /v1/models first
+      try {
+        const response = await fetch(`${baseUrl}/v1/models`, { signal: AbortSignal.timeout(5000) });
+        if (response.ok) {
+          const data = await response.json() as { data?: Array<{ id: string }> };
+          return { models: data.data?.map(m => m.id) || [] };
+        }
+      } catch {}
+      // Fallback: try Ollama endpoint (user might have Ollama on an OpenAI-compat URL)
+      try {
+        const response = await fetch(`${baseUrl}/api/tags`, { signal: AbortSignal.timeout(5000) });
+        if (response.ok) {
+          const data = await response.json() as { models?: Array<{ name: string }> };
+          return { models: data.models?.map(m => m.name) || [] };
+        }
+      } catch {}
+    }
+
     return { models: [] };
   });
   
@@ -697,35 +735,7 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
     return { type: 'search', url };
   });
   
-  // ---------------------------------------------------------------
-  // API: Save settings
-  // ---------------------------------------------------------------
-  fastify.post('/api/models', async (request) => {
-    const body = request.body as {
-      ollamaUrl?: string;
-      model?: string;
-      apiStyle?: string;
-      defaultNoLlm?: boolean;
-      defaultFull?: boolean;
-      assessmentMode?: 'strategic' | 'bulk';
-    };
-
-    console.log('[Settings] Received settings:', body);
-    console.log('[Settings] Current assessmentMode:', config.llm.assessmentMode);
-
-    // Save settings to app state for use by LLM clients
-    if (body.apiStyle) {
-      config.llm.apiStyle = body.apiStyle as 'openai' | 'chat' | 'generate' | 'auto';
-    }
-    if (body.assessmentMode) {
-      config.llm.assessmentMode = body.assessmentMode;
-      console.log('[Settings] Updated assessmentMode to:', body.assessmentMode);
-    }
-    config.defaultNoLlm = body.defaultNoLlm;
-    config.defaultFull = body.defaultFull;
-
-    return { saved: true, assessmentMode: config.llm.assessmentMode };
-  });
+  // NOTE: Legacy POST /api/models endpoint removed — settings are saved via POST /api/config
 
   // ---------------------------------------------------------------
   // API: Get multi-model config (AppConfig)
@@ -777,13 +787,28 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
   // API: Test connection to an LLM endpoint
   // ---------------------------------------------------------------
   fastify.post('/api/test-connection', async (request) => {
-    const { baseUrl, model, apiStyle } = request.body as { baseUrl?: string; model?: string; apiStyle?: string };
+    const { baseUrl, model, provider } = request.body as { baseUrl?: string; model?: string; provider?: string };
     if (!baseUrl) return { ok: false, error: 'baseUrl required' };
 
     try {
-      const res = await fetch(baseUrl.replace(/\/$/, ''), { method: 'GET', signal: AbortSignal.timeout(5000) });
-      if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
-      return { ok: true, model: model || 'unknown', apiStyle: apiStyle || 'auto' };
+      // Test based on provider type
+      if (provider === 'openai') {
+        // Test OpenAI-compatible endpoint
+        const res = await fetch(`${baseUrl.replace(/\/$/, '')}/v1/models`, { 
+          method: 'GET', 
+          signal: AbortSignal.timeout(5000) 
+        });
+        if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
+        return { ok: true, model: model || 'unknown', provider: provider || 'ollama' };
+      } else {
+        // Test Ollama endpoint
+        const res = await fetch(`${baseUrl.replace(/\/$/, '')}/api/tags`, { 
+          method: 'GET', 
+          signal: AbortSignal.timeout(5000) 
+        });
+        if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
+        return { ok: true, model: model || 'unknown', provider: provider || 'ollama' };
+      }
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
@@ -889,7 +914,6 @@ ${indent(prompts.triage_batch?.user || '')}
       model_name?: string;
       full_output?: boolean;
       ollama_url?: string;
-      api_style?: string;
       assessment_mode?: 'strategic' | 'bulk';
     };
 
@@ -900,7 +924,6 @@ ${indent(prompts.triage_batch?.user || '')}
     const appCfg = getAppConfig();
     const modelName = appCfg.main.model;
     const assessmentMode = appCfg.assessmentMode;
-    const apiStyle = appCfg.main.apiStyle;
 
     // Handle extension_id format (publisher.extensionName)
     if (!publisher && !extensionName && body.extension_id) {
@@ -931,12 +954,12 @@ ${indent(prompts.triage_batch?.user || '')}
       ...config,
       llm: {
         ...config.llm,
-        apiStyle: apiStyle as 'openai' | 'chat' | 'generate' | 'auto',
+        provider: appCfg.main.provider,
         assessmentMode,
       },
     };
 
-    console.log(`[LLM Analyze] Using model: ${modelName}, api style: ${apiStyle}, assessment mode: ${assessmentMode}`);
+    console.log(`[LLM Analyze] Using model: ${modelName}, assessment mode: ${assessmentMode}`);
 
     // Run LLM analysis in background
     runScan(task, downloadUrl, {
@@ -991,7 +1014,6 @@ ${indent(prompts.triage_batch?.user || '')}
       extensions: Array<{ publisher: string; extensionName: string }>;
       ollama_url?: string;
       model_name?: string;
-      api_style?: string;
       verbose?: boolean;
       assessment_mode?: 'strategic' | 'bulk';
     };
@@ -1030,7 +1052,6 @@ ${indent(prompts.triage_batch?.user || '')}
     runBatchLlmAnalysis(task, extensions, {
       modelName,
       ollamaUrl,
-      apiStyle: appCfg.main.apiStyle,
       verbose: body.verbose || false,
       reportsDir: config.reportsDir,
       config: configWithMode,
@@ -1131,6 +1152,7 @@ async function runScan(
 
       const mainClient = new LlmClient({
         ...options.config.llm,
+        provider: appConfig.main.provider,
         model: options.modelName,
         baseUrl: options.ollamaUrl,
       }, profiledPrompts);
@@ -1139,10 +1161,11 @@ async function runScan(
       const judgeClients = appConfig.judges
         .filter(j => j.enabled)
         .map(j => {
-          const provider = new OllamaProvider(
+          const provider = createProvider(
+            j.provider,
             { id: j.id, model: j.model },
-            { baseUrl: j.baseUrl.replace(/\/$/, ''), apiStyle: j.apiStyle, timeout: j.timeout },
-            { maxTokens: j.maxTokens, temperature: j.temperature },
+            { baseUrl: j.baseUrl.replace(/\/$/, ''), timeout: j.timeout, apiKey: j.apiKey },
+            { maxTokens: j.maxTokens, temperature: j.temperature }
           );
           return new LlmClient(slotToLlmConfig(j, appConfig), profiledPrompts, provider);
         });
@@ -1286,7 +1309,6 @@ async function runBatchLlmAnalysis(
   options: {
     modelName: string;
     ollamaUrl: string;
-    apiStyle?: string;
     verbose?: boolean;
     reportsDir: string;
     config: Awaited<ReturnType<typeof getConfig>>;
@@ -1353,6 +1375,7 @@ async function runBatchLlmAnalysis(
 
       const batchMainClient = new LlmClient({
         ...options.config.llm,
+        provider: batchAppConfig.main.provider,
         model: options.modelName,
         baseUrl: options.ollamaUrl,
       }, profiledPrompts);
@@ -1360,10 +1383,11 @@ async function runBatchLlmAnalysis(
       const batchJudgeClients = batchAppConfig.judges
         .filter(j => j.enabled)
         .map(j => {
-          const provider = new OllamaProvider(
+          const provider = createProvider(
+            j.provider,
             { id: j.id, model: j.model },
-            { baseUrl: j.baseUrl.replace(/\/$/, ''), apiStyle: j.apiStyle, timeout: j.timeout },
-            { maxTokens: j.maxTokens, temperature: j.temperature },
+            { baseUrl: j.baseUrl.replace(/\/$/, ''), timeout: j.timeout, apiKey: j.apiKey },
+            { maxTokens: j.maxTokens, temperature: j.temperature }
           );
           return new LlmClient(slotToLlmConfig(j, batchAppConfig), profiledPrompts, provider);
         });

@@ -83,7 +83,7 @@ export function makeLlmConfig(overrides?: Partial<LlmConfig>): LlmConfig {
   return {
     model: 'test-model',
     baseUrl: 'http://localhost:11434',
-    apiStyle: 'auto',
+    provider: 'ollama',
     timeout: 30000,
     maxTokens: 4096,
     temperature: 0.3,
@@ -101,7 +101,6 @@ export function makeModelSlot(overrides?: Partial<ModelSlotConfig>): ModelSlotCo
     provider: 'ollama',
     model: 'llama3.2',
     baseUrl: 'http://localhost:11434',
-    apiStyle: 'auto',
     timeout: 180000,
     maxTokens: 32000,
     temperature: 0.3,

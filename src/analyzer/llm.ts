@@ -13,7 +13,7 @@ import type { Finding, LlmAssessment, LlmConfig, EndpointInfo, ConsensusConfig, 
 import type { PromptConfig } from '../config.js';
 import { getEndpointFiltering } from './patterns.js';
 import type { LlmProvider } from '../providers/llm-provider.js';
-import { OllamaProvider } from '../providers/ollama-provider.js';
+import { createProvider } from '../providers/index.js';
 
 /**
  * Global concurrency limiter - single limiter shared across ALL LlmClient instances
@@ -430,9 +430,10 @@ export class LlmClient {
 
   constructor(config: LlmConfig, prompts?: PromptConfig, provider?: LlmProvider, useSharedCache: boolean = true) {
     this.config = config;
-    this.provider = provider || new OllamaProvider(
+    this.provider = provider || createProvider(
+      config.provider,
       { id: 'main', model: config.model },
-      { baseUrl: config.baseUrl.replace(/\/$/, ''), apiStyle: config.apiStyle, timeout: config.timeout },
+      { baseUrl: config.baseUrl.replace(/\/$/, ''), timeout: config.timeout, apiKey: config.apiKey },
       { maxTokens: config.maxTokens, temperature: config.temperature },
     );
     this.fastAssessor = new FastRiskAssessor();

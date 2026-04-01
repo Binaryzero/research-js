@@ -1,27 +1,32 @@
 /**
- * OllamaProvider — LLM provider for native Ollama endpoints.
- * Uses the official 'ollama' npm package for reliable HTTP handling.
+ * OpenAIProvider — LLM provider for OpenAI-compatible endpoints.
+ * Uses the official 'openai' npm package for reliable HTTP handling.
+ * Supports vLLM, LM Studio, llama.cpp server, and any OpenAI-compatible API.
  */
-import { Ollama } from 'ollama';
+import OpenAI from 'openai';
 import type { LlmProvider } from './llm-provider.js';
 import type { ProviderConnection, ProviderInference, ProviderIdentity } from './types.js';
 
-export class OllamaProvider implements LlmProvider {
+export class OpenAIProvider implements LlmProvider {
   readonly id: string;
   readonly model: string;
   private readonly infer: Readonly<ProviderInference>;
-  private readonly client: Ollama;
+  private readonly client: OpenAI;
 
   constructor(identity: ProviderIdentity, connection: ProviderConnection, inference: ProviderInference) {
     this.id = identity.id;
     this.model = identity.model;
     this.infer = inference;
-    this.client = new Ollama({ host: connection.baseUrl });
+    this.client = new OpenAI({
+      baseURL: `${connection.baseUrl}/v1`,
+      apiKey: connection.apiKey || 'ollama', // OpenAI-compat servers often ignore the key
+      timeout: connection.timeout,
+    });
   }
 
   async isAvailable(): Promise<boolean> {
     try {
-      await this.client.list();
+      await this.client.models.list();
       return true;
     } catch {
       return false;
@@ -34,18 +39,15 @@ export class OllamaProvider implements LlmProvider {
       { role: 'user' as const, content: prompt },
     ];
 
-    // Let errors propagate so the caller's retry logic (in llm.ts) can handle transient failures
-    const response = await this.client.chat({
+    const response = await this.client.chat.completions.create({
       model: this.model,
       messages,
-      options: {
-        num_predict: this.infer.maxTokens,
-        temperature: this.infer.temperature,
-      },
+      max_tokens: this.infer.maxTokens,
+      temperature: this.infer.temperature,
     });
 
-    return response.message.content ?? '';
+    return response.choices[0]?.message?.content ?? '';
   }
 }
 
-export default OllamaProvider;
+export default OpenAIProvider;

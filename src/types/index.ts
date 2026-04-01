@@ -206,13 +206,14 @@ export interface PatternsConfig {
 export interface LlmConfig {
   model: string;
   baseUrl: string;
-  apiStyle: 'openai' | 'chat' | 'generate' | 'auto';
+  provider: 'ollama' | 'openai';
   timeout: number;
   maxTokens: number;
   temperature: number;
   concurrency: number;
   assessmentMode: 'strategic' | 'bulk';
   stream?: boolean; // Enable streaming for large responses
+  apiKey?: string; // Optional API key for OpenAI-compatible endpoints
 }
 
 // Multi-model configuration for consensus
@@ -220,11 +221,10 @@ export interface ModelSlotConfig {
   id: string;               // 'main' | 'judge1' | 'judge2'
   label: string;
   enabled: boolean;
-  provider: string;         // 'ollama' (future: 'openai', 'anthropic')
+  provider: 'ollama' | 'openai';
   model: string;
   baseUrl: string;
   apiKey?: string;
-  apiStyle: 'openai' | 'chat' | 'generate' | 'auto';
   timeout: number;
   maxTokens: number;
   temperature: number;

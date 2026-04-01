@@ -49,16 +49,14 @@
                         <div class="form-row">
                             <div class="form-group form-group-grow">
                                 <label for="main-model">Model</label>
-                                <select id="main-model-select"><option value="">Select model...</option></select>
+                                <select id="main-model-select" title="Select model"><option value="">Select model...</option></select>
                                 <input type="text" id="main-model-manual" placeholder="Enter model name" style="display:none">
                             </div>
                             <div class="form-group">
-                                <label for="main-api-style">API Style</label>
-                                <select id="main-api-style">
-                                    <option value="auto">Auto</option>
-                                    <option value="openai">OpenAI</option>
-                                    <option value="chat">Chat</option>
-                                    <option value="generate">Generate</option>
+                                <label for="main-provider">Provider</label>
+                                <select id="main-provider">
+                                    <option value="ollama">Ollama</option>
+                                    <option value="openai">OpenAI Compatible</option>
                                 </select>
                             </div>
                         </div>
@@ -110,16 +108,14 @@
                         <div class="form-row">
                             <div class="form-group form-group-grow">
                                 <label for="judge1-model">Model</label>
-                                <select id="judge1-model-select"><option value="">Select model...</option></select>
+                                <select id="judge1-model-select" title="Select model"><option value="">Select model...</option></select>
                                 <input type="text" id="judge1-model-manual" placeholder="Enter model name" style="display:none">
                             </div>
                             <div class="form-group">
-                                <label for="judge1-api-style">API Style</label>
-                                <select id="judge1-api-style">
-                                    <option value="auto">Auto</option>
-                                    <option value="openai">OpenAI</option>
-                                    <option value="chat">Chat</option>
-                                    <option value="generate">Generate</option>
+                                <label for="judge1-provider">Provider</label>
+                                <select id="judge1-provider">
+                                    <option value="ollama">Ollama</option>
+                                    <option value="openai">OpenAI Compatible</option>
                                 </select>
                             </div>
                         </div>
@@ -171,29 +167,18 @@
                         <div class="form-row">
                             <div class="form-group form-group-grow">
                                 <label for="judge2-model">Model</label>
-                                <select id="judge2-model-select"><option value="">Select model...</option></select>
+                                <select id="judge2-model-select" title="Select model"><option value="">Select model...</option></select>
                                 <input type="text" id="judge2-model-manual" placeholder="Enter model name" style="display:none">
                             </div>
                             <div class="form-group">
-                                <label for="judge2-api-style">API Style</label>
-                                <select id="judge2-api-style">
-                                    <option value="auto">Auto</option>
-                                    <option value="openai">OpenAI</option>
-                                    <option value="chat">Chat</option>
-                                    <option value="generate">Generate</option>
+                                <label for="judge2-provider">Provider</label>
+                                <select id="judge2-provider">
+                                    <option value="ollama">Ollama</option>
+                                    <option value="openai">OpenAI Compatible</option>
                                 </select>
                             </div>
                         </div>
-                        <div class="form-row form-row-3">
-                            <div class="form-group">
-                                <label for="judge2-temperature">Temperature</label>
-                                <input type="number" id="judge2-temperature" min="0" max="2" step="0.1" value="0.3">
-                            </div>
-                            <div class="form-group">
-                                <label for="judge2-max-tokens">Max Tokens</label>
-                                <input type="number" id="judge2-max-tokens" min="1000" step="1000" value="32000">
-                            </div>
-                            <div class="form-group">
+                        <div class="form-row-group">
                                 <label for="judge2-timeout">Timeout (ms)</label>
                                 <input type="number" id="judge2-timeout" min="5000" step="5000" value="180000">
                             </div>
@@ -617,7 +602,7 @@ async function loadAppConfig() {
 // ── Populate a model card from slot config ─────────────────────
 function populateModelCard(slotId, slot) {
     document.getElementById(`${slotId}-url`).value = slot.baseUrl || 'http://localhost:11434';
-    document.getElementById(`${slotId}-api-style`).value = slot.apiStyle || 'auto';
+    document.getElementById(`${slotId}-provider`).value = slot.provider || 'ollama';
     document.getElementById(`${slotId}-temperature`).value = slot.temperature ?? 0.3;
     document.getElementById(`${slotId}-max-tokens`).value = slot.maxTokens ?? 32000;
     document.getElementById(`${slotId}-timeout`).value = slot.timeout ?? 180000;
@@ -629,6 +614,7 @@ function populateModelCard(slotId, slot) {
         manual.value = slot.model;
         // Will be properly set when models load
     }
+    
 }
 
 // ── Read a model card back into a slot config object ───────────
@@ -636,15 +622,15 @@ function readModelCard(slotId, label) {
     const select = document.getElementById(`${slotId}-model-select`);
     const manual = document.getElementById(`${slotId}-model-manual`);
     const model = select.style.display !== 'none' ? select.value : manual.value.trim();
+    const provider = document.getElementById(`${slotId}-provider`).value;
 
     return {
         id: slotId,
         label: label,
         enabled: slotId === 'main' ? true : document.getElementById(`${slotId}-enabled`).checked,
-        provider: 'ollama',
+        provider: provider,
         model: model,
         baseUrl: getSlotUrl(slotId),
-        apiStyle: document.getElementById(`${slotId}-api-style`).value,
         timeout: Number(document.getElementById(`${slotId}-timeout`).value) || 180000,
         maxTokens: Number(document.getElementById(`${slotId}-max-tokens`).value) || 32000,
         temperature: (() => { const v = parseFloat(document.getElementById(`${slotId}-temperature`).value); return isNaN(v) ? 0.3 : v; })(),
@@ -688,7 +674,8 @@ async function loadModelsForSlot(slotId) {
     const manual = document.getElementById(`${slotId}-model-manual`);
 
     try {
-        const resp = await fetch(`/api/models?ollama_url=${encodeURIComponent(url)}`);
+        const provider = document.getElementById(`${slotId}-provider`)?.value || 'ollama';
+        const resp = await fetch(`/api/models?ollama_url=${encodeURIComponent(url)}&provider=${encodeURIComponent(provider)}`);
         const data = await resp.json();
 
         if (data.models && data.models.length > 0) {
@@ -731,12 +718,13 @@ async function testSlotConnection(slotId) {
     textEl.textContent = 'Testing...';
 
     const baseUrl = getSlotUrl(slotId);
+    const provider = document.getElementById(`${slotId}-provider`).value;
 
     try {
         const resp = await fetch('/api/test-connection', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ baseUrl }),
+            body: JSON.stringify({ baseUrl, provider }),
         });
         const data = await resp.json();
 
@@ -831,7 +819,6 @@ async function saveAllSettings(e) {
             const legacySettings = {
                 ollamaUrl: main.baseUrl,
                 model: main.model,
-                apiStyle: main.apiStyle,
                 defaultNoLlm: configPayload.defaultNoLlm,
                 defaultFull: configPayload.defaultFull,
                 assessmentMode: configPayload.assessmentMode,
