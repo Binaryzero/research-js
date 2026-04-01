@@ -14,7 +14,6 @@ describe('slotToLlmConfig', () => {
     const slot = makeModelSlot({
       model: 'gpt-4o',
       baseUrl: 'https://api.openai.com',
-      apiStyle: 'openai',
       timeout: 60000,
       maxTokens: 8192,
       temperature: 0.7,
@@ -25,7 +24,6 @@ describe('slotToLlmConfig', () => {
 
     expect(result.model).toBe('gpt-4o');
     expect(result.baseUrl).toBe('https://api.openai.com');
-    expect(result.apiStyle).toBe('openai');
     expect(result.timeout).toBe(60000);
     expect(result.maxTokens).toBe(8192);
     expect(result.temperature).toBe(0.7);
@@ -55,21 +53,20 @@ describe('slotToLlmConfig', () => {
 
     expect(result.model).toBe('llama3.2');
     expect(result.baseUrl).toBe('http://localhost:11434');
-    expect(result.apiStyle).toBe('auto');
+    expect(result.provider).toBe('ollama');
     expect(result.timeout).toBe(180000);
-    expect(result.maxTokens).toBe(32000);
     expect(result.temperature).toBe(0.3);
     expect(result.concurrency).toBe(10);
     expect(result.assessmentMode).toBe('strategic');
   });
 
-  it('returns a plain object with exactly 8 keys', () => {
+  it('returns a plain object with exactly 10 keys', () => {
+    const result = slotToLlmConfig(makeMod9 keys', () => {
     const result = slotToLlmConfig(makeModelSlot(), makeAppConfig());
     const keys = Object.keys(result);
-    expect(keys).toHaveLength(8);
+    expect(keys).toHaveLength(9);
     expect(keys).toEqual(expect.arrayContaining([
-      'model', 'baseUrl', 'apiStyle', 'timeout',
-      'maxTokens', 'temperature', 'concurrency', 'assessmentMode',
+      'model', 'baseUrl', 'provider, 'assessmentMode', 'apiKey',
     ]));
   });
 });

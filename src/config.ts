@@ -8,6 +8,7 @@ import { fileURLToPath } from 'url';
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { load } from 'js-yaml';
 import type { ServerConfig, LlmConfig, AppConfig, ModelSlotConfig } from './types/index.js';
+import { AppConfigSchema } from './schemas/config.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -73,13 +74,14 @@ export async function loadConfig(): Promise<ServerConfig> {
   const llmConfig: LlmConfig = {
     model: process.env.LLM_MODEL || 'llama3.2',
     baseUrl: process.env.LLM_URL || 'http://localhost:11434',
-    apiStyle: (process.env.LLM_API_STYLE as LlmConfig['apiStyle']) || 'auto',
+    provider: (process.env.LLM_PROVIDER as LlmConfig['provider']) || 'ollama',
     timeout: parseInt(process.env.LLM_TIMEOUT || '180000', 10),
     maxTokens: parseInt(process.env.LLM_MAX_TOKENS || '32000', 10),
     temperature: parseFloat(process.env.LLM_TEMPERATURE || '0.3'),
     concurrency: parseInt(process.env.LLM_CONCURRENCY || '10', 10),
     assessmentMode: (process.env.LLM_ASSESSMENT_MODE as LlmConfig['assessmentMode']) || 'strategic',
     stream: process.env.LLM_STREAM === 'true' || process.env.LLM_STREAM === '1',
+    apiKey: process.env.LLM_API_KEY,
   };
   
   return {
@@ -145,7 +147,6 @@ function defaultModelSlot(id: string, label: string): ModelSlotConfig {
     provider: 'ollama',
     model: 'llama3.2',
     baseUrl: 'http://localhost:11434',
-    apiStyle: 'auto',
     timeout: 180000,
     maxTokens: 32000,
     temperature: 0.3,
@@ -173,12 +174,13 @@ export function slotToLlmConfig(slot: ModelSlotConfig, appConfig: AppConfig): Ll
   return {
     model: slot.model,
     baseUrl: slot.baseUrl,
-    apiStyle: slot.apiStyle,
+    provider: slot.provider,
     timeout: slot.timeout,
     maxTokens: slot.maxTokens,
     temperature: slot.temperature,
     concurrency: appConfig.concurrency,
     assessmentMode: appConfig.assessmentMode,
+    apiKey: slot.apiKey,
   };
 }
 
@@ -196,12 +198,18 @@ export function loadAppConfig(): AppConfig {
   // Load from config.json if it exists
   if (existsSync(CONFIG_FILE)) {
     try {
-      const raw = JSON.parse(readFileSync(CONFIG_FILE, 'utf-8')) as Partial<AppConfig>;
-      appConfig = { ...appConfig, ...raw, main: { ...appConfig.main, ...raw.main }, consensus: { ...appConfig.consensus, ...raw.consensus } };
-      if (Array.isArray(raw.judges)) {
-        appConfig.judges = raw.judges;
+      const raw = JSON.parse(readFileSync(CONFIG_FILE, 'utf-8'));
+      const validated = AppConfigSchema.partial().safeParse(raw);
+      if (!validated.success) {
+        console.warn('[Config] config.json failed validation, using defaults:',
+          validated.error.flatten().fieldErrors);
+      } else {
+        appConfig = { ...appConfig, ...validated.data, main: { ...appConfig.main, ...validated.data.main }, consensus: { ...appConfig.consensus, ...validated.data.consensus } };
+        if (Array.isArray(validated.data.judges)) {
+          appConfig.judges = validated.data.judges;
+        }
+        console.log(`[Config] Loaded config.json (version: ${appConfig.version}, judges: ${appConfig.judges.length})`);
       }
-      console.log(`[Config] Loaded config.json (version: ${appConfig.version}, judges: ${appConfig.judges.length})`);
     } catch (err) {
       console.warn(`[Config] Failed to parse config.json, using defaults:`, err);
     }
@@ -210,7 +218,6 @@ export function loadAppConfig(): AppConfig {
   // Env vars override main model fields (backward compat)
   if (process.env.LLM_MODEL) appConfig.main.model = process.env.LLM_MODEL;
   if (process.env.LLM_URL) appConfig.main.baseUrl = process.env.LLM_URL;
-  if (process.env.LLM_API_STYLE) appConfig.main.apiStyle = process.env.LLM_API_STYLE as ModelSlotConfig['apiStyle'];
   if (process.env.LLM_TIMEOUT) appConfig.main.timeout = parseInt(process.env.LLM_TIMEOUT, 10);
   if (process.env.LLM_MAX_TOKENS) appConfig.main.maxTokens = parseInt(process.env.LLM_MAX_TOKENS, 10);
   if (process.env.LLM_TEMPERATURE) appConfig.main.temperature = parseFloat(process.env.LLM_TEMPERATURE);
