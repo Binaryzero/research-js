@@ -62,11 +62,11 @@ class ScanTaskEmitter extends EventEmitter {
     this.emit('progress', { progress, message, status: this.status });
   }
   
-  complete(result: AnalysisResult) {
+  complete(result: AnalysisResult, summary?: Record<string, unknown>) {
     this.status = 'complete';
     this.result = result;
     this.progress = 1;
-    this.emit('done', { status: 'complete', result });
+    this.emit('done', { status: 'complete', result: summary || result });
   }
   
   fail(error: string) {
@@ -223,21 +223,34 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
   // API: Start scan
   // ---------------------------------------------------------------
   fastify.post('/api/scan', async (request, reply) => {
-    // Handle both JSON and form data
+    // Handle both JSON and form data (including file uploads)
     let params: Record<string, string> = {};
-    
+    let uploadedFilePath: string | null = null;
+
     if (request.isMultipart()) {
       const parts = request.parts();
       for await (const part of parts) {
         if (part.type === 'field') {
           params[part.fieldname] = part.value as string;
+        } else if (part.type === 'file' && part.filename) {
+          // Save uploaded VSIX to a temp directory
+          const tempDir = `/tmp/vsix_upload_${Date.now()}`;
+          mkdirSync(tempDir, { recursive: true });
+          const filePath = join(tempDir, part.filename);
+          const chunks: Buffer[] = [];
+          for await (const chunk of part.file) {
+            chunks.push(chunk);
+          }
+          writeFileSync(filePath, Buffer.concat(chunks));
+          uploadedFilePath = filePath;
         }
       }
     } else {
       params = request.body as Record<string, string>;
     }
-    
-    const inputSource = params.input_source || params.url || '';
+
+    // Uploaded file takes precedence when no URL/path is provided
+    const inputSource = params.input_source || params.url || uploadedFilePath || '';
     const noLlm = params.no_llm !== undefined
       ? String(params.no_llm).toLowerCase() === 'true'
       : config.defaultNoLlm ?? false;
@@ -254,7 +267,7 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
     }
 
     if (!inputSource) {
-      return reply.status(400).send({ error: 'input_source or url required' });
+      return reply.status(400).send({ error: 'input_source, url, or vsix file required' });
     }
 
     const task = new ScanTaskEmitter();
@@ -1276,7 +1289,31 @@ async function runScan(
     writeFileSync(historyPath, JSON.stringify({ scans: historyData, last_updated: new Date().toISOString() }, null, 2));
 
     task.emitProgress(1, `Complete - score ${score} (${getRiskLabel(score)})`);
-    task.complete(result);
+
+    // Build a presentation summary for the client (SSE payload)
+    const reportName = `${safeName}.md`;
+    const html = marked(markdown) as string;
+    const clientSummary = {
+      extensionId: result.extensionId,
+      extensionName: result.extensionName,
+      version: result.version,
+      score,
+      findings_count: result.findings.length,
+      endpoints_count: result.endpoints.length,
+      report_name: reportName,
+      markdown,
+      html,
+      json: {
+        findings_summary: {
+          total: result.findings.length,
+          confirmed: result.findings.filter(f => !f.isFalsePositive).length,
+        },
+        verdict: result.verdict || null,
+        breakdown,
+      },
+    };
+
+    task.complete(result, clientSummary);
     cleanupOldScans();
     
   } catch (error) {

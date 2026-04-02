@@ -398,15 +398,12 @@ function renderResults(results) {
         if (idParts.length >= 2) {
             const publisher = idParts[0];
             const extension = idParts.slice(1).join('.');
-            const dlLink = document.createElement('a');
-            dlLink.className = 'btn btn-outline btn-sm';
-            dlLink.href = `https://${encodeURIComponent(publisher)}.gallery.vsassets.io/_apis/public/gallery/publisher/${encodeURIComponent(publisher)}/extension/${encodeURIComponent(extension)}/latest/assetbyname/Microsoft.VisualStudio.Services.VSIXPackage`;
-            dlLink.target = '_blank';
-            dlLink.rel = 'noopener';
-            dlLink.download = `${ext.extensionId}.vsix`;
-            dlLink.title = 'Download VSIX';
-            dlLink.textContent = 'VSIX';
-            actions.appendChild(dlLink);
+            const dlBtn = document.createElement('button');
+            dlBtn.className = 'btn btn-outline btn-sm';
+            dlBtn.title = 'Download VSIX';
+            dlBtn.textContent = 'VSIX';
+            dlBtn.addEventListener('click', () => downloadVsix(publisher, extension, ext.extensionId, dlBtn));
+            actions.appendChild(dlBtn);
         }
 
         if (ext.scan) {
@@ -488,6 +485,28 @@ function hideBatchStatusBanner() {
 }
 
 // -- Scan actions --
+async function downloadVsix(publisher, extension, extId, btn) {
+    const origText = btn.textContent;
+    btn.textContent = 'Downloading...';
+    btn.disabled = true;
+    try {
+        const url = `https://${publisher}.gallery.vsassets.io/_apis/public/gallery/publisher/${publisher}/extension/${extension}/latest/assetbyname/Microsoft.VisualStudio.Services.VSIXPackage`;
+        const resp = await fetch(url);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const blob = await resp.blob();
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `${extId}.vsix`;
+        a.click();
+        URL.revokeObjectURL(a.href);
+    } catch (err) {
+        toastError('Download failed: ' + err.message);
+    } finally {
+        btn.textContent = origText;
+        btn.disabled = false;
+    }
+}
+
 function scanSingle(ext) {
     const url = `https://marketplace.visualstudio.com/items?itemName=${ext.extensionId}`;
     const formData = new FormData();
