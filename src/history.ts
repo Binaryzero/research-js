@@ -41,33 +41,20 @@ async function writeHistoryAtomic(path: string, scans: HistoryScans): Promise<vo
  */
 const writeQueues: Map<string, Promise<void>> = new Map();
 
-/**
- * Serialize a write operation against a given history path. The returned
- * promise resolves/rejects with the operation's result, but the queue tail
- * never enters a rejected state — a failing operation must not poison the
- * queue for subsequent callers.
- *
- * TODO(human): implement the serialization primitive.
- *
- * Requirements:
- *   1. Operations for the same `path` must run strictly in FIFO order
- *      (chained off `writeQueues.get(path)`).
- *   2. Operations for *different* paths run independently (no global lock).
- *   3. If `op()` throws/rejects, the caller of `enqueue` must see that
- *      rejection — but the queue's tail promise stored back in `writeQueues`
- *      must be a *resolved* continuation so the next enqueue still chains
- *      onto a usable promise (a rejected tail would cause every subsequent
- *      caller to receive the original error).
- *   4. When an operation finishes and no further work is chained, the entry
- *      should be cleaned up from the map to avoid unbounded growth.
- *      Hint: compare `writeQueues.get(path)` to the local tail before
- *      deleting — only the operation that owns the current tail may evict.
- *
- * Signature: takes a path and a thunk returning a promise; returns a promise
- * that mirrors the thunk's result.
- */
 function enqueue<T>(path: string, op: () => Promise<T>): Promise<T> {
-  throw new Error('TODO(human): implement per-path serialization queue');
+  const prev = writeQueues.get(path) ?? Promise.resolve();
+  const run = prev.then(op);
+  const tail = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  writeQueues.set(path, tail);
+  tail.then(() => {
+    if (writeQueues.get(path) === tail) {
+      writeQueues.delete(path);
+    }
+  });
+  return run;
 }
 
 /**
