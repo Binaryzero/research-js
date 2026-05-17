@@ -273,7 +273,7 @@ function categorizeFile(filePath: string, ext: string): string {
   if (assetExtensions.includes(ext)) return 'asset';
   
   const baseName = basename(filePath).toLowerCase();
-  if (agentFiles.some(f => baseName.includes(f.replace(/^\./, '')))) return 'agent_config';
+  if (agentFiles.some(f => baseName === f || (f.startsWith('.') && baseName === f.slice(1)))) return 'agent_config';
   
   if (isBinaryFile(filePath)) return 'binary';
   
