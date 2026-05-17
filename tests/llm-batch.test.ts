@@ -61,18 +61,18 @@ describe('groupFindingsByPatternAndFile', () => {
   });
 
   it('sorts by risk level, higher risk first', () => {
-    // Note: the implementation uses `riskOrder[x] || 5` which means 'critical' (mapped to 0)
-    // is treated as unknown due to 0 being falsy. This test uses high/medium/low to avoid that edge case.
     const findings = [
       makeFinding({ category: 'a', title: 'Low', riskLevel: 'low', location: 'x.js:1' }),
       makeFinding({ category: 'b', title: 'High', riskLevel: 'high', location: 'y.js:1' }),
       makeFinding({ category: 'c', title: 'Medium', riskLevel: 'medium', location: 'z.js:1' }),
+      makeFinding({ category: 'd', title: 'Critical', riskLevel: 'critical', location: 'w.js:1' }),
     ];
 
     const groups = groupFindingsByPatternAndFile(findings);
-    expect(groups[0].risk).toBe('high');
-    expect(groups[1].risk).toBe('medium');
-    expect(groups[2].risk).toBe('low');
+    expect(groups[0].risk).toBe('critical');
+    expect(groups[1].risk).toBe('high');
+    expect(groups[2].risk).toBe('medium');
+    expect(groups[3].risk).toBe('low');
   });
 
   it('breaks risk ties by number of file groups (more files first)', () => {
