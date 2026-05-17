@@ -1053,9 +1053,11 @@ export function extractVsix(vsixPath: string, outputDir?: string): string {
     const destPath = resolve(targetDir, entry.entryName);
     const isSafe = destPath === resolve(targetDir) || destPath.startsWith(safeRoot);
 
-    // TODO(human): handle this entry.
-    // If `isSafe`, extract it (use zip.extractEntryTo(entry, targetDir, true, true)).
-    // If not safe, decide what to do with the malicious entry — see Learn by Doing.
+    if (!isSafe) {
+      throw new Error(`Refusing to extract VSIX: entry "${entry.entryName}" escapes target directory (zip-slip)`);
+    }
+
+    zip.extractEntryTo(entry, targetDir, true, true);
   }
 
   // VSIX structure: extension is in 'extension/' subfolder
