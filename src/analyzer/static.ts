@@ -3,10 +3,10 @@
  * Port of Python analyzer.py static analysis logic
  */
 
-import { readdirSync, readFileSync, statSync, existsSync, openSync, readSync, closeSync } from 'fs';
+import { readdirSync, readFileSync, statSync, existsSync, openSync, readSync, closeSync, rmSync } from 'fs';
 import { join, extname, basename, relative, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { createHash } from 'crypto';
+import { createHash, randomBytes } from 'crypto';
 import AdmZip from 'adm-zip';
 import type {
   AnalysisResult,
@@ -1043,12 +1043,16 @@ export class StaticAnalyzer {
  * Extract VSIX file to a temporary directory
  */
 export function extractVsix(vsixPath: string, outputDir?: string): string {
-  const targetDir = outputDir || `/tmp/vsix_${Date.now()}`;
-  
-  const zip = new AdmZip(vsixPath);
-  zip.extractAllTo(targetDir, true);
-  
-  // VSIX structure: extension is in 'extension/' subfolder
+  const targetDir = outputDir || `/tmp/vsix_${randomBytes(8).toString('hex')}`;
+
+  try {
+    const zip = new AdmZip(vsixPath);
+    zip.extractAllTo(targetDir, true);
+  } catch (err) {
+    rmSync(targetDir, { recursive: true, force: true });
+    throw err;
+  }
+
   const extensionDir = join(targetDir, 'extension');
   return existsSync(extensionDir) ? extensionDir : targetDir;
 }
