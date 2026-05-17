@@ -15,6 +15,7 @@ import type { PromptConfig } from '../config.js';
 import { getEndpointFiltering } from './patterns.js';
 import type { LlmProvider } from '../providers/llm-provider.js';
 import { createProvider } from '../providers/index.js';
+import { LlmAssessmentSchema, IndexedLlmAssessmentSchema } from './schemas.js';
 
 /**
  * Fast assessment cache - shared across LlmClient instances to avoid redundant work
@@ -121,15 +122,8 @@ function parseSingleAssessment(response: string): LlmAssessment | null {
     if (end === -1) return null;
 
     const jsonStr = response.slice(start, end);
-    const parsed = JSON.parse(jsonStr) as Record<string, unknown>;
-    return {
-      riskLevel: (parsed.riskLevel || parsed.risk_level || 'unknown') as LlmAssessment['riskLevel'],
-      isFalsePositive: (parsed.isFalsePositive ?? parsed.is_false_positive ?? false) as boolean,
-      falsePositiveReason: (parsed.falsePositiveReason || parsed.false_positive_reason || '') as string,
-      explanation: (parsed.explanation || '') as string,
-      recommendation: (parsed.recommendation || 'investigate') as LlmAssessment['recommendation'],
-      injectionDetected: (parsed.injectionDetected ?? parsed.injection_detected ?? false) as boolean,
-    };
+    const parsed = JSON.parse(jsonStr);
+    return LlmAssessmentSchema.parse(parsed);
   } catch {
     // Return null on parse failure
   }
@@ -700,16 +694,10 @@ If there are too many findings to assess completely, prioritize assessing the fi
       console.log(`[LLM] Bulk mode: Parsed ${parsed.length} assessments from response (expected ${expectedCount})`);
 
       for (const item of parsed) {
-        if (typeof item !== 'object' || item === null) continue;
-
-        const obj = item as Record<string, unknown>;
-        assessments.push({
-          riskLevel: (obj.riskLevel || obj.risk_level || 'medium') as LlmAssessment['riskLevel'],
-          isFalsePositive: (obj.isFalsePositive ?? obj.is_false_positive ?? false) as boolean,
-          falsePositiveReason: (obj.falsePositiveReason || obj.false_positive_reason || '') as string,
-          explanation: (obj.explanation || '') as string,
-          recommendation: (obj.recommendation || 'investigate') as LlmAssessment['recommendation'],
-        });
+        const result = LlmAssessmentSchema.safeParse(item);
+        if (result.success) {
+          assessments.push(result.data);
+        }
       }
     } catch (error) {
       console.warn('Failed to parse bulk assessments:', error);
@@ -931,6 +919,12 @@ If there are too many findings to assess completely, prioritize assessing the fi
 
         // Parse the items
         for (const item of parsed) {
+          // TODO(human): replace this block with IndexedLlmAssessmentSchema.safeParse(item).
+          // On success, extract `index` from the result and:
+          //   - if index is in batch.indices, store the (index-less) assessment in results[index]
+          //     and add index to `assessed`
+          // On failure, skip the item (no entry).
+          // See llm-batch.ts:365 for the non-indexed pattern.
           if (typeof item !== 'object' || item === null) continue;
           const obj = item as Record<string, unknown>;
           const idx = obj.index as number;

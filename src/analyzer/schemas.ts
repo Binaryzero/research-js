@@ -3,11 +3,8 @@
  * Replaces manual JSON parsing with type-safe validation
  */
 import { z } from 'zod';
+import type { LlmAssessment } from '../types/index.js';
 
-/**
- * Single finding assessment schema
- * Used for individual finding assessment and consensus voting
- */
 export const AssessmentSchema = z.object({
   risk_level: z.enum(['critical', 'high', 'medium', 'low', 'none']),
   is_false_positive: z.boolean(),
@@ -17,26 +14,39 @@ export const AssessmentSchema = z.object({
   injection_detected: z.boolean().default(false),
 });
 
-/**
- * Batch assessment schema for multiple findings
- * Used in bulk assessment mode
- */
 export const BatchAssessmentSchema = z.array(AssessmentSchema);
 
-/**
- * Assessment with index for triage batch processing
- * Tracks position in the findings array
- */
 export const IndexedAssessmentSchema = AssessmentSchema.extend({
   index: z.number(),
 });
 
-/**
- * Array of indexed assessments for triage batch
- */
 export const IndexedBatchAssessmentSchema = z.array(IndexedAssessmentSchema);
 
-// Type exports
+/**
+ * Maps validated snake_case wire format to the internal camelCase LlmAssessment shape.
+ * Centralizes the renaming so parse sites get the consumer-ready type directly.
+ */
+export const LlmAssessmentSchema = AssessmentSchema.transform((parsed): LlmAssessment => ({
+  riskLevel: parsed.risk_level,
+  isFalsePositive: parsed.is_false_positive,
+  falsePositiveReason: parsed.false_positive_reason,
+  explanation: parsed.explanation,
+  recommendation: parsed.recommendation,
+  injectionDetected: parsed.injection_detected,
+}));
+
+export const IndexedLlmAssessmentSchema = IndexedAssessmentSchema.transform(
+  (parsed): LlmAssessment & { index: number } => ({
+    index: parsed.index,
+    riskLevel: parsed.risk_level,
+    isFalsePositive: parsed.is_false_positive,
+    falsePositiveReason: parsed.false_positive_reason,
+    explanation: parsed.explanation,
+    recommendation: parsed.recommendation,
+    injectionDetected: parsed.injection_detected,
+  })
+);
+
 export type AssessmentOutput = z.infer<typeof AssessmentSchema>;
 export type BatchAssessmentOutput = z.infer<typeof BatchAssessmentSchema>;
 export type IndexedAssessmentOutput = z.infer<typeof IndexedAssessmentSchema>;

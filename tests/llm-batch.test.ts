@@ -332,15 +332,14 @@ describe('parseStrategicAssessments', () => {
     expect(result.get(10)!.falsePositiveReason).toBe('Benign');
   });
 
-  it('handles camelCase field names', () => {
+  it('rejects camelCase field names (LLM must use snake_case)', () => {
     const samples = makeSamples(1);
     const response = JSON.stringify([
       { riskLevel: 'low', isFalsePositive: true, falsePositiveReason: 'OK', explanation: 'Fine', recommendation: 'dismiss' },
     ]);
 
     const result = parseStrategicAssessments(response, samples);
-    expect(result.get(0)!.riskLevel).toBe('low');
-    expect(result.get(0)!.isFalsePositive).toBe(true);
+    expect(result.size).toBe(0);
   });
 
   it('returns empty map for completely malformed input', () => {
@@ -380,22 +379,22 @@ describe('parseStrategicAssessments', () => {
   it('ignores extra assessments beyond sample count', () => {
     const samples = makeSamples(1);
     const response = JSON.stringify([
-      { risk_level: 'low', explanation: 'A', recommendation: 'dismiss' },
-      { risk_level: 'high', explanation: 'B', recommendation: 'investigate' },
+      { risk_level: 'low', is_false_positive: false, explanation: 'A', recommendation: 'dismiss' },
+      { risk_level: 'high', is_false_positive: false, explanation: 'B', recommendation: 'investigate' },
     ]);
 
     const result = parseStrategicAssessments(response, samples);
     expect(result.size).toBe(1);
   });
 
-  it('defaults recommendation to investigate when missing', () => {
+  it('skips assessments missing required fields (strict schema)', () => {
     const samples = makeSamples(1);
     const response = JSON.stringify([
       { risk_level: 'high', explanation: 'Bad' },
     ]);
 
     const result = parseStrategicAssessments(response, samples);
-    expect(result.get(0)!.recommendation).toBe('investigate');
+    expect(result.size).toBe(0);
   });
 });
 
