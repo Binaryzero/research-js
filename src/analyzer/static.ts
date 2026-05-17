@@ -4,7 +4,7 @@
  */
 
 import { readdirSync, readFileSync, statSync, existsSync, openSync, readSync, closeSync } from 'fs';
-import { join, extname, basename, relative, dirname } from 'path';
+import { join, extname, basename, relative, dirname, resolve, sep } from 'path';
 import { fileURLToPath } from 'url';
 import { createHash } from 'crypto';
 import AdmZip from 'adm-zip';
@@ -1044,10 +1044,20 @@ export class StaticAnalyzer {
  */
 export function extractVsix(vsixPath: string, outputDir?: string): string {
   const targetDir = outputDir || `/tmp/vsix_${Date.now()}`;
-  
+  const safeRoot = resolve(targetDir) + sep;
+
   const zip = new AdmZip(vsixPath);
-  zip.extractAllTo(targetDir, true);
-  
+  const entries = zip.getEntries();
+
+  for (const entry of entries) {
+    const destPath = resolve(targetDir, entry.entryName);
+    const isSafe = destPath === resolve(targetDir) || destPath.startsWith(safeRoot);
+
+    // TODO(human): handle this entry.
+    // If `isSafe`, extract it (use zip.extractEntryTo(entry, targetDir, true, true)).
+    // If not safe, decide what to do with the malicious entry — see Learn by Doing.
+  }
+
   // VSIX structure: extension is in 'extension/' subfolder
   const extensionDir = join(targetDir, 'extension');
   return existsSync(extensionDir) ? extensionDir : targetDir;
