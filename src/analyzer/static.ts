@@ -504,10 +504,21 @@ export class StaticAnalyzer {
    */
   private runPatternMatching(files: string[]): Finding[] {
     const findings: Finding[] = [];
-    const jsFiles = files.filter(f => ['.js', '.mjs', '.ts', '.tsx'].includes(extname(f)));
+    // Skip dependency lockfiles: they're noisy, huge, and dependency metadata
+    // shouldn't drive findings about extension behavior.
+    const LOCKFILES = new Set([
+      'package-lock.json',
+      'npm-shrinkwrap.json',
+      'pnpm-lock.yaml',
+      'yarn.lock',
+    ]);
+    const scannableFiles = files.filter(f => {
+      if (LOCKFILES.has(basename(f).toLowerCase())) return false;
+      return ['.js', '.mjs', '.ts', '.tsx', '.json', '.yaml', '.yml'].includes(extname(f).toLowerCase());
+    });
     const CHUNK_SIZE = 512 * 1024; // 512KB chunks
 
-    for (const filePath of jsFiles) {
+    for (const filePath of scannableFiles) {
       try {
         const relativePath = relative(this.extensionPath, filePath);
         const stats = statSync(filePath);
