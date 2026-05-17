@@ -1060,7 +1060,245 @@ ${indent(prompts.triage_batch?.user || '')}
 }
 
 /**
- * Run scan in background
+ * Persist one scan's summary into the JSON history file.
+ *
+ * This is the sole writer of the history file — extracted so the race
+ * condition that previously caused PR #5 bug (concurrent runners losing
+ * each other's writes) can be fixed in one place.
+ */
+async function saveScanToHistory(
+  historyPath: string,
+  extensionId: string,
+  entry: Record<string, unknown>
+): Promise<void> {
+  // TODO(human): Implement race-safe read-modify-write of the history JSON.
+  //
+  // Three runners (runScan, runBatchScan, runBatchLlmAnalysis) all called
+  // this read-modify-write inline. When two scans completed near-simultaneously
+  // (e.g. user starts a single scan while a batch is running), both could
+  // read the same snapshot and the second writer would clobber the first's
+  // entry. Centralizing the writes here lets you fix it once.
+  //
+  // Required behavior:
+  //   - Ensure dirname(historyPath) exists (mkdirSync recursive).
+  //   - Read existing {scans, last_updated} JSON (treat missing/corrupt as {}).
+  //   - Set scans[extensionId.toLowerCase()] = entry.
+  //   - Write {scans, last_updated: new Date().toISOString()} back, pretty-printed.
+  //   - Serialize concurrent callers so no write is lost.
+  throw new Error('saveScanToHistory not yet implemented');
+}
+
+interface ExtensionScanOptions {
+  noLlm: boolean;
+  modelName?: string;
+  ollamaUrl?: string;
+  reportsDir: string;
+  historyPath: string;
+  config: Awaited<ReturnType<typeof getConfig>>;
+  prompts?: PromptConfig;
+  /** Used when a marketplace URL is the source; overrides analyzer-detected ID */
+  extensionInfo?: { publisher: string; extension: string } | null;
+  /** Used by batch flows where the caller already knows the canonical ID */
+  forceExtensionId?: string;
+  staticVerbose?: boolean;
+  onProgress: (fraction: number, message: string) => void;
+  isCancelled: () => boolean;
+  /** Caller-owned cleanup list; core appends download/extract dirs to it */
+  tempDirs: string[];
+}
+
+interface ExtensionScanOutcome {
+  result: AnalysisResult;
+  score: number;
+  breakdown: Record<string, unknown>;
+  reportPath: string;
+  reportName: string;
+  markdown: string;
+  llmAnalyzed: boolean;
+}
+
+/**
+ * Core single-extension scan pipeline: download/extract → static analysis →
+ * optional LLM enhancement → score → report → history.
+ *
+ * Returns null if cancelled mid-flight. Callers own temp-dir cleanup
+ * (paths are appended to options.tempDirs).
+ */
+async function runExtensionScan(
+  inputSource: string,
+  options: ExtensionScanOptions
+): Promise<ExtensionScanOutcome | null> {
+  let extensionPath = inputSource;
+
+  if (inputSource.startsWith('http://') || inputSource.startsWith('https://')) {
+    options.onProgress(0.02, 'Downloading extension...');
+    const tempDir = `/tmp/vsix_download_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    mkdirSync(tempDir, { recursive: true });
+    options.tempDirs.push(tempDir);
+
+    try {
+      const dl = await downloadExtension(inputSource, tempDir);
+      options.onProgress(0.08, `Downloaded: ${dl.filename}`);
+      options.onProgress(0.1, 'Extracting VSIX...');
+      extensionPath = extractVsix(dl.path);
+      options.tempDirs.push(extensionPath);
+    } catch (err) {
+      throw new Error(`Failed to download extension: ${err instanceof Error ? err.message : err}`);
+    }
+  } else if (inputSource.endsWith('.vsix')) {
+    options.onProgress(0.05, 'Extracting VSIX...');
+    extensionPath = extractVsix(inputSource);
+    options.tempDirs.push(extensionPath);
+  }
+
+  if (options.isCancelled()) return null;
+
+  options.onProgress(0.15, 'Running static analysis...');
+  const analyzer = new StaticAnalyzer(extensionPath, {
+    verbose: options.staticVerbose ?? true,
+    patternsFile: options.config.patternsFile,
+  });
+  const result = await analyzer.analyze();
+  options.onProgress(0.4, `Static analysis complete: ${result.findings.length} findings`);
+
+  LlmClient.clearFastAssessmentCache();
+
+  if (options.isCancelled()) return null;
+
+  let orchestrator: ConsensusOrchestrator | null = null;
+  const basePrompts = options.prompts || getPrompts();
+
+  if (!options.noLlm && options.modelName) {
+    options.onProgress(0.42, `Connecting to LLM (${options.modelName})...`);
+
+    const appConfig = getAppConfig();
+    const profiledPrompts = getPromptsForProfile(appConfig.promptProfile, basePrompts);
+
+    const mainClient = new LlmClient({
+      ...options.config.llm,
+      provider: appConfig.main.provider,
+      model: options.modelName,
+      baseUrl: options.ollamaUrl,
+    }, profiledPrompts);
+
+    const judgeClients = appConfig.judges
+      .filter(j => j.enabled)
+      .map(j => {
+        const provider = createProvider(
+          j.provider,
+          { id: j.id, model: j.model },
+          { baseUrl: j.baseUrl.replace(/\/$/, ''), timeout: j.timeout, apiKey: j.apiKey },
+          { maxTokens: j.maxTokens, temperature: j.temperature }
+        );
+        return new LlmClient(slotToLlmConfig(j, appConfig), profiledPrompts, provider);
+      });
+
+    orchestrator = new ConsensusOrchestrator(mainClient, judgeClients, appConfig.consensus);
+
+    const available = await orchestrator.isAvailable();
+
+    if (available) {
+      if (judgeClients.length > 0) {
+        try {
+          await orchestrator.verifyJudges();
+          options.onProgress(0.43, `${judgeClients.length} judge(s) verified`);
+        } catch (err) {
+          options.onProgress(0.43, `Judge verification failed: ${err instanceof Error ? err.message : err}`);
+          throw err;
+        }
+      }
+
+      if (result.findings.length > 0) {
+        options.onProgress(0.45, `LLM analyzing ${result.findings.length} findings...`);
+
+        const assessments = await orchestrator.batchAssessFindings(result.findings, {
+          onProgress: (p, m) => options.onProgress(0.45 + p * 0.4, m),
+          extensionName: result.extensionName,
+        });
+
+        for (let i = 0; i < assessments.length; i++) {
+          const a = assessments[i];
+          if (a) {
+            result.findings[i].riskLevel = a.riskLevel;
+            result.findings[i].isFalsePositive = a.isFalsePositive;
+            result.findings[i].falsePositiveReason = a.falsePositiveReason;
+            if (a.recommendation) result.findings[i].recommendation = a.recommendation;
+            if (a.injectionDetected) result.findings[i].injectionDetected = a.injectionDetected;
+            if (a.consensus) result.findings[i].consensus = a.consensus;
+          }
+        }
+      }
+
+      options.onProgress(0.88, 'Generating executive summary...');
+      const summary = await orchestrator.generateExecutiveSummary(result, extensionPath);
+      if (summary) {
+        const { verdict, prose } = parseVerdictFromSummary(summary);
+        result.verdict = verdict;
+        result.executiveSummary = prose;
+      } else {
+        result.executiveSummary = null;
+      }
+    } else {
+      options.onProgress(0.45, 'LLM not available');
+      orchestrator = null;
+    }
+  }
+
+  // The analyzer can detect a wrong ID from package.json (esp. non-English
+  // extensions); the marketplace ID we already have is authoritative.
+  if (options.forceExtensionId) {
+    result.extensionId = options.forceExtensionId;
+  } else if (options.extensionInfo) {
+    result.extensionId = `${options.extensionInfo.publisher}.${options.extensionInfo.extension}`;
+    if (!result.extensionName || result.extensionName === 'Unknown Extension') {
+      result.extensionName = options.extensionInfo.extension;
+    }
+  }
+
+  const llmAnalyzed = !!orchestrator;
+  const [score, breakdown] = calculateSuspicionScore(result, { adjustForLlm: llmAnalyzed });
+
+  options.onProgress(0.9, 'Generating report...');
+  const generator = new ReportGenerator(result, { fullOutput: true });
+  const markdown = generator.generate();
+
+  const safeName = result.extensionId.replace(/[<>:"/\\|?*]/g, '_');
+  const reportName = `${safeName}.md`;
+  const reportPath = join(options.reportsDir, reportName);
+  writeFileSync(reportPath, markdown);
+
+  await saveScanToHistory(options.historyPath, result.extensionId, {
+    extension_name: result.extensionName,
+    version: result.version,
+    scan_date: new Date().toISOString(),
+    suspicion_score: score,
+    llm_adjusted_score: llmAnalyzed ? score : null,
+    llm_analyzed: llmAnalyzed,
+    findings_count: result.findings.length,
+    true_positives: result.findings.filter(f => !f.isFalsePositive).length,
+    report_path: reportPath,
+    breakdown,
+    verdict: result.verdict || null,
+  });
+
+  return { result, score, breakdown, reportPath, reportName, markdown, llmAnalyzed };
+}
+
+/**
+ * Quietly remove temp dirs, ignoring errors.
+ */
+function cleanupTempDirs(dirs: string[]): void {
+  for (const dir of dirs) {
+    try {
+      if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // Ignore cleanup errors
+    }
+  }
+}
+
+/**
+ * Run single-extension scan in background.
  */
 async function runScan(
   task: ScanTaskEmitter,
@@ -1077,227 +1315,65 @@ async function runScan(
 ): Promise<void> {
   task.status = 'running';
   task.emitProgress(0, 'Starting analysis...');
-  
+
   const tempDirs: string[] = [];
-  
+
   try {
-    let extensionPath = inputSource;
-    
-    // Handle URL downloads
-    if (inputSource.startsWith('http://') || inputSource.startsWith('https://')) {
-      task.emitProgress(0.02, 'Downloading extension...');
-      
-      const tempDir = `/tmp/vsix_download_${Date.now()}`;
-      mkdirSync(tempDir, { recursive: true });
-      tempDirs.push(tempDir);
-      
-      try {
-        const result = await downloadExtension(inputSource, tempDir);
-        task.emitProgress(0.08, `Downloaded: ${result.filename}`);
-        
-        // Extract VSIX
-        task.emitProgress(0.1, 'Extracting VSIX...');
-        extensionPath = extractVsix(result.path);
-        tempDirs.push(extensionPath);
-      } catch (error) {
-        throw new Error(`Failed to download extension: ${error instanceof Error ? error.message : error}`);
-      }
-    } else if (inputSource.endsWith('.vsix')) {
-      // Local VSIX file
-      task.emitProgress(0.05, 'Extracting VSIX...');
-      extensionPath = extractVsix(inputSource);
-      tempDirs.push(extensionPath);
-    }
-    
-    if (task.cancelled) {
-      task.status = 'cancelled';
-      return;
-    }
-    
-    // Static analysis
-    task.emitProgress(0.15, 'Running static analysis...');
-    const analyzer = new StaticAnalyzer(extensionPath, { verbose: true, patternsFile: options.config.patternsFile });
-    const result = await analyzer.analyze();
-    task.emitProgress(0.4, `Static analysis complete: ${result.findings.length} findings`);
-    
-    // Clear shared fast-assessment cache between scans to free memory
-    // This prevents cache growth across multiple scans
-    LlmClient.clearFastAssessmentCache();
-    
-    if (task.cancelled) {
-      task.status = 'cancelled';
-      return;
-    }
-    
-    // LLM enhancement
-    let orchestrator: ConsensusOrchestrator | null = null;
-    const basePrompts = options.prompts || getPrompts();
-
-    if (!options.noLlm && options.modelName) {
-      task.emitProgress(0.42, `Connecting to LLM (${options.modelName})...`);
-
-      // Global prompt profile applies to ALL models uniformly
-      const appConfig = getAppConfig();
-      const profiledPrompts = getPromptsForProfile(appConfig.promptProfile, basePrompts);
-
-      const mainClient = new LlmClient({
-        ...options.config.llm,
-        provider: appConfig.main.provider,
-        model: options.modelName,
-        baseUrl: options.ollamaUrl,
-      }, profiledPrompts);
-
-      // Build judge clients — same prompts as main (blind assessment)
-      const judgeClients = appConfig.judges
-        .filter(j => j.enabled)
-        .map(j => {
-          const provider = createProvider(
-            j.provider,
-            { id: j.id, model: j.model },
-            { baseUrl: j.baseUrl.replace(/\/$/, ''), timeout: j.timeout, apiKey: j.apiKey },
-            { maxTokens: j.maxTokens, temperature: j.temperature }
-          );
-          return new LlmClient(slotToLlmConfig(j, appConfig), profiledPrompts, provider);
-        });
-
-      orchestrator = new ConsensusOrchestrator(mainClient, judgeClients, appConfig.consensus);
-
-      const available = await orchestrator.isAvailable();
-
-      if (available) {
-        // Verify judges are reachable if any are configured
-        if (judgeClients.length > 0) {
-          try {
-            await orchestrator.verifyJudges();
-            task.emitProgress(0.43, `${judgeClients.length} judge(s) verified`);
-          } catch (err) {
-            task.emitProgress(0.43, `Judge verification failed: ${err instanceof Error ? err.message : err}`);
-            throw err;
-          }
-        }
-
-        if (result.findings.length > 0) {
-          task.emitProgress(0.45, `LLM analyzing ${result.findings.length} findings...`);
-
-          const assessments = await orchestrator.batchAssessFindings(result.findings, {
-            onProgress: (p, m) => task.emitProgress(0.45 + p * 0.4, m),
-            extensionName: result.extensionName,
-          });
-
-          // Apply assessments to findings (assessments may be truncated)
-          for (let i = 0; i < assessments.length; i++) {
-            const assessment = assessments[i];
-            if (assessment) {
-              result.findings[i].riskLevel = assessment.riskLevel;
-              result.findings[i].isFalsePositive = assessment.isFalsePositive;
-              result.findings[i].falsePositiveReason = assessment.falsePositiveReason;
-              if (assessment.recommendation) result.findings[i].recommendation = assessment.recommendation;
-              if (assessment.injectionDetected) result.findings[i].injectionDetected = assessment.injectionDetected;
-              if (assessment.consensus) result.findings[i].consensus = assessment.consensus;
-            }
-          }
-        }
-
-        task.emitProgress(0.88, 'Generating executive summary...');
-        const summary = await orchestrator.generateExecutiveSummary(result, extensionPath);
-        if (summary) {
-          const { verdict, prose } = parseVerdictFromSummary(summary);
-          result.verdict = verdict;
-          result.executiveSummary = prose;
-        } else {
-          result.executiveSummary = null;
-        }
-      } else {
-        task.emitProgress(0.45, 'LLM not available');
-        orchestrator = null;
-      }
-    }
-    
-    // Calculate score
-    const [score, breakdown] = calculateSuspicionScore(result, { adjustForLlm: !!orchestrator });
-
-    // Always override extensionId from URL - we know this is the correct ID from marketplace
-    // The analyzer may detect wrong ID from package.json (especially for non-English extensions)
-    if (options.extensionInfo) {
-      result.extensionId = `${options.extensionInfo.publisher}.${options.extensionInfo.extension}`;
-      if (!result.extensionName || result.extensionName === 'Unknown Extension') {
-        result.extensionName = options.extensionInfo.extension;
-      }
-    }
-
-    // Generate report
-    task.emitProgress(0.9, 'Generating report...');
-    const generator = new ReportGenerator(result, { fullOutput: true });
-    const markdown = generator.generate();
-
-    // Save report
-    const safeName = result.extensionId.replace(/[<>:"/\\|?*]/g, '_');
-    const reportPath = join(options.reportsDir, `${safeName}.md`);
-    writeFileSync(reportPath, markdown);
-    
-    await updateHistory(options.config.historyFile, historyData => {
-      historyData[result.extensionId.toLowerCase()] = {
-        extension_name: result.extensionName,
-        version: result.version,
-        scan_date: new Date().toISOString(),
-        suspicion_score: score,
-        llm_adjusted_score: !!orchestrator ? score : null,
-        llm_analyzed: !!orchestrator,
-        findings_count: result.findings.length,
-        true_positives: result.findings.filter(f => !f.isFalsePositive).length,
-        report_path: reportPath,
-        breakdown,
-        verdict: result.verdict || null,
-      };
+    const outcome = await runExtensionScan(inputSource, {
+      noLlm: options.noLlm,
+      modelName: options.modelName,
+      ollamaUrl: options.ollamaUrl,
+      reportsDir: options.reportsDir,
+      historyPath: options.config.historyFile,
+      config: options.config,
+      prompts: options.prompts,
+      extensionInfo: options.extensionInfo,
+      staticVerbose: true,
+      onProgress: (p, m) => task.emitProgress(p, m),
+      isCancelled: () => task.cancelled,
+      tempDirs,
     });
 
-    task.emitProgress(1, `Complete - score ${score} (${getRiskLabel(score)})`);
+    if (!outcome) {
+      task.status = 'cancelled';
+      return;
+    }
 
-    // Build a presentation summary for the client (SSE payload)
-    const reportName = `${safeName}.md`;
-    const html = marked(markdown) as string;
+    task.emitProgress(1, `Complete - score ${outcome.score} (${getRiskLabel(outcome.score)})`);
+
+    const html = marked(outcome.markdown) as string;
     const clientSummary = {
-      extensionId: result.extensionId,
-      extensionName: result.extensionName,
-      version: result.version,
-      score,
-      findings_count: result.findings.length,
-      endpoints_count: result.endpoints.length,
-      report_name: reportName,
-      markdown,
+      extensionId: outcome.result.extensionId,
+      extensionName: outcome.result.extensionName,
+      version: outcome.result.version,
+      score: outcome.score,
+      findings_count: outcome.result.findings.length,
+      endpoints_count: outcome.result.endpoints.length,
+      report_name: outcome.reportName,
+      markdown: outcome.markdown,
       html,
       json: {
         findings_summary: {
-          total: result.findings.length,
-          confirmed: result.findings.filter(f => !f.isFalsePositive).length,
+          total: outcome.result.findings.length,
+          confirmed: outcome.result.findings.filter(f => !f.isFalsePositive).length,
         },
-        verdict: result.verdict || null,
-        breakdown,
+        verdict: outcome.result.verdict || null,
+        breakdown: outcome.breakdown,
       },
     };
 
-    task.complete(result, clientSummary);
+    task.complete(outcome.result, clientSummary);
     cleanupOldScans();
-    
   } catch (error) {
     task.fail(error instanceof Error ? error.message : 'Unknown error');
     cleanupOldScans();
   } finally {
-    // Cleanup temp directories
-    for (const dir of tempDirs) {
-      try {
-        if (existsSync(dir)) {
-          rmSync(dir, { recursive: true, force: true });
-        }
-      } catch {
-        // Ignore cleanup errors
-      }
-    }
+    cleanupTempDirs(tempDirs);
   }
 }
 
 /**
- * Run batch LLM analysis in background
+ * Run batch LLM analysis in background.
  */
 async function runBatchLlmAnalysis(
   task: ScanTaskEmitter,
@@ -1315,180 +1391,55 @@ async function runBatchLlmAnalysis(
   const total = extensions.length;
   let scannedCount = 0;
   task.emitProgress(0, `Batch LLM analysis: ${total} extensions`);
-  
-  const historyPath = options.config.historyFile;
 
   for (let i = 0; i < total; i++) {
     if (task.cancelled) {
       task.status = 'cancelled';
       return;
     }
-    
+
     const ext = extensions[i];
     const extensionId = `${ext.publisher}.${ext.extensionName}`;
     task.emitProgress(i / total, `[${i + 1}/${total}] Analyzing ${extensionId} with LLM...`);
-    
-    let tempDir: string | undefined;
-    let extPath: string | undefined;
-    
+
+    const tempDirs: string[] = [];
     try {
-      // Download extension
-      tempDir = `/tmp/batch_llm_dl_${Date.now()}_${i}`;
-      mkdirSync(tempDir, { recursive: true });
-
       const downloadUrl = `https://marketplace.visualstudio.com/items?itemName=${ext.publisher}.${ext.extensionName}`;
-      const downloadResult = await downloadExtension(downloadUrl, tempDir);
-      task.emitProgress(i / total, `[${i + 1}/${total}] Downloaded: ${downloadResult.filename}`);
+      const outcome = await runExtensionScan(downloadUrl, {
+        noLlm: false,
+        modelName: options.modelName,
+        ollamaUrl: options.ollamaUrl,
+        reportsDir: options.reportsDir,
+        historyPath: options.config.historyFile,
+        config: options.config,
+        prompts: options.prompts,
+        forceExtensionId: extensionId,
+        staticVerbose: options.verbose,
+        onProgress: (_p, m) => task.emitProgress(i / total, `[${i + 1}/${total}] ${m}`),
+        isCancelled: () => task.cancelled,
+        tempDirs,
+      });
 
-      // Extract VSIX
-      extPath = extractVsix(downloadResult.path);
-      
-      // Static analysis
-      task.emitProgress(i / total, `[${i + 1}/${total}] Static analysis...`);
-      const analyzer = new StaticAnalyzer(extPath, { verbose: options.verbose, patternsFile: options.config.patternsFile });
-      const result = await analyzer.analyze();
-
-      // Always override extensionId from search result - we know this is the correct ID
-      result.extensionId = extensionId;
-
-      task.emitProgress(i / total, `[${i + 1}/${total}] ${result.findings.length} findings`);
-      
-      // Clear shared fast-assessment cache between batch scans to free memory
-      LlmClient.clearFastAssessmentCache();
-      
-      if (task.cancelled) {
+      if (!outcome) {
         task.status = 'cancelled';
         return;
       }
-      
-      // LLM enhancement
-      let batchOrchestrator: ConsensusOrchestrator | null = null;
-      const basePrompts = options.prompts || getPrompts();
-      const batchAppConfig = getAppConfig();
-      const profiledPrompts = getPromptsForProfile(batchAppConfig.promptProfile, basePrompts);
 
-      task.emitProgress(i / total, `[${i + 1}/${total}] LLM analyzing...`);
-
-      const batchMainClient = new LlmClient({
-        ...options.config.llm,
-        provider: batchAppConfig.main.provider,
-        model: options.modelName,
-        baseUrl: options.ollamaUrl,
-      }, profiledPrompts);
-
-      const batchJudgeClients = batchAppConfig.judges
-        .filter(j => j.enabled)
-        .map(j => {
-          const provider = createProvider(
-            j.provider,
-            { id: j.id, model: j.model },
-            { baseUrl: j.baseUrl.replace(/\/$/, ''), timeout: j.timeout, apiKey: j.apiKey },
-            { maxTokens: j.maxTokens, temperature: j.temperature }
-          );
-          return new LlmClient(slotToLlmConfig(j, batchAppConfig), profiledPrompts, provider);
-        });
-
-      batchOrchestrator = new ConsensusOrchestrator(batchMainClient, batchJudgeClients, batchAppConfig.consensus);
-
-      const available = await batchOrchestrator.isAvailable();
-
-      if (available) {
-        if (batchJudgeClients.length > 0) {
-          await batchOrchestrator.verifyJudges();
-        }
-
-        if (result.findings.length > 0) {
-          const assessments = await batchOrchestrator.batchAssessFindings(result.findings, {
-            onProgress: (p, m) => task.emitProgress(i / total + p * 0.2, `[${i + 1}/${total}] ${m}`),
-            extensionName: result.extensionName,
-          });
-
-          // Apply assessments to findings (assessments may be truncated)
-          for (let j = 0; j < assessments.length; j++) {
-            const assessment = assessments[j];
-            if (assessment) {
-              result.findings[j].riskLevel = assessment.riskLevel;
-              result.findings[j].isFalsePositive = assessment.isFalsePositive;
-              result.findings[j].falsePositiveReason = assessment.falsePositiveReason;
-              if (assessment.recommendation) result.findings[j].recommendation = assessment.recommendation;
-              if (assessment.injectionDetected) result.findings[j].injectionDetected = assessment.injectionDetected;
-              if (assessment.consensus) result.findings[j].consensus = assessment.consensus;
-            }
-          }
-        }
-
-        task.emitProgress(i / total, `[${i + 1}/${total}] Generating executive summary...`);
-        const summary = await batchOrchestrator.generateExecutiveSummary(result, extPath!);
-        if (summary) {
-          const { verdict, prose } = parseVerdictFromSummary(summary);
-          result.verdict = verdict;
-          result.executiveSummary = prose;
-        } else {
-          result.executiveSummary = null;
-        }
-      } else {
-        task.emitProgress(i / total, `[${i + 1}/${total}] LLM not available`);
-        batchOrchestrator = null;
-      }
-
-      // Calculate score
-      const [score, breakdown] = calculateSuspicionScore(result, { adjustForLlm: !!batchOrchestrator });
-      
-      // Generate report
-      task.emitProgress(i / total, `[${i + 1}/${total}] Generating report...`);
-      const generator = new ReportGenerator(result, { fullOutput: true });
-      const markdown = generator.generate();
-      
-      // Save report
-      const safeName = result.extensionId.replace(/[<>:"/\\|?*]/g, '_');
-      const reportPath = join(options.reportsDir, `${safeName}.md`);
-      writeFileSync(reportPath, markdown);
-      
-      await updateHistory(historyPath, historyData => {
-        historyData[result.extensionId.toLowerCase()] = {
-          extension_name: result.extensionName,
-          version: result.version,
-          scan_date: new Date().toISOString(),
-          suspicion_score: score,
-          llm_adjusted_score: !!batchOrchestrator ? score : null,
-          llm_analyzed: !!batchOrchestrator,
-          findings_count: result.findings.length,
-          true_positives: result.findings.filter(f => !f.isFalsePositive).length,
-          report_path: reportPath,
-          breakdown,
-          verdict: result.verdict || null,
-        };
-      });
-      
       scannedCount++;
-      task.emitProgress(i / total, `[${i + 1}/${total}] ${extensionId}: score ${score} (${getRiskLabel(score)})`);
-      
+      task.emitProgress(i / total, `[${i + 1}/${total}] ${extensionId}: score ${outcome.score} (${getRiskLabel(outcome.score)})`);
     } catch (error) {
       task.emitProgress(i / total, `[${i + 1}/${total}] Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
-      if (tempDir && existsSync(tempDir)) {
-        try {
-          rmSync(tempDir, { recursive: true, force: true });
-        } catch {
-          // Ignore cleanup errors
-        }
-      }
-      if (extPath && existsSync(extPath)) {
-        try {
-          rmSync(extPath, { recursive: true, force: true });
-        } catch {
-          // Ignore cleanup errors
-        }
-      }
+      cleanupTempDirs(tempDirs);
     }
   }
-  
+
   task.emitProgress(1, `Batch LLM analysis complete: ${scannedCount}/${total} extensions analyzed`);
   task.complete({ extensionId: 'batch', extensionName: 'Batch Analysis', version: '', findings: [], endpoints: [], scanDate: new Date().toISOString(), totalScanned: scannedCount } as any);
 }
 
 /**
- * Run batch static scan in background
+ * Run batch static scan in background.
  */
 async function runBatchScan(
   task: ScanTaskEmitter,
@@ -1508,8 +1459,6 @@ async function runBatchScan(
   let scannedCount = 0;
   task.emitProgress(0, `Batch static scan: ${total} extensions`);
 
-  const historyPath = options.config.historyFile;
-
   for (let i = 0; i < total; i++) {
     if (task.cancelled) {
       task.status = 'cancelled';
@@ -1518,94 +1467,42 @@ async function runBatchScan(
 
     const ext = extensions[i];
     const extensionId = ext.extensionId || `${ext.publisher?.publisherName}.${ext.extensionName}`;
-    
+
     if (!extensionId) {
       task.emitProgress(i / total, `[${i + 1}/${total}] Skipped - no extension ID`);
       continue;
     }
-    
+
     task.emitProgress(i / total, `[${i + 1}/${total}] Analyzing ${extensionId}...`);
-    
-    let tempDir: string | undefined;
-    let extPath: string | undefined;
 
+    const tempDirs: string[] = [];
     try {
-      // Download extension
-      tempDir = `/tmp/batch_static_dl_${Date.now()}_${i}`;
-      mkdirSync(tempDir, { recursive: true });
-
       const downloadUrl = `https://marketplace.visualstudio.com/items?itemName=${extensionId}`;
-      const downloadResult = await downloadExtension(downloadUrl, tempDir);
-      task.emitProgress(i / total, `[${i + 1}/${total}] Downloaded: ${downloadResult.filename}`);
+      const outcome = await runExtensionScan(downloadUrl, {
+        noLlm: true,
+        reportsDir: options.reportsDir,
+        historyPath: options.config.historyFile,
+        config: options.config,
+        prompts: options.prompts,
+        forceExtensionId: extensionId,
+        staticVerbose: true,
+        onProgress: (_p, m) => task.emitProgress(i / total, `[${i + 1}/${total}] ${m}`),
+        isCancelled: () => task.cancelled,
+        tempDirs,
+      });
 
-      // Extract VSIX
-      extPath = extractVsix(downloadResult.path);
-      
-      // Static analysis
-      task.emitProgress(i / total, `[${i + 1}/${total}] Static analysis...`);
-      const analyzer = new StaticAnalyzer(extPath, { verbose: true, patternsFile: options.config.patternsFile });
-      const result = await analyzer.analyze();
-
-      // Always override extensionId from search result - we know this is the correct ID from marketplace
-      // The analyzer may detect wrong ID from package.json (especially for non-English extensions)
-      result.extensionId = extensionId;
-
-      task.emitProgress(i / total, `[${i + 1}/${total}] ${result.findings.length} findings`);
-      
-      if (task.cancelled) {
+      if (!outcome) {
         task.status = 'cancelled';
         return;
       }
-      
-      // Calculate score
-      const [score, breakdown] = calculateSuspicionScore(result, { adjustForLlm: false });
-      
-      // Generate report
-      task.emitProgress(i / total, `[${i + 1}/${total}] Generating report...`);
-      const generator = new ReportGenerator(result, { fullOutput: true });
-      const markdown = generator.generate();
-      
-      // Save report
-      const safeName = result.extensionId.replace(/[<>:"/\\|?*]/g, '_');
-      const reportPath = join(options.reportsDir, `${safeName}.md`);
-      writeFileSync(reportPath, markdown);
-      
-      await updateHistory(historyPath, historyData => {
-        historyData[result.extensionId.toLowerCase()] = {
-          extension_name: result.extensionName,
-          version: result.version,
-          scan_date: new Date().toISOString(),
-          suspicion_score: score,
-          llm_adjusted_score: null,
-          llm_analyzed: false,
-          findings_count: result.findings.length,
-          true_positives: result.findings.filter(f => !f.isFalsePositive).length,
-          report_path: reportPath,
-          breakdown,
-        };
-      });
-      
+
+
       scannedCount++;
-      task.emitProgress(i / total, `[${i + 1}/${total}] ${extensionId}: score ${score} (${getRiskLabel(score)})`);
-      
+      task.emitProgress(i / total, `[${i + 1}/${total}] ${extensionId}: score ${outcome.score} (${getRiskLabel(outcome.score)})`);
     } catch (error) {
       task.emitProgress(i / total, `[${i + 1}/${total}] Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
-      // Clean up temp directories immediately after each extension
-      if (extPath && existsSync(extPath)) {
-        try {
-          rmSync(extPath, { recursive: true, force: true });
-        } catch {
-          // Ignore cleanup errors
-        }
-      }
-      if (tempDir && existsSync(tempDir)) {
-        try {
-          rmSync(tempDir, { recursive: true, force: true });
-        } catch {
-          // Ignore cleanup errors
-        }
-      }
+      cleanupTempDirs(tempDirs);
     }
   }
 
