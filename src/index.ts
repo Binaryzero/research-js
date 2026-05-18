@@ -21,7 +21,7 @@ import { StaticAnalyzer, extractVsix } from './analyzer/static.js';
 import { LlmClient, ConsensusOrchestrator, parseVerdictFromSummary } from './analyzer/llm.js';
 import { createProvider } from './providers/index.js';
 import { ReportGenerator } from './analyzer/report.js';
-import { calculateSuspicionScore, getRiskLabel, getRiskColor } from './analyzer/scoring.js';
+import { calculateSuspicionScore, getRiskLabel, getRiskColor, type ScoreBreakdown } from './analyzer/scoring.js';
 import { downloadExtension, parseMarketplaceUrl, isMarketplaceUrl } from './services/download.js';
 import { searchExtensions } from './services/marketplace.js';
 import { loadHistory, updateHistory, saveHistory } from './history.js';
@@ -1059,33 +1059,49 @@ ${indent(prompts.triage_batch?.user || '')}
   return { fastify, config };
 }
 
+// Serializes concurrent saveScanToHistory calls within this process so
+// interleaved read-modify-write cycles can't clobber each other (PR #5).
+let historyWriteChain: Promise<unknown> = Promise.resolve();
+
 /**
  * Persist one scan's summary into the JSON history file.
  *
- * This is the sole writer of the history file — extracted so the race
- * condition that previously caused PR #5 bug (concurrent runners losing
- * each other's writes) can be fixed in one place.
+ * Sole writer of the history file. Concurrent callers are serialized via
+ * a module-level promise chain so no entry is lost when scans finish
+ * near-simultaneously.
  */
 async function saveScanToHistory(
   historyPath: string,
   extensionId: string,
   entry: Record<string, unknown>
 ): Promise<void> {
-  // TODO(human): Implement race-safe read-modify-write of the history JSON.
-  //
-  // Three runners (runScan, runBatchScan, runBatchLlmAnalysis) all called
-  // this read-modify-write inline. When two scans completed near-simultaneously
-  // (e.g. user starts a single scan while a batch is running), both could
-  // read the same snapshot and the second writer would clobber the first's
-  // entry. Centralizing the writes here lets you fix it once.
-  //
-  // Required behavior:
-  //   - Ensure dirname(historyPath) exists (mkdirSync recursive).
-  //   - Read existing {scans, last_updated} JSON (treat missing/corrupt as {}).
-  //   - Set scans[extensionId.toLowerCase()] = entry.
-  //   - Write {scans, last_updated: new Date().toISOString()} back, pretty-printed.
-  //   - Serialize concurrent callers so no write is lost.
-  throw new Error('saveScanToHistory not yet implemented');
+  const next = historyWriteChain.then(() => {
+    const historyDir = dirname(historyPath);
+    if (!existsSync(historyDir)) {
+      mkdirSync(historyDir, { recursive: true });
+    }
+
+    let scans: Record<string, unknown> = {};
+    if (existsSync(historyPath)) {
+      try {
+        scans = JSON.parse(readFileSync(historyPath, 'utf-8')).scans || {};
+      } catch {
+        scans = {};
+      }
+    }
+
+    scans[extensionId.toLowerCase()] = entry;
+    writeFileSync(
+      historyPath,
+      JSON.stringify({ scans, last_updated: new Date().toISOString() }, null, 2)
+    );
+  });
+
+  // Swallow rejections on the shared chain so one failed write doesn't
+  // poison every subsequent caller; individual callers still see their
+  // own error via the returned promise.
+  historyWriteChain = next.catch(() => {});
+  return next;
 }
 
 interface ExtensionScanOptions {
@@ -1110,7 +1126,7 @@ interface ExtensionScanOptions {
 interface ExtensionScanOutcome {
   result: AnalysisResult;
   score: number;
-  breakdown: Record<string, unknown>;
+  breakdown: ScoreBreakdown;
   reportPath: string;
   reportName: string;
   markdown: string;
@@ -1178,7 +1194,7 @@ async function runExtensionScan(
       ...options.config.llm,
       provider: appConfig.main.provider,
       model: options.modelName,
-      baseUrl: options.ollamaUrl,
+      baseUrl: options.ollamaUrl ?? options.config.llm.baseUrl,
     }, profiledPrompts);
 
     const judgeClients = appConfig.judges
