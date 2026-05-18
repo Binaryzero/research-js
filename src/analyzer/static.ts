@@ -4,8 +4,9 @@
  */
 
 import { readdirSync, readFileSync, statSync, existsSync, openSync, readSync, closeSync, rmSync } from 'fs';
-import { join, extname, basename, relative, dirname } from 'path';
+import { join, extname, basename, relative, dirname, resolve, isAbsolute, sep } from 'path';
 import { fileURLToPath } from 'url';
+import { tmpdir } from 'os';
 import { createHash, randomBytes } from 'crypto';
 import AdmZip from 'adm-zip';
 import type {
@@ -1043,13 +1044,25 @@ export class StaticAnalyzer {
  * Extract VSIX file to a temporary directory
  */
 export function extractVsix(vsixPath: string, outputDir?: string): string {
-  const targetDir = outputDir || `/tmp/vsix_${randomBytes(8).toString('hex')}`;
+  const isTemp = !outputDir;
+  const targetDir = outputDir || join(tmpdir(), `vsix_${randomBytes(8).toString('hex')}`);
 
   try {
     const zip = new AdmZip(vsixPath);
+
+    for (const entry of zip.getEntries()) {
+      const fullPath = resolve(targetDir, entry.entryName);
+      const rel = relative(targetDir, fullPath);
+      if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
+        throw new Error(`Zip Slip detected in VSIX entry: ${entry.entryName}`);
+      }
+    }
+
     zip.extractAllTo(targetDir, true);
   } catch (err) {
-    rmSync(targetDir, { recursive: true, force: true });
+    if (isTemp) {
+      rmSync(targetDir, { recursive: true, force: true });
+    }
     throw err;
   }
 
