@@ -4,7 +4,7 @@
  */
 
 import { readdirSync, readFileSync, statSync, existsSync, openSync, readSync, closeSync, rmSync } from 'fs';
-import { join, extname, basename, relative, dirname, resolve, isAbsolute, sep } from 'path';
+import { join, extname, basename, relative, dirname, resolve, sep } from 'path';
 import { fileURLToPath } from 'url';
 import { tmpdir } from 'os';
 import { createHash, randomBytes } from 'crypto';
@@ -274,7 +274,7 @@ function categorizeFile(filePath: string, ext: string): string {
   if (assetExtensions.includes(ext)) return 'asset';
   
   const baseName = basename(filePath).toLowerCase();
-  if (agentFiles.some(f => baseName.includes(f.replace('.', '')))) return 'agent_config';
+  if (agentFiles.some(f => baseName === f || (f.startsWith('.') && baseName === f.slice(1)))) return 'agent_config';
   
   if (isBinaryFile(filePath)) return 'binary';
   
@@ -505,10 +505,21 @@ export class StaticAnalyzer {
    */
   private runPatternMatching(files: string[]): Finding[] {
     const findings: Finding[] = [];
-    const jsFiles = files.filter(f => ['.js', '.mjs', '.ts', '.tsx'].includes(extname(f)));
+    // Skip dependency lockfiles: they're noisy, huge, and dependency metadata
+    // shouldn't drive findings about extension behavior.
+    const LOCKFILES = new Set([
+      'package-lock.json',
+      'npm-shrinkwrap.json',
+      'pnpm-lock.yaml',
+      'yarn.lock',
+    ]);
+    const scannableFiles = files.filter(f => {
+      if (LOCKFILES.has(basename(f).toLowerCase())) return false;
+      return ['.js', '.mjs', '.ts', '.tsx', '.json', '.yaml', '.yml'].includes(extname(f).toLowerCase());
+    });
     const CHUNK_SIZE = 512 * 1024; // 512KB chunks
 
-    for (const filePath of jsFiles) {
+    for (const filePath of scannableFiles) {
       try {
         const relativePath = relative(this.extensionPath, filePath);
         const stats = statSync(filePath);
@@ -1046,19 +1057,22 @@ export class StaticAnalyzer {
 export function extractVsix(vsixPath: string, outputDir?: string): string {
   const isTemp = !outputDir;
   const targetDir = outputDir || join(tmpdir(), `vsix_${randomBytes(8).toString('hex')}`);
+  const safeRoot = resolve(targetDir) + sep;
 
   try {
     const zip = new AdmZip(vsixPath);
+    const entries = zip.getEntries();
 
-    for (const entry of zip.getEntries()) {
-      const fullPath = resolve(targetDir, entry.entryName);
-      const rel = relative(targetDir, fullPath);
-      if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
-        throw new Error(`Zip Slip detected in VSIX entry: ${entry.entryName}`);
+    for (const entry of entries) {
+      const destPath = resolve(targetDir, entry.entryName);
+      const isSafe = destPath === resolve(targetDir) || destPath.startsWith(safeRoot);
+
+      if (!isSafe) {
+        throw new Error(`Refusing to extract VSIX: entry "${entry.entryName}" escapes target directory (zip-slip)`);
       }
-    }
 
-    zip.extractAllTo(targetDir, true);
+      zip.extractEntryTo(entry, targetDir, true, true);
+    }
   } catch (err) {
     if (isTemp) {
       rmSync(targetDir, { recursive: true, force: true });

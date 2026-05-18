@@ -24,6 +24,7 @@ import { ReportGenerator } from './analyzer/report.js';
 import { calculateSuspicionScore, getRiskLabel, getRiskColor } from './analyzer/scoring.js';
 import { downloadExtension, parseMarketplaceUrl, isMarketplaceUrl } from './services/download.js';
 import { searchExtensions } from './services/marketplace.js';
+import { loadHistory, updateHistory, saveHistory } from './history.js';
 import type { AnalysisResult, ScanTask } from './types/index.js';
 import type { PromptConfig } from './config.js';
 
@@ -460,27 +461,6 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
   // API: Scan History
   // ---------------------------------------------------------------
   const historyPath = config.historyFile;
-  
-  function loadHistory(): Record<string, unknown> {
-    if (existsSync(historyPath)) {
-      try {
-        const content = readFileSync(historyPath, 'utf-8');
-        const data = JSON.parse(content);
-        return data.scans || {};
-      } catch {
-        return {};
-      }
-    }
-    return {};
-  }
-  
-  function saveHistory(scans: Record<string, unknown>): void {
-    const dir = dirname(historyPath);
-    if (!existsSync(dir)) {
-      mkdirSync(dir, { recursive: true });
-    }
-    writeFileSync(historyPath, JSON.stringify({ scans, last_updated: new Date().toISOString() }, null, 2));
-  }
 
   /**
    * Look up a scan by extension ID with case-insensitive matching.
@@ -515,7 +495,7 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
       offset?: number;
     };
     
-    let scans = loadHistory();
+    let scans = loadHistory(historyPath);
     const entries = Object.entries(scans);
     
     // Filter by search term
@@ -575,22 +555,23 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
   });
   
   fastify.delete('/api/history', async () => {
-    saveHistory({});
+    await saveHistory(historyPath, {});
     return { cleared: true };
   });
-  
+
   fastify.delete('/api/history/:extension_id', async (request, reply) => {
     const { extension_id } = request.params as { extension_id: string };
-    const scans = loadHistory();
 
-    // Case-insensitive lookup
-    const found = findScanByExtensionId(scans, extension_id);
-    if (!found) {
+    const deleted = await updateHistory(historyPath, scans => {
+      const target = findScanByExtensionId(scans, extension_id);
+      if (!target) return false;
+      delete scans[target.key];
+      return true;
+    });
+
+    if (!deleted) {
       return reply.status(404).send({ error: 'Scan not found' });
     }
-
-    delete scans[found.key];
-    saveHistory(scans);
     return { deleted: extension_id };
   });
   
@@ -677,7 +658,7 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
       });
       
       // Augment with scan history (case-insensitive lookup)
-      const scans = loadHistory();
+      const scans = loadHistory(historyPath);
       for (const ext of results) {
         const found = findScanByExtensionId(scans, ext.extensionId);
         if (found) {
@@ -1254,39 +1235,21 @@ async function runScan(
     const reportPath = join(options.reportsDir, `${safeName}.md`);
     writeFileSync(reportPath, markdown);
     
-    // Save to history
-    const historyPath = options.config.historyFile;
-    const historyDir = dirname(historyPath);
-    if (!existsSync(historyDir)) {
-      mkdirSync(historyDir, { recursive: true });
-    }
-    
-    let historyData: Record<string, unknown> = {};
-    if (existsSync(historyPath)) {
-      try {
-        const historyContent = readFileSync(historyPath, 'utf-8');
-        const parsed = JSON.parse(historyContent);
-        historyData = parsed.scans || {};
-      } catch {
-        historyData = {};
-      }
-    }
-    
-    historyData[result.extensionId.toLowerCase()] = {
-      extension_name: result.extensionName,
-      version: result.version,
-      scan_date: new Date().toISOString(),
-      suspicion_score: score,
-      llm_adjusted_score: !!orchestrator ? score : null,
-      llm_analyzed: !!orchestrator,
-      findings_count: result.findings.length,
-      true_positives: result.findings.filter(f => !f.isFalsePositive).length,
-      report_path: reportPath,
-      breakdown,
-      verdict: result.verdict || null,
-    };
-
-    writeFileSync(historyPath, JSON.stringify({ scans: historyData, last_updated: new Date().toISOString() }, null, 2));
+    await updateHistory(options.config.historyFile, historyData => {
+      historyData[result.extensionId.toLowerCase()] = {
+        extension_name: result.extensionName,
+        version: result.version,
+        scan_date: new Date().toISOString(),
+        suspicion_score: score,
+        llm_adjusted_score: !!orchestrator ? score : null,
+        llm_analyzed: !!orchestrator,
+        findings_count: result.findings.length,
+        true_positives: result.findings.filter(f => !f.isFalsePositive).length,
+        report_path: reportPath,
+        breakdown,
+        verdict: result.verdict || null,
+      };
+    });
 
     task.emitProgress(1, `Complete - score ${score} (${getRiskLabel(score)})`);
 
@@ -1481,38 +1444,21 @@ async function runBatchLlmAnalysis(
       const reportPath = join(options.reportsDir, `${safeName}.md`);
       writeFileSync(reportPath, markdown);
       
-      // Save to history
-      const historyDir = dirname(historyPath);
-      if (!existsSync(historyDir)) {
-        mkdirSync(historyDir, { recursive: true });
-      }
-      
-      let historyData: Record<string, unknown> = {};
-      if (existsSync(historyPath)) {
-        try {
-          const historyContent = readFileSync(historyPath, 'utf-8');
-          const parsed = JSON.parse(historyContent);
-          historyData = parsed.scans || {};
-        } catch {
-          historyData = {};
-        }
-      }
-      
-      historyData[result.extensionId.toLowerCase()] = {
-        extension_name: result.extensionName,
-        version: result.version,
-        scan_date: new Date().toISOString(),
-        suspicion_score: score,
-        llm_adjusted_score: !!batchOrchestrator ? score : null,
-        llm_analyzed: !!batchOrchestrator,
-        findings_count: result.findings.length,
-        true_positives: result.findings.filter(f => !f.isFalsePositive).length,
-        report_path: reportPath,
-        breakdown,
-        verdict: result.verdict || null,
-      };
-      
-      writeFileSync(historyPath, JSON.stringify({ scans: historyData, last_updated: new Date().toISOString() }, null, 2));
+      await updateHistory(historyPath, historyData => {
+        historyData[result.extensionId.toLowerCase()] = {
+          extension_name: result.extensionName,
+          version: result.version,
+          scan_date: new Date().toISOString(),
+          suspicion_score: score,
+          llm_adjusted_score: !!batchOrchestrator ? score : null,
+          llm_analyzed: !!batchOrchestrator,
+          findings_count: result.findings.length,
+          true_positives: result.findings.filter(f => !f.isFalsePositive).length,
+          report_path: reportPath,
+          breakdown,
+          verdict: result.verdict || null,
+        };
+      });
       
       scannedCount++;
       task.emitProgress(i / total, `[${i + 1}/${total}] ${extensionId}: score ${score} (${getRiskLabel(score)})`);
@@ -1624,37 +1570,20 @@ async function runBatchScan(
       const reportPath = join(options.reportsDir, `${safeName}.md`);
       writeFileSync(reportPath, markdown);
       
-      // Save to history
-      const historyDir = dirname(historyPath);
-      if (!existsSync(historyDir)) {
-        mkdirSync(historyDir, { recursive: true });
-      }
-      
-      let historyData: Record<string, unknown> = {};
-      if (existsSync(historyPath)) {
-        try {
-          const historyContent = readFileSync(historyPath, 'utf-8');
-          const parsed = JSON.parse(historyContent);
-          historyData = parsed.scans || {};
-        } catch {
-          historyData = {};
-        }
-      }
-      
-      historyData[result.extensionId.toLowerCase()] = {
-        extension_name: result.extensionName,
-        version: result.version,
-        scan_date: new Date().toISOString(),
-        suspicion_score: score,
-        llm_adjusted_score: null,
-        llm_analyzed: false,
-        findings_count: result.findings.length,
-        true_positives: result.findings.filter(f => !f.isFalsePositive).length,
-        report_path: reportPath,
-        breakdown,
-      };
-      
-      writeFileSync(historyPath, JSON.stringify({ scans: historyData, last_updated: new Date().toISOString() }, null, 2));
+      await updateHistory(historyPath, historyData => {
+        historyData[result.extensionId.toLowerCase()] = {
+          extension_name: result.extensionName,
+          version: result.version,
+          scan_date: new Date().toISOString(),
+          suspicion_score: score,
+          llm_adjusted_score: null,
+          llm_analyzed: false,
+          findings_count: result.findings.length,
+          true_positives: result.findings.filter(f => !f.isFalsePositive).length,
+          report_path: reportPath,
+          breakdown,
+        };
+      });
       
       scannedCount++;
       task.emitProgress(i / total, `[${i + 1}/${total}] ${extensionId}: score ${score} (${getRiskLabel(score)})`);

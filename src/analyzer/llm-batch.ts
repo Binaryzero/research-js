@@ -76,8 +76,8 @@ export function groupFindingsByPatternAndFile(findings: Finding[]): PatternGroup
   // Sort by risk (critical first), then by number of affected files
   const riskOrder = { critical: 0, high: 1, medium: 2, low: 3, none: 4 };
   return Array.from(patterns.values()).sort((a, b) => {
-    const riskDiff = (riskOrder[a.risk as keyof typeof riskOrder] || 5) -
-                     (riskOrder[b.risk as keyof typeof riskOrder] || 5);
+    const riskDiff = (riskOrder[a.risk as keyof typeof riskOrder] ?? 5) -
+                     (riskOrder[b.risk as keyof typeof riskOrder] ?? 5);
     if (riskDiff !== 0) return riskDiff;
     return b.fileGroups.length - a.fileGroups.length;
   });
