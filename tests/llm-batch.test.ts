@@ -396,6 +396,17 @@ describe('parseStrategicAssessments', () => {
     const result = parseStrategicAssessments(response, samples);
     expect(result.size).toBe(0);
   });
+
+  it('accepts null false_positive_reason (prompt contract)', () => {
+    const samples = makeSamples(1);
+    const response = JSON.stringify([
+      { risk_level: 'high', is_false_positive: false, false_positive_reason: null, explanation: 'Bad', recommendation: 'investigate' },
+    ]);
+
+    const result = parseStrategicAssessments(response, samples);
+    expect(result.size).toBe(1);
+    expect(result.get(0)!.falsePositiveReason).toBe('');
+  });
 });
 
 // ─── estimateStrategicLlmCalls ──────────────────────────────────
