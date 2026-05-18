@@ -919,25 +919,12 @@ If there are too many findings to assess completely, prioritize assessing the fi
 
         // Parse the items
         for (const item of parsed) {
-          // TODO(human): replace this block with IndexedLlmAssessmentSchema.safeParse(item).
-          // On success, extract `index` from the result and:
-          //   - if index is in batch.indices, store the (index-less) assessment in results[index]
-          //     and add index to `assessed`
-          // On failure, skip the item (no entry).
-          // See llm-batch.ts:365 for the non-indexed pattern.
-          if (typeof item !== 'object' || item === null) continue;
-          const obj = item as Record<string, unknown>;
-          const idx = obj.index as number;
-          if (idx !== undefined && batch.indices.includes(idx)) {
-            results[idx] = {
-              riskLevel: (obj.riskLevel || obj.risk_level || 'unknown') as LlmAssessment['riskLevel'],
-              isFalsePositive: (obj.isFalsePositive ?? obj.is_false_positive ?? false) as boolean,
-              falsePositiveReason: (obj.falsePositiveReason || obj.false_positive_reason || '') as string,
-              explanation: (obj.explanation || '') as string,
-              recommendation: (obj.recommendation || 'investigate') as LlmAssessment['recommendation'],
-              injectionDetected: (obj.injectionDetected ?? obj.injection_detected ?? false) as boolean,
-            };
-            assessed.add(idx);
+          const result = IndexedLlmAssessmentSchema.safeParse(item);
+          if (!result.success) continue;
+          const { index, ...assessment } = result.data;
+          if (batch.indices.includes(index)) {
+            results[index] = assessment;
+            assessed.add(index);
           }
         }
 
