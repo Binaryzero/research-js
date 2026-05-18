@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, existsSync, readFileSync } from 'fs';
+import { mkdtempSync, rmSync, existsSync, readFileSync, readdirSync } from 'fs';
 import { tmpdir } from 'os';
-import { join } from 'path';
+import { basename, join } from 'path';
 import { loadHistory, updateHistory, saveHistory } from '../src/history.js';
 
 describe('history serialization', () => {
@@ -57,12 +57,40 @@ describe('history serialization', () => {
     expect(result.second).toEqual({ ok: true });
   });
 
-  it('writes are atomic: no .tmp file remains after success', async () => {
-    await updateHistory(path, scans => {
-      scans['x'] = { v: 1 };
-    });
-    expect(existsSync(`${path}.tmp`)).toBe(false);
+  it('writes are atomic: no temp file remains after success', async () => {
+    await Promise.all([
+      updateHistory(path, scans => { scans['x'] = { v: 1 }; }),
+      updateHistory(path, scans => { scans['y'] = { v: 2 }; }),
+      updateHistory(path, scans => { scans['z'] = { v: 3 }; }),
+    ]);
     expect(existsSync(path)).toBe(true);
+    const base = basename(path);
+    const stragglers = readdirSync(dir).filter(
+      f => f !== base && f.startsWith(`${base}.`) && f.endsWith('.tmp'),
+    );
+    expect(stragglers).toEqual([]);
+  });
+
+  it('updateHistory forwards the mutator return value', async () => {
+    await updateHistory(path, scans => { scans['present'] = { v: 1 }; });
+
+    const hit = await updateHistory(path, scans => {
+      if ('present' in scans) {
+        delete scans['present'];
+        return true;
+      }
+      return false;
+    });
+    expect(hit).toBe(true);
+
+    const miss = await updateHistory(path, scans => {
+      if ('present' in scans) {
+        delete scans['present'];
+        return true;
+      }
+      return false;
+    });
+    expect(miss).toBe(false);
   });
 
   it('saveHistory overwrites the file and serializes with updates', async () => {

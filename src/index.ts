@@ -561,20 +561,17 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
 
   fastify.delete('/api/history/:extension_id', async (request, reply) => {
     const { extension_id } = request.params as { extension_id: string };
-    const scans = loadHistory(historyPath);
 
-    // Case-insensitive lookup
-    const found = findScanByExtensionId(scans, extension_id);
-    if (!found) {
+    const deleted = await updateHistory(historyPath, scans => {
+      const target = findScanByExtensionId(scans, extension_id);
+      if (!target) return false;
+      delete scans[target.key];
+      return true;
+    });
+
+    if (!deleted) {
       return reply.status(404).send({ error: 'Scan not found' });
     }
-
-    await updateHistory(historyPath, current => {
-      const target = findScanByExtensionId(current, extension_id);
-      if (target) {
-        delete current[target.key];
-      }
-    });
     return { deleted: extension_id };
   });
   

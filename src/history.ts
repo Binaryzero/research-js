@@ -4,11 +4,17 @@
  * All write operations across the process go through a per-path async queue
  * so concurrent scans cannot lose each other's updates via interleaved
  * read-modify-write. Writes are atomic (write-to-tmp then rename).
+ *
+ * Per-write temp filenames carry a random suffix so that multiple Node
+ * processes sharing the same history file cannot race on a fixed `.tmp`
+ * path (one process's rename winning would otherwise cause the other's
+ * rename to fail with ENOENT and surface as a spurious scan failure).
  */
 
-import { existsSync, mkdirSync, readFileSync } from 'fs';
-import { writeFile, rename } from 'fs/promises';
+import { existsSync, readFileSync } from 'fs';
+import { writeFile, rename, mkdir } from 'fs/promises';
 import { dirname } from 'path';
+import { randomUUID } from 'crypto';
 
 export type HistoryScans = Record<string, unknown>;
 
@@ -24,11 +30,8 @@ export function loadHistory(path: string): HistoryScans {
 }
 
 async function writeHistoryAtomic(path: string, scans: HistoryScans): Promise<void> {
-  const dir = dirname(path);
-  if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true });
-  }
-  const tmp = `${path}.tmp`;
+  await mkdir(dirname(path), { recursive: true });
+  const tmp = `${path}.${randomUUID()}.tmp`;
   const payload = JSON.stringify({ scans, last_updated: new Date().toISOString() }, null, 2);
   await writeFile(tmp, payload, 'utf-8');
   await rename(tmp, path);
@@ -58,17 +61,20 @@ function enqueue<T>(path: string, op: () => Promise<T>): Promise<T> {
 }
 
 /**
- * Apply a synchronous mutator to the scans map, then atomically persist.
- * The full read → mutate → write is serialized per path.
+ * Apply a mutator to the scans map, then atomically persist. The full
+ * read → mutate → write is serialized per path. The mutator's return value
+ * is forwarded to the caller, so callers can observe (e.g. "was this key
+ * present?") inside the same atomic block they used to modify.
  */
-export function updateHistory(
+export function updateHistory<T>(
   path: string,
-  mutator: (scans: HistoryScans) => void,
-): Promise<void> {
+  mutator: (scans: HistoryScans) => T,
+): Promise<T> {
   return enqueue(path, async () => {
     const scans = loadHistory(path);
-    mutator(scans);
+    const result = mutator(scans);
     await writeHistoryAtomic(path, scans);
+    return result;
   });
 }
 
