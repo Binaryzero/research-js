@@ -3,10 +3,11 @@
  * Port of Python analyzer.py static analysis logic
  */
 
-import { readdirSync, readFileSync, statSync, existsSync, openSync, readSync, closeSync } from 'fs';
+import { readdirSync, readFileSync, statSync, existsSync, openSync, readSync, closeSync, rmSync } from 'fs';
 import { join, extname, basename, relative, dirname, resolve, sep } from 'path';
 import { fileURLToPath } from 'url';
-import { createHash } from 'crypto';
+import { tmpdir } from 'os';
+import { createHash, randomBytes } from 'crypto';
 import AdmZip from 'adm-zip';
 import type {
   AnalysisResult,
@@ -1054,24 +1055,31 @@ export class StaticAnalyzer {
  * Extract VSIX file to a temporary directory
  */
 export function extractVsix(vsixPath: string, outputDir?: string): string {
-  const targetDir = outputDir || `/tmp/vsix_${Date.now()}`;
+  const isTemp = !outputDir;
+  const targetDir = outputDir || join(tmpdir(), `vsix_${randomBytes(8).toString('hex')}`);
   const safeRoot = resolve(targetDir) + sep;
 
-  const zip = new AdmZip(vsixPath);
-  const entries = zip.getEntries();
+  try {
+    const zip = new AdmZip(vsixPath);
+    const entries = zip.getEntries();
 
-  for (const entry of entries) {
-    const destPath = resolve(targetDir, entry.entryName);
-    const isSafe = destPath === resolve(targetDir) || destPath.startsWith(safeRoot);
+    for (const entry of entries) {
+      const destPath = resolve(targetDir, entry.entryName);
+      const isSafe = destPath === resolve(targetDir) || destPath.startsWith(safeRoot);
 
-    if (!isSafe) {
-      throw new Error(`Refusing to extract VSIX: entry "${entry.entryName}" escapes target directory (zip-slip)`);
+      if (!isSafe) {
+        throw new Error(`Refusing to extract VSIX: entry "${entry.entryName}" escapes target directory (zip-slip)`);
+      }
+
+      zip.extractEntryTo(entry, targetDir, true, true);
     }
-
-    zip.extractEntryTo(entry, targetDir, true, true);
+  } catch (err) {
+    if (isTemp) {
+      rmSync(targetDir, { recursive: true, force: true });
+    }
+    throw err;
   }
 
-  // VSIX structure: extension is in 'extension/' subfolder
   const extensionDir = join(targetDir, 'extension');
   return existsSync(extensionDir) ? extensionDir : targetDir;
 }
