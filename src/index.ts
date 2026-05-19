@@ -8,10 +8,12 @@ import viewPlugin from '@fastify/view';
 import multipartPlugin from '@fastify/multipart';
 import corsPlugin from '@fastify/cors';
 import { join, dirname, basename } from 'path';
+import { tmpdir } from 'os';
 import { fileURLToPath } from 'url';
 import { EventEmitter } from 'events';
 import { randomUUID } from 'crypto';
 import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync, readFileSync, rmSync } from 'fs';
+import { readFile, writeFile } from 'fs/promises';
 import { marked } from 'marked';
 import nunjucks from 'nunjucks';
 
@@ -1075,7 +1077,7 @@ async function saveScanToHistory(
   extensionId: string,
   entry: Record<string, unknown>
 ): Promise<void> {
-  const next = historyWriteChain.then(() => {
+  const next = historyWriteChain.then(async () => {
     const historyDir = dirname(historyPath);
     if (!existsSync(historyDir)) {
       mkdirSync(historyDir, { recursive: true });
@@ -1084,14 +1086,14 @@ async function saveScanToHistory(
     let scans: Record<string, unknown> = {};
     if (existsSync(historyPath)) {
       try {
-        scans = JSON.parse(readFileSync(historyPath, 'utf-8')).scans || {};
+        scans = JSON.parse(await readFile(historyPath, 'utf-8')).scans || {};
       } catch {
         scans = {};
       }
     }
 
     scans[extensionId.toLowerCase()] = entry;
-    writeFileSync(
+    await writeFile(
       historyPath,
       JSON.stringify({ scans, last_updated: new Date().toISOString() }, null, 2)
     );
@@ -1148,7 +1150,7 @@ async function runExtensionScan(
 
   if (inputSource.startsWith('http://') || inputSource.startsWith('https://')) {
     options.onProgress(0.02, 'Downloading extension...');
-    const tempDir = `/tmp/vsix_download_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const tempDir = join(tmpdir(), `vsix_download_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`);
     mkdirSync(tempDir, { recursive: true });
     options.tempDirs.push(tempDir);
 
@@ -1281,7 +1283,7 @@ async function runExtensionScan(
   const safeName = result.extensionId.replace(/[<>:"/\\|?*]/g, '_');
   const reportName = `${safeName}.md`;
   const reportPath = join(options.reportsDir, reportName);
-  writeFileSync(reportPath, markdown);
+  await writeFile(reportPath, markdown);
 
   await saveScanToHistory(options.historyPath, result.extensionId, {
     extension_name: result.extensionName,
@@ -1431,7 +1433,7 @@ async function runBatchLlmAnalysis(
         prompts: options.prompts,
         forceExtensionId: extensionId,
         staticVerbose: options.verbose,
-        onProgress: (_p, m) => task.emitProgress(i / total, `[${i + 1}/${total}] ${m}`),
+        onProgress: (p, m) => task.emitProgress(i / total + p / total, `[${i + 1}/${total}] ${m}`),
         isCancelled: () => task.cancelled,
         tempDirs,
       });
@@ -1502,7 +1504,7 @@ async function runBatchScan(
         prompts: options.prompts,
         forceExtensionId: extensionId,
         staticVerbose: true,
-        onProgress: (_p, m) => task.emitProgress(i / total, `[${i + 1}/${total}] ${m}`),
+        onProgress: (p, m) => task.emitProgress(i / total + p / total, `[${i + 1}/${total}] ${m}`),
         isCancelled: () => task.cancelled,
         tempDirs,
       });
