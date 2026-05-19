@@ -5,6 +5,7 @@
 
 import type { Finding, LlmAssessment } from '../types/index.js';
 import type { PromptConfig } from '../config.js';
+import { LlmAssessmentSchema } from './schemas.js';
 
 export interface FileGroup {
   filePath: string;
@@ -363,18 +364,10 @@ export function parseStrategicAssessments(
     }
 
     for (let i = 0; i < parsed.length && i < samples.length; i++) {
-      const item = parsed[i];
-      if (typeof item !== 'object' || item === null) continue;
-      const obj = item as Record<string, unknown>;
-      const sample = samples[i];
-
-      assessments.set(sample.originalIndex, {
-        riskLevel: (obj.riskLevel || obj.risk_level || 'unknown') as LlmAssessment['riskLevel'],
-        isFalsePositive: (obj.isFalsePositive ?? obj.is_false_positive ?? false) as boolean,
-        falsePositiveReason: (obj.falsePositiveReason || obj.false_positive_reason || '') as string,
-        explanation: (obj.explanation || '') as string,
-        recommendation: (obj.recommendation || 'investigate') as LlmAssessment['recommendation'],
-      });
+      const result = LlmAssessmentSchema.safeParse(parsed[i]);
+      if (result.success) {
+        assessments.set(samples[i].originalIndex, result.data);
+      }
     }
   } catch (error) {
     console.warn(`[LLM] Error parsing strategic assessments: ${error instanceof Error ? error.message : 'Unknown error'}`);
