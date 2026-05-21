@@ -93,6 +93,20 @@ export async function downloadExtension(
   let downloadUrl = url;
   let filename: string;
 
+  // Validate download host against an allowlist before making any outbound request
+  const ALLOWED_DOWNLOAD_HOSTS = /^([a-z0-9-]+\.gallery\.vsassets\.io|marketplace\.visualstudio\.com)$/i;
+  try {
+    const parsed = new URL(url);
+    if (!ALLOWED_DOWNLOAD_HOSTS.test(parsed.hostname)) {
+      throw new Error(`Download host not allowed: ${parsed.hostname}`);
+    }
+  } catch (err) {
+    if (err instanceof TypeError) {
+      throw new Error(`Invalid URL: ${url}`);
+    }
+    throw err;
+  }
+
   // Handle marketplace URLs
   if (isMarketplaceUrl(url)) {
     const parsed = parseMarketplaceUrl(url);

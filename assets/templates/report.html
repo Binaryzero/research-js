@@ -101,7 +101,7 @@
 
 {% block scripts %}
 <script>
-const reportName = "{{ report_name }}";
+const reportName = {{ report_name | dump }};
 
 function initReportPage() {
     // Set up back button based on referrer
@@ -171,12 +171,21 @@ function showReport(name, markdown, html) {
     document.getElementById('report-area').style.display = '';
     document.getElementById('report-title').textContent = name;
 
-    // html is server-rendered via marked() from trusted markdown reports
     const container = document.getElementById('report-content');
     while (container.firstChild) container.removeChild(container.firstChild);
-    const wrapper = document.createElement('div');
-    wrapper.innerHTML = html || '';
-    while (wrapper.firstChild) container.appendChild(wrapper.firstChild);
+    // Sanitize server-rendered HTML before insertion to prevent XSS from
+    // malicious evidence strings embedded in scanned extension code.
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html || '', 'text/html');
+    doc.querySelectorAll('script, style, iframe, object, embed, form, base').forEach(el => el.remove());
+    doc.querySelectorAll('*').forEach(el => {
+        [...el.attributes].forEach(attr => {
+            if (attr.name.startsWith('on') || (attr.name === 'href' && /^\s*javascript:/i.test(attr.value)) || (attr.name === 'src' && /^\s*javascript:/i.test(attr.value))) {
+                el.removeAttribute(attr.name);
+            }
+        });
+    });
+    while (doc.body.firstChild) container.appendChild(doc.body.firstChild);
 
     // Populate marketplace and download links from extension ID
     const extId = extractExtensionId(name);
