@@ -180,7 +180,7 @@ function showReport(name, markdown, html) {
     doc.querySelectorAll('script, style, iframe, object, embed, form, base').forEach(el => el.remove());
     doc.querySelectorAll('*').forEach(el => {
         [...el.attributes].forEach(attr => {
-            if (attr.name.startsWith('on') || (attr.name === 'href' && /^\s*javascript:/i.test(attr.value)) || (attr.name === 'src' && /^\s*javascript:/i.test(attr.value))) {
+            if (attr.name.startsWith('on') || (attr.name === 'href' && /^\s*(javascript|data):/i.test(attr.value)) || (attr.name === 'src' && /^\s*(javascript|data):/i.test(attr.value))) {
                 el.removeAttribute(attr.name);
             }
         });

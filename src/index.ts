@@ -122,7 +122,7 @@ function validateLlmBaseUrl(url: string): boolean {
     if (!['http:', 'https:'].includes(parsed.protocol)) return false;
     const host = parsed.hostname;
     if (/^169\.254\./.test(host)) return false; // link-local / AWS metadata
-    if (/^10\.|^172\.(1[6-9]|2\d|3[01])\.|^192\.168\./.test(host)) return false; // RFC-1918
+    if (/^10\.|^172\.(1[6-9]|2\d|3[01])\.|^192\.168\./.test(host)) return false; // RFC-1918 — loopback (127.x, localhost) intentionally allowed for local Ollama
     return true;
   } catch {
     return false;
