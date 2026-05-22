@@ -93,6 +93,10 @@ export async function downloadExtension(
   let downloadUrl = url;
   let filename: string;
 
+  // Only marketplace.visualstudio.com and *.gallery.vsassets.io are trusted
+  // download hosts. This allowlist prevents SSRF when callers pass arbitrary URLs.
+  const ALLOWED_DOWNLOAD_HOSTS = /^([a-z0-9-]+\.gallery\.vsassets\.io|marketplace\.visualstudio\.com)$/i;
+
   // Handle marketplace URLs
   if (isMarketplaceUrl(url)) {
     const parsed = parseMarketplaceUrl(url);
@@ -102,9 +106,18 @@ export async function downloadExtension(
     downloadUrl = await getMarketplaceDownloadUrl(parsed.publisher, parsed.extension);
     filename = `${parsed.publisher}.${parsed.extension}.vsix`;
   } else if (isDirectVsixUrl(url)) {
-    // Extract filename from URL
-    const urlPath = new URL(url).pathname;
-    filename = basename(urlPath);
+    // Allowlist applies to direct VSIX URLs — marketplace paths are already
+    // constrained by isMarketplaceUrl above and produce a deterministic download URL.
+    let parsedUrl: URL;
+    try {
+      parsedUrl = new URL(url);
+    } catch {
+      throw new Error(`Invalid URL: ${url}`);
+    }
+    if (!ALLOWED_DOWNLOAD_HOSTS.test(parsedUrl.hostname)) {
+      throw new Error(`Direct VSIX download from '${parsedUrl.hostname}' is not allowed — use a marketplace URL instead`);
+    }
+    filename = basename(parsedUrl.pathname);
     if (!filename.endsWith('.vsix')) {
       filename = 'extension.vsix';
     }

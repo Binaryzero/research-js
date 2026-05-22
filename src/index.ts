@@ -112,6 +112,23 @@ function cleanupOldScans() {
   }
 }
 
+/**
+ * Validate that a URL is safe to use as an LLM base URL.
+ * Rejects non-HTTP/S schemes and cloud metadata / private IP ranges.
+ */
+function validateLlmBaseUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    if (!['http:', 'https:'].includes(parsed.protocol)) return false;
+    const host = parsed.hostname;
+    if (/^169\.254\./.test(host)) return false; // link-local / AWS metadata
+    if (/^10\.|^172\.(1[6-9]|2\d|3[01])\.|^192\.168\./.test(host)) return false; // RFC-1918 — loopback (127.x, localhost) intentionally allowed for local Ollama
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function createServer(configOverride?: Partial<Awaited<ReturnType<typeof getConfig>>>) {
   const defaultConfig = await getConfig();
   const config = { ...defaultConfig, ...configOverride };
@@ -150,8 +167,19 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
     }
   });
   
-  await fastify.register(multipartPlugin);
-  await fastify.register(corsPlugin);
+  await fastify.register(multipartPlugin, {
+    limits: {
+      fileSize: 50 * 1024 * 1024, // 50 MB — typical VSIX ceiling
+      files: 1,
+      fields: 10,
+    },
+  });
+
+  const port = config.port || 8001;
+  await fastify.register(corsPlugin, {
+    origin: [`http://localhost:${port}`, `http://127.0.0.1:${port}`],
+    methods: ['GET', 'POST', 'DELETE'],
+  });
   
   // Add urlencoded body parser for form submissions
   fastify.addContentTypeParser('application/x-www-form-urlencoded', { parseAs: 'string' }, (_req, body, done) => {
@@ -239,7 +267,8 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
           // Save uploaded VSIX to a temp directory
           const tempDir = `/tmp/vsix_upload_${Date.now()}`;
           mkdirSync(tempDir, { recursive: true });
-          const filePath = join(tempDir, part.filename);
+          const safeFilename = basename(part.filename).replace(/[^a-zA-Z0-9._-]/g, '_') || 'upload.vsix';
+          const filePath = join(tempDir, safeFilename);
           const chunks: Buffer[] = [];
           for await (const chunk of part.file) {
             chunks.push(chunk);
@@ -583,7 +612,9 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
   fastify.get('/api/models', async (request, _reply) => {
     const query = request.query as { ollama_url?: string; provider?: string };
     const appCfg = getAppConfig();
-    const baseUrl = query.ollama_url || config.llm.baseUrl;
+    // Ignore client-supplied ollama_url — use only the server-side configured value
+    // to prevent SSRF via the query parameter.
+    const baseUrl = config.llm.baseUrl;
     const provider = query.provider || appCfg.main.provider || 'ollama';
 
     // Try the provider-appropriate endpoint first, then fall back
@@ -752,6 +783,17 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
       return reply.status(400).send({ error: 'main model config required' });
     }
 
+    if (body.main.baseUrl && !validateLlmBaseUrl(body.main.baseUrl)) {
+      return reply.status(400).send({ error: 'Invalid or disallowed main.baseUrl' });
+    }
+    if (Array.isArray(body.judges)) {
+      for (const judge of body.judges) {
+        if (judge.baseUrl && !validateLlmBaseUrl(judge.baseUrl)) {
+          return reply.status(400).send({ error: `Invalid or disallowed baseUrl for judge: ${judge.baseUrl}` });
+        }
+      }
+    }
+
     const current = getAppConfig();
     const updated: AppConfig = {
       version: body.version || current.version,
@@ -781,6 +823,7 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
   fastify.post('/api/test-connection', async (request) => {
     const { baseUrl, model, provider } = request.body as { baseUrl?: string; model?: string; provider?: string };
     if (!baseUrl) return { ok: false, error: 'baseUrl required' };
+    if (!validateLlmBaseUrl(baseUrl)) return { ok: false, error: 'Invalid or disallowed base URL' };
 
     try {
       // Test based on provider type
@@ -1164,6 +1207,9 @@ async function runExtensionScan(
       throw new Error(`Failed to download extension: ${err instanceof Error ? err.message : err}`);
     }
   } else if (inputSource.endsWith('.vsix')) {
+    if (!inputSource.startsWith('/tmp/vsix_upload_') && !inputSource.startsWith('/tmp/vsix_download_')) {
+      throw new Error('Only marketplace URLs, direct VSIX URLs, or uploaded files are supported');
+    }
     options.onProgress(0.05, 'Extracting VSIX...');
     extensionPath = extractVsix(inputSource);
     options.tempDirs.push(extensionPath);
