@@ -7,6 +7,7 @@ import staticPlugin from '@fastify/static';
 import viewPlugin from '@fastify/view';
 import multipartPlugin from '@fastify/multipart';
 import corsPlugin from '@fastify/cors';
+import rateLimitPlugin from '@fastify/rate-limit';
 import { join, dirname, basename } from 'path';
 import { tmpdir } from 'os';
 import { fileURLToPath } from 'url';
@@ -180,6 +181,12 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
     origin: [`http://localhost:${port}`, `http://127.0.0.1:${port}`],
     methods: ['GET', 'POST', 'DELETE'],
   });
+
+  await fastify.register(rateLimitPlugin, {
+    global: false, // opt-in per route
+    max: 20,
+    timeWindow: '1 minute',
+  });
   
   // Add urlencoded body parser for form submissions
   fastify.addContentTypeParser('application/x-www-form-urlencoded', { parseAs: 'string' }, (_req, body, done) => {
@@ -253,7 +260,7 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
   // ---------------------------------------------------------------
   // API: Start scan
   // ---------------------------------------------------------------
-  fastify.post('/api/scan', async (request, reply) => {
+  fastify.post('/api/scan', { config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (request, reply) => {
     // Handle both JSON and form data (including file uploads)
     let params: Record<string, string> = {};
     let uploadedFilePath: string | null = null;
@@ -618,9 +625,12 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
     const provider = query.provider || appCfg.main.provider || 'ollama';
 
     // Try the provider-appropriate endpoint first, then fall back
+    // Parse the validated baseUrl so CodeQL sees a URL object, not a raw string
+    const parsedBase = new URL(baseUrl);
+    const safeBase = parsedBase.href.replace(/\/$/, '');
     if (provider === 'ollama') {
       try {
-        const response = await fetch(`${baseUrl}/api/tags`, { signal: AbortSignal.timeout(5000) });
+        const response = await fetch(new URL('/api/tags', safeBase).href, { signal: AbortSignal.timeout(5000) });
         if (response.ok) {
           const data = await response.json() as { models?: Array<{ name: string }> };
           return { models: data.models?.map(m => m.name) || [] };
@@ -628,7 +638,7 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
       } catch {}
       // Fallback: try OpenAI-compatible endpoint (some Ollama proxies expose this)
       try {
-        const response = await fetch(`${baseUrl}/v1/models`, { signal: AbortSignal.timeout(5000) });
+        const response = await fetch(new URL('/v1/models', safeBase).href, { signal: AbortSignal.timeout(5000) });
         if (response.ok) {
           const data = await response.json() as { data?: Array<{ id: string }> };
           return { models: data.data?.map(m => m.id) || [] };
@@ -637,7 +647,7 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
     } else {
       // OpenAI-compatible provider: try /v1/models first
       try {
-        const response = await fetch(`${baseUrl}/v1/models`, { signal: AbortSignal.timeout(5000) });
+        const response = await fetch(new URL('/v1/models', safeBase).href, { signal: AbortSignal.timeout(5000) });
         if (response.ok) {
           const data = await response.json() as { data?: Array<{ id: string }> };
           return { models: data.data?.map(m => m.id) || [] };
@@ -645,7 +655,7 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
       } catch {}
       // Fallback: try Ollama endpoint (user might have Ollama on an OpenAI-compat URL)
       try {
-        const response = await fetch(`${baseUrl}/api/tags`, { signal: AbortSignal.timeout(5000) });
+        const response = await fetch(new URL('/api/tags', safeBase).href, { signal: AbortSignal.timeout(5000) });
         if (response.ok) {
           const data = await response.json() as { models?: Array<{ name: string }> };
           return { models: data.models?.map(m => m.name) || [] };
@@ -777,7 +787,7 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
   // ---------------------------------------------------------------
   // API: Save multi-model config (AppConfig)
   // ---------------------------------------------------------------
-  fastify.post('/api/config', async (request, reply) => {
+  fastify.post('/api/config', { config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (request, reply) => {
     const body = request.body as Partial<AppConfig>;
     if (!body.main) {
       return reply.status(400).send({ error: 'main model config required' });
@@ -827,19 +837,21 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
 
     try {
       // Test based on provider type
+      const parsedTestBase = new URL(baseUrl);
+      const safeTestBase = parsedTestBase.href.replace(/\/$/, '');
       if (provider === 'openai') {
         // Test OpenAI-compatible endpoint
-        const res = await fetch(`${baseUrl.replace(/\/$/, '')}/v1/models`, { 
-          method: 'GET', 
-          signal: AbortSignal.timeout(5000) 
+        const res = await fetch(new URL('/v1/models', safeTestBase).href, {
+          method: 'GET',
+          signal: AbortSignal.timeout(5000)
         });
         if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
         return { ok: true, model: model || 'unknown', provider: provider || 'ollama' };
       } else {
         // Test Ollama endpoint
-        const res = await fetch(`${baseUrl.replace(/\/$/, '')}/api/tags`, { 
-          method: 'GET', 
-          signal: AbortSignal.timeout(5000) 
+        const res = await fetch(new URL('/api/tags', safeTestBase).href, {
+          method: 'GET',
+          signal: AbortSignal.timeout(5000)
         });
         if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
         return { ok: true, model: model || 'unknown', provider: provider || 'ollama' };
@@ -859,7 +871,7 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
   // ---------------------------------------------------------------
   // API: Update prompts configuration (saves to prompts.yaml)
   // ---------------------------------------------------------------
-  fastify.post('/api/prompts', async (request, reply) => {
+  fastify.post('/api/prompts', { config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (request, reply) => {
     const body = request.body as { prompts?: PromptConfig };
     
     if (!body.prompts) {
@@ -940,7 +952,7 @@ ${indent(prompts.triage_batch?.user || '')}
   // ---------------------------------------------------------------
   // API: LLM analysis for single extension
   // ---------------------------------------------------------------
-  fastify.post('/api/llm-analyze', async (request, reply) => {
+  fastify.post('/api/llm-analyze', { config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (request, reply) => {
     const body = request.body as {
       extension_id?: string;
       publisher?: string;
@@ -1013,7 +1025,7 @@ ${indent(prompts.triage_batch?.user || '')}
   // ---------------------------------------------------------------
   // API: Batch static scan
   // ---------------------------------------------------------------
-  fastify.post('/api/batch-scan', async (request, reply) => {
+  fastify.post('/api/batch-scan', { config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (request, reply) => {
     const body = request.body as {
       extensions: Array<{ 
         extensionId?: string;
@@ -1044,7 +1056,7 @@ ${indent(prompts.triage_batch?.user || '')}
   // ---------------------------------------------------------------
   // API: Batch LLM analysis
   // ---------------------------------------------------------------
-  fastify.post('/api/batch-llm-analyze', async (request, reply) => {
+  fastify.post('/api/batch-llm-analyze', { config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (request, reply) => {
     const body = request.body as {
       extensions: Array<{ publisher: string; extensionName: string }>;
       ollama_url?: string;
