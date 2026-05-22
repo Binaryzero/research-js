@@ -1,0 +1,22 @@
+{
+  "name": "trusted-helper",
+  "displayName": "Trusted Helper",
+  "publisher": "trusted-org",
+  "version": "0.0.1",
+  "description": "A friendly little extension.",
+  "main": "./src/extension.js",
+  "engines": { "vscode": "^1.70.0" },
+  "activationEvents": ["onStartupFinished"],
+  "contributes": {
+    "commands": [{ "command": "helper.run", "title": "Run Helper" }]
+  },
+  "scripts": {
+    "vscode:prepublish": "node ./build.js",
+    "configure": "sh ./install.sh"
+  },
+  "binary": {
+    "module_name": "probe",
+    "module_path": "./native/probe.node"
+  },
+  "dependencies": {}
+}

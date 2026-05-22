@@ -327,6 +327,12 @@ export class StaticAnalyzer {
     // Run pattern matching
     const findings = this.runPatternMatching(files);
 
+    // Synthesize virtual findings for non-JS/TS file classes the regex layer
+    // never opens. Without this step, manifest install hooks, shell scripts,
+    // native modules, and webview assets are invisible to the LLM stage even
+    // though they routinely carry malicious payloads.
+    findings.push(...this.synthesizeNonJsFindings(files, packageJson));
+
     // Enrich findings: override probableOrigin when location falls in a bundle region
     for (const f of findings) {
       const [relPath, lineStr] = f.location.split(':');
@@ -540,6 +546,192 @@ export class StaticAnalyzer {
     }
 
     return findings;
+  }
+
+  /**
+   * Synthesize findings for files the regex walker never opens. Each entry
+   * is shaped like a regular Finding so it flows through the existing
+   * triage_batch / consensus / report pipeline unchanged.
+   *
+   * Covered surface:
+   *   - package.json scripts / activationEvents / contributes
+   *   - .sh / .bash / .zsh / .ps1 / .bat / .cmd scripts
+   *   - .node / .wasm native modules
+   *   - webview-shaped assets: .html / .htm / .svg
+   */
+  private synthesizeNonJsFindings(
+    files: string[],
+    packageJson: ReturnType<StaticAnalyzer['parsePackageJson']>,
+  ): Finding[] {
+    const out: Finding[] = [];
+
+    const SCRIPT_EXTS = new Set(['.sh', '.bash', '.zsh', '.ps1', '.bat', '.cmd']);
+    const NATIVE_EXTS = new Set(['.node', '.wasm']);
+    const WEBVIEW_EXTS = new Set(['.html', '.htm', '.svg']);
+    const MAX_EVIDENCE = 4000;
+
+    // 1. package.json scripts/activationEvents/contributes — the manifest
+    //    keys most often abused for delivery. The .json file is already
+    //    regex-scanned for the `postinstall` token, but the actual *behavior*
+    //    of each hook (shell calls, file refs, URLs) only surfaces here.
+    const pkgPath = files.find(f => basename(f) === 'package.json' && dirname(f) === this.extensionPath);
+    if (pkgPath) {
+      const relPkg = 'package.json';
+      const scripts = (packageJson as { scripts?: Record<string, string> }).scripts || {};
+      for (const [name, body] of Object.entries(scripts)) {
+        if (typeof body !== 'string' || !body.trim()) continue;
+        const looksShelly = /[;&|`$<>]|^\s*(sh|bash|zsh|cmd|powershell|node|curl|wget|python|ruby|perl)\b/i.test(body);
+        const refsBundledScript = /\.(sh|bash|zsh|ps1|bat|cmd)\b/i.test(body);
+        const refsRemoteUrl = /https?:\/\/|\bcurl\b|\bwget\b/i.test(body);
+        if (!looksShelly && !refsBundledScript && !refsRemoteUrl) continue;
+        const risk = refsRemoteUrl || refsBundledScript ? 'high' : 'medium';
+        out.push({
+          category: 'supply_chain',
+          title: `Manifest Script Hook (${name})`,
+          location: `${relPkg}:scripts.${name}`,
+          observation: `package.json declares the "${name}" script. Lifecycle hooks (postinstall/preinstall/install) and shell-invoking scripts can deliver arbitrary code at install or build time.`,
+          evidence: body.slice(0, MAX_EVIDENCE),
+          lineStart: 0,
+          lineEnd: 0,
+          context: '',
+          isFalsePositive: false,
+          falsePositiveReason: '',
+          riskLevel: risk,
+          patternName: 'manifest_script_hook',
+          fileType: 'json',
+          isMinified: false,
+          probableOrigin: 'extension_code',
+          matchHighlight: body.slice(0, 200),
+          neighboringImports: 'None found',
+        });
+      }
+
+      // Note: we used to synthesize a finding for `onStartupFinished` /
+      // `*` activation events here. That fired on most benign extensions
+      // and produced one low-signal finding per report; activationEvents
+      // are already surfaced to the executive_summary prompt via the
+      // {activationEvents} template variable, so the LLM has the context
+      // without us paying a per-report noise tax.
+    }
+
+    // 2. Shell scripts — read the content (truncated) so the LLM can read it
+    //    end-to-end. These never get walked today because their extensions
+    //    are not in the regex layer's allowlist.
+    for (const filePath of files) {
+      const ext = extname(filePath).toLowerCase();
+      if (!SCRIPT_EXTS.has(ext)) continue;
+      try {
+        const rel = relative(this.extensionPath, filePath);
+        const content = readFileSync(filePath, 'utf-8').slice(0, MAX_EVIDENCE);
+        const refsRemoteUrl = /https?:\/\/|\bcurl\b|\bwget\b/i.test(content);
+        const refsCredentials = /authorized_keys|\.ssh\/|gpg|keytar|netrc/i.test(content);
+        const risk = refsRemoteUrl || refsCredentials ? 'high' : 'medium';
+        out.push({
+          category: 'code_execution',
+          title: `Bundled Shell Script (${ext.slice(1)})`,
+          location: `${rel}:1`,
+          observation: `Extension bundles a ${ext} script. Shell scripts are not examined by the regex layer; any commands inside execute with the user's privileges if the script is invoked at install, activation, or by extension code.`,
+          evidence: content,
+          lineStart: 1,
+          lineEnd: 1,
+          context: '',
+          isFalsePositive: false,
+          falsePositiveReason: '',
+          riskLevel: risk,
+          patternName: 'bundled_shell_script',
+          fileType: ext.slice(1),
+          isMinified: false,
+          probableOrigin: 'extension_code',
+          matchHighlight: content.split('\n').find(l => l.trim() && !l.trim().startsWith('#'))?.slice(0, 200) || content.slice(0, 200),
+          neighboringImports: 'None found',
+        });
+      } catch {
+        // unreadable — skip
+      }
+    }
+
+    // 3. Native modules and WASM — binary, can't be content-scanned, but
+    //    their presence is itself security-relevant. We surface metadata
+    //    (path, size, hash, magic bytes) so the LLM can flag for review.
+    for (const filePath of files) {
+      const ext = extname(filePath).toLowerCase();
+      if (!NATIVE_EXTS.has(ext)) continue;
+      try {
+        const rel = relative(this.extensionPath, filePath);
+        const stats = statSync(filePath);
+        const hash = getFileHash(filePath);
+        const detected = detectFileType(filePath);
+        const evidence =
+          `path: ${rel}\n` +
+          `size: ${stats.size} bytes\n` +
+          `sha256: ${hash}\n` +
+          `detected: ${detected.description} (${detected.type})`;
+        out.push({
+          category: 'supply_chain',
+          title: ext === '.wasm' ? 'WebAssembly Module' : 'Native Module (.node)',
+          location: `${rel}:1`,
+          observation: `Extension bundles a binary ${ext.slice(1)} module. Native code is not examined by static analysis; arbitrary syscalls and process behavior live here.`,
+          evidence,
+          lineStart: 1,
+          lineEnd: 1,
+          context: '',
+          isFalsePositive: false,
+          falsePositiveReason: '',
+          riskLevel: 'medium',
+          patternName: ext === '.wasm' ? 'wasm_module_present' : 'native_module_present',
+          fileType: ext.slice(1),
+          isMinified: false,
+          probableOrigin: 'extension_code',
+          matchHighlight: `${rel} (${stats.size} bytes, sha256:${hash.slice(0, 12)}…)`,
+          neighboringImports: 'None found',
+        });
+      } catch {
+        // unreadable — skip
+      }
+    }
+
+    // 4. Webview-shaped assets — HTML/SVG with inline scripts, event
+    //    handlers, or external script tags. These run in extension webviews
+    //    with elevated privileges when enableScripts is true.
+    const INLINE_RISK = /<script\b|on[a-z]+\s*=|javascript:|<iframe\b|srcdoc\s*=/i;
+    for (const filePath of files) {
+      const ext = extname(filePath).toLowerCase();
+      if (!WEBVIEW_EXTS.has(ext)) continue;
+      try {
+        const rel = relative(this.extensionPath, filePath);
+        const stats = statSync(filePath);
+        if (stats.size === 0) continue;
+        const content = readFileSync(filePath, 'utf-8').slice(0, MAX_EVIDENCE);
+        if (!INLINE_RISK.test(content)) {
+          // Static HTML with no scripts is low-risk; skip to keep noise down.
+          continue;
+        }
+        const match = content.match(INLINE_RISK);
+        out.push({
+          category: 'code_execution',
+          title: `Webview Asset (${ext.slice(1)})`,
+          location: `${rel}:1`,
+          observation: `Webview asset contains inline scripts, event handlers, or iframes. When loaded with enableScripts=true these execute with the webview's privileges; sourced over HTTP they are also XSS vectors.`,
+          evidence: content,
+          lineStart: 1,
+          lineEnd: 1,
+          context: '',
+          isFalsePositive: false,
+          falsePositiveReason: '',
+          riskLevel: 'medium',
+          patternName: 'webview_inline_script',
+          fileType: ext.slice(1),
+          isMinified: false,
+          probableOrigin: 'extension_code',
+          matchHighlight: match?.[0] || '<script>',
+          neighboringImports: 'None found',
+        });
+      } catch {
+        // unreadable — skip
+      }
+    }
+
+    return out;
   }
 
   /**

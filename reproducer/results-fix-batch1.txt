@@ -1,0 +1,24 @@
+[info] measuring 3 extension(s)
+[Patterns] Loaded /Users/william/.kandev/tasks/scanner-cannot-detec_v7b/research-js/docs/patterns.yaml (version: 1.5.1)
+[info] ritwickdey.liveserver-5.7.10 — 16 files, 11 in LLM input
+[Patterns] Loaded /Users/william/.kandev/tasks/scanner-cannot-detec_v7b/research-js/docs/patterns.yaml (version: 1.5.1)
+[info] cisco-ai.cisco-ai-security-scanner-1.0.6 — 22 files, 15 in LLM input
+[Patterns] Loaded /Users/william/.kandev/tasks/scanner-cannot-detec_v7b/research-js/docs/patterns.yaml (version: 1.5.1)
+[info] github.vscode-github-actions-0.31.5 — 82 files, 62 in LLM input
+
+# VSIX coverage measurement — 3 extension(s)
+
+| file class      | total |  in LLM input | coverage |
+|-----------------|------:|--------------:|---------:|
+| js_ts           |    17 |            16 |  94.1% |
+| manifest        |     7 |             7 | 100.0% |
+| shell_script    |     5 |             5 | 100.0% |
+| native_module   |     0 |             0 |    -    |
+| wasm            |     0 |             0 |    -    |
+| webview         |    59 |            59 | 100.0% |
+| config          |     4 |             1 |  25.0% |
+| doc             |    15 |             0 |   0.0% |
+| asset           |     5 |             0 |   0.0% |
+| lockfile        |     1 |             0 |   0.0% |
+| other           |     7 |             0 |   0.0% |
+| **total**       |   120 |            88 |  73.3% |
