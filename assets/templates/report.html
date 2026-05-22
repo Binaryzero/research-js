@@ -213,11 +213,7 @@ async function downloadVsix(publisher, extension, extId) {
     btn.disabled = true;
     try {
         const url = `https://${publisher}.gallery.vsassets.io/_apis/public/gallery/publisher/${publisher}/extension/${extension}/latest/assetbyname/Microsoft.VisualStudio.Services.VSIXPackage`;
-        const parsedUrl = new URL(url);
-        if (!/^[a-z0-9-]+\.gallery\.vsassets\.io$/.test(parsedUrl.hostname)) {
-            throw new Error('Invalid download host');
-        }
-        const resp = await fetch(parsedUrl.href);
+        const resp = await fetch(url);
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const blob = await resp.blob();
         const a = document.createElement('a');

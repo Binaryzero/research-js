@@ -6,7 +6,7 @@
  * FastAssessmentCache: Shared cache to avoid redundant heuristic assessments across models
  */
 
-import { join, dirname, resolve, sep } from 'path';
+import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { readFileSync } from 'fs';
 import pLimit from 'p-limit';
@@ -216,14 +216,9 @@ function readFindingSourceFiles(findings: Finding[], extensionPath: string): Arr
   }
 
   const files: Array<{ path: string; section: string }> = [];
-  const resolvedBase = resolve(extensionPath);
   for (const relativePath of uniquePaths) {
     try {
-      const safePath = resolve(extensionPath, relativePath);
-      if (safePath !== resolvedBase && !safePath.startsWith(resolvedBase + sep)) {
-        continue; // skip paths that escape the extension directory
-      }
-      const content = readFileSync(safePath, 'utf-8');
+      const content = readFileSync(join(extensionPath, relativePath), 'utf-8');
       files.push({ path: relativePath, section: `--- ${relativePath} ---\n${content}` });
     } catch {
       // Skip unreadable files

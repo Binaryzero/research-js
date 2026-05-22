@@ -5,20 +5,6 @@
 
 import { readdirSync, readFileSync, statSync, existsSync, openSync, readSync, closeSync, rmSync } from 'fs';
 import { join, extname, basename, relative, dirname, resolve, sep } from 'path';
-
-/**
- * Resolve a path under a trusted base directory and throw if it escapes (path-traversal guard).
- * All paths derived from untrusted input (ZIP entries, external directory listings) must go
- * through this helper before being passed to any fs function.
- */
-function safeResolve(base: string, ...parts: string[]): string {
-  const resolvedBase = resolve(base);
-  const resolved = resolve(base, ...parts);
-  if (resolved !== resolvedBase && !resolved.startsWith(resolvedBase + sep)) {
-    throw new Error(`Path traversal detected: ${resolved}`);
-  }
-  return resolved;
-}
 import { fileURLToPath } from 'url';
 import { tmpdir } from 'os';
 import { createHash, randomBytes } from 'crypto';
@@ -54,9 +40,8 @@ const MAGIC_SIGNATURES: Record<string, { signature: Buffer; mime: string; descri
 /**
  * Detect file type using magic bytes
  */
-function detectFileType(filePath: string, base?: string): { type: string; description: string; confidence: string } {
-  const safePath = base ? safeResolve(base, relative(base, filePath)) : resolve(filePath);
-  const buffer = readFileSync(safePath);
+function detectFileType(filePath: string): { type: string; description: string; confidence: string } {
+  const buffer = readFileSync(filePath);
   const header = buffer.subarray(0, 64);
   
   for (const { signature, mime, description } of Object.values(MAGIC_SIGNATURES)) {
@@ -101,9 +86,8 @@ function detectFileType(filePath: string, base?: string): { type: string; descri
 /**
  * Check if file is binary - uses limited read to avoid loading large files
  */
-function isBinaryFile(filePath: string, base?: string): boolean {
-  const safePath = base ? safeResolve(base, relative(base, filePath)) : resolve(filePath);
-  const stats = statSync(safePath);
+function isBinaryFile(filePath: string): boolean {
+  const stats = statSync(filePath);
   const MAX_CHECK_SIZE = 8000;
 
   // Large files are likely binary (images, WASM, etc.)
@@ -113,7 +97,7 @@ function isBinaryFile(filePath: string, base?: string): boolean {
 
   // Small files: read only what we need
   const buffer = Buffer.alloc(MAX_CHECK_SIZE);
-  const fd = openSync(safePath, 'r');
+  const fd = openSync(filePath, 'r');
   const bytesRead = readSync(fd, buffer, 0, MAX_CHECK_SIZE, 0);
   closeSync(fd);
 
@@ -127,9 +111,8 @@ function isBinaryFile(filePath: string, base?: string): boolean {
 /**
  * Get file SHA256 hash
  */
-function getFileHash(filePath: string, base?: string): string {
-  const safePath = base ? safeResolve(base, relative(base, filePath)) : resolve(filePath);
-  const stats = statSync(safePath);
+function getFileHash(filePath: string): string {
+  const stats = statSync(filePath);
   const MAX_HASH_SIZE = 10 * 1024 * 1024; // 10MB
 
   // Skip hashing very large files to avoid memory issues
@@ -138,7 +121,7 @@ function getFileHash(filePath: string, base?: string): string {
   }
 
   // Small files: read fully (existing behavior)
-  const buffer = readFileSync(safePath);
+  const buffer = readFileSync(filePath);
   return createHash('sha256').update(buffer).digest('hex');
 }
 
@@ -172,21 +155,20 @@ function isNetworkCall(line: string): boolean {
 /**
  * Extract URLs from a file - uses chunked reading for large files
  */
-function extractUrlsFromFile(filePath: string, relativePath: string, base?: string): EndpointInfo[] {
-  const safePath = base ? safeResolve(base, relativePath) : resolve(filePath);
-  const stats = statSync(safePath);
+function extractUrlsFromFile(filePath: string, relativePath: string): EndpointInfo[] {
+  const stats = statSync(filePath);
   const CHUNK_SIZE = 512 * 1024; // 512KB
 
   try {
     // Small files: read fully
     if (stats.size <= CHUNK_SIZE) {
-      const content = readFileSync(safePath, 'utf-8');
+      const content = readFileSync(filePath, 'utf-8');
       return extractUrls(content, relativePath);
     }
 
     // Large files: read in chunks
     const endpoints: EndpointInfo[] = [];
-    const fd = openSync(safePath, 'r');
+    const fd = openSync(filePath, 'r');
     let lineNumber = 0;
     let leftover = '';
 
@@ -492,10 +474,9 @@ export class StaticAnalyzer {
    */
   private analyzeFile(filePath: string): FileInfo {
     const ext = extname(filePath).toLowerCase();
-    const safePath = safeResolve(this.extensionPath, relative(this.extensionPath, filePath));
-    const stats = statSync(safePath);
-    const category = categorizeFile(safePath, ext);
-    const detected = detectFileType(safePath, this.extensionPath);
+    const stats = statSync(filePath);
+    const category = categorizeFile(filePath, ext);
+    const detected = detectFileType(filePath);
     
     // Check for mismatch
     let mismatch = false;
@@ -541,17 +522,16 @@ export class StaticAnalyzer {
     for (const filePath of scannableFiles) {
       try {
         const relativePath = relative(this.extensionPath, filePath);
-        const safePath = safeResolve(this.extensionPath, relativePath);
-        const stats = statSync(safePath);
+        const stats = statSync(filePath);
 
         // For small files, use the original full-read approach
         if (stats.size <= CHUNK_SIZE) {
-          const content = readFileSync(safePath, 'utf-8');
+          const content = readFileSync(filePath, 'utf-8');
           const fileFindings = this.matchPatternsInContent(content, relativePath);
           findings.push(...fileFindings);
         } else {
           // For large files, read in chunks
-          const fileFindings = this.matchPatternsInChunks(safePath, relativePath);
+          const fileFindings = this.matchPatternsInChunks(filePath, relativePath);
           findings.push(...fileFindings);
         }
       } catch {
@@ -628,15 +608,14 @@ export class StaticAnalyzer {
 
     for (const filePath of jsFiles) {
       try {
+        const stats = statSync(filePath);
         const relativePath = relative(this.extensionPath, filePath);
-        const safePath = safeResolve(this.extensionPath, relativePath);
-        const stats = statSync(safePath);
         const wasTruncated = stats.size > 1024 * 1024;
 
         // Only scan the first 1MB for dependency markers (they appear early in bundles)
         const content = stats.size <= CHUNK_SIZE
-          ? readFileSync(safePath, 'utf-8')
-          : readFileSync(safePath, { encoding: 'utf-8', flag: 'r' }).slice(0, 1024 * 1024);
+          ? readFileSync(filePath, 'utf-8')
+          : readFileSync(filePath, { encoding: 'utf-8', flag: 'r' }).slice(0, 1024 * 1024);
 
         const lines = content.split('\n');
         let currentDep: string | null = null;
@@ -889,10 +868,10 @@ export class StaticAnalyzer {
   /**
    * Match patterns in large files using chunked reading
    */
-  private matchPatternsInChunks(safePath: string, relativePath: string): Finding[] {
+  private matchPatternsInChunks(filePath: string, relativePath: string): Finding[] {
     const findings: Finding[] = [];
     const CHUNK_SIZE = 512 * 1024;
-    const fd = openSync(safePath, 'r');
+    const fd = openSync(filePath, 'r');
     let lineNumber = 0;
     let leftover = '';
 
@@ -991,7 +970,7 @@ export class StaticAnalyzer {
     for (const filePath of jsFiles) {
       try {
         const relativePath = relative(this.extensionPath, filePath);
-        const fileEndpoints = extractUrlsFromFile(filePath, relativePath, this.extensionPath);
+        const fileEndpoints = extractUrlsFromFile(filePath, relativePath);
         endpoints.push(...fileEndpoints);
       } catch {
         // Ignore file read errors
@@ -1011,12 +990,10 @@ export class StaticAnalyzer {
    * Generate binary info with hash
    */
   private generateBinaryInfo(filePath: string): BinaryInfo {
-    const relativePath = relative(this.extensionPath, filePath);
-    const safePath = safeResolve(this.extensionPath, relativePath);
-    const stats = statSync(safePath);
+    const stats = statSync(filePath);
     return {
-      path: relativePath,
-      sha256: getFileHash(safePath, this.extensionPath),
+      path: relative(this.extensionPath, filePath),
+      sha256: getFileHash(filePath),
       size: stats.size,
       architecture: 'unknown',
     };

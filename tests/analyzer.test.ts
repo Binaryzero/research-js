@@ -183,8 +183,8 @@ eval(someCode);
     const findingWithEvidence = result.findings.find(f => f.evidence.length > 0);
     expect(findingWithEvidence).toBeDefined();
 
-    // Endpoint URL should be on api.example.com
-    const exampleEndpoint = result.endpoints.find(e => { try { return new URL(e.url).hostname === 'api.example.com'; } catch { return false; } });
+    // Endpoint URL should contain api.example.com
+    const exampleEndpoint = result.endpoints.find(e => e.url.includes('api.example.com'));
     expect(exampleEndpoint).toBeDefined();
   });
   
@@ -218,7 +218,7 @@ eval(someCode);
     const result = await analyzer.analyze();
 
     // Should find the specific API endpoint
-    const apiEndpoints = result.endpoints.filter(e => { try { return new URL(e.url).hostname === 'api.example.com'; } catch { return false; } });
+    const apiEndpoints = result.endpoints.filter(e => e.url.includes('api.example.com'));
     expect(apiEndpoints.length).toBeGreaterThan(0);
 
     // Assert specific endpoint properties

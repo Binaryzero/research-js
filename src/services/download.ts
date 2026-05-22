@@ -51,11 +51,7 @@ export function parseMarketplaceUrl(url: string): { publisher: string; extension
  * Check if URL is a marketplace URL
  */
 export function isMarketplaceUrl(url: string): boolean {
-  try {
-    return new URL(url).hostname === 'marketplace.visualstudio.com';
-  } catch {
-    return false;
-  }
+  return url.includes('marketplace.visualstudio.com');
 }
 
 /**
@@ -121,8 +117,6 @@ export async function downloadExtension(
     if (!ALLOWED_DOWNLOAD_HOSTS.test(parsedUrl.hostname)) {
       throw new Error(`Direct VSIX download from '${parsedUrl.hostname}' is not allowed — use a marketplace URL instead`);
     }
-    // Reconstruct from parsed URL so the fetch target is a URL object, not a raw string
-    downloadUrl = parsedUrl.href;
     filename = basename(parsedUrl.pathname);
     if (!filename.endsWith('.vsix')) {
       filename = 'extension.vsix';
@@ -135,8 +129,7 @@ export async function downloadExtension(
 
   // Download using native fetch
   try {
-    const safeDownloadUrl = new URL(downloadUrl).href;
-    const response = await fetch(safeDownloadUrl, {
+    const response = await fetch(downloadUrl, {
       method: 'GET',
       headers: {
         'user-agent': 'extension-security-analyzer/1.0',

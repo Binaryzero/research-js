@@ -227,11 +227,11 @@ async function loadHistory() {
             if (reportName) {
                 actionsHtml += '<a href="/report/' + encodeURIComponent(reportName) + '" class="btn btn-outline btn-sm">View</a> ';
             }
-            // Static rescan button — use data-eid to avoid inline event handler sanitization issues
-            actionsHtml += '<button data-eid="' + encodeURIComponent(eid) + '" data-action="rescan" class="btn btn-outline btn-sm" title="Re-scan extension">Rescan</button> ';
+            // Static rescan button
+            actionsHtml += '<button onclick="rescanExtension(\'' + eid.replace(/'/g, "\\'") + '\')" class="btn btn-outline btn-sm" title="Re-scan extension">Rescan</button> ';
             // LLM scan button
             if (!info.llm_analyzed) {
-                actionsHtml += '<button data-eid="' + encodeURIComponent(eid) + '" data-action="rescan-llm" class="btn btn-secondary btn-sm">LLM Scan</button>';
+                actionsHtml += '<button onclick="rescanWithLlm(\'' + eid.replace(/'/g, "\\'") + '\')" class="btn btn-secondary btn-sm">LLM Scan</button>';
             }
             actionsHtml += '</td>';
 
@@ -570,16 +570,6 @@ document.addEventListener('DOMContentLoaded', () => {
         if (document.visibilityState === 'visible') {
             loadHistory();
         }
-    });
-
-    // Delegate rescan/rescan-llm button clicks via data attributes (avoids inline onclick)
-    document.addEventListener('click', (e) => {
-        const btn = e.target.closest('[data-action]');
-        if (!btn) return;
-        const eid = decodeURIComponent(btn.dataset.eid || '');
-        if (!eid) return;
-        if (btn.dataset.action === 'rescan') rescanExtension(eid);
-        else if (btn.dataset.action === 'rescan-llm') rescanWithLlm(eid);
     });
 
     // Search input
