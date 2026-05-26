@@ -1499,7 +1499,40 @@ async function runBatchLlmAnalysis(
   }
 
   task.emitProgress(1, `Batch LLM analysis complete: ${scannedCount}/${total} extensions analyzed`);
-  task.complete({ extensionId: 'batch', extensionName: 'Batch Analysis', version: '', findings: [], endpoints: [], scanDate: new Date().toISOString(), totalScanned: scannedCount } as any);
+  task.complete({
+    extensionId: "batch",
+    extensionName: "Batch Analysis",
+    version: "",
+    analysisDate: new Date().toISOString(),
+    publisher: "",
+    description: "",
+    repository: "",
+    homepage: "",
+    installCount: "0",
+    categories: [],
+    activationEvents: [],
+    jsFiles: [],
+    binaryFiles: [],
+    configFiles: [],
+    assetFiles: [],
+    agentConfigFiles: [],
+    fileStats: {},
+    fileTypes: [],
+    totalSize: 0,
+    permissions: {},
+    dependencies: {},
+    notableDependencies: {},
+    telemetryConfig: {},
+    vsixManifest: {},
+    endpoints: [],
+    bundledDependencies: [],
+    findings: [],
+    patternsSearched: {},
+    binaryHashes: [],
+    executiveSummary: "",
+    verdict: null,
+    totalScanned: scannedCount
+  });
 }
 
 /**
@@ -1571,7 +1604,40 @@ async function runBatchScan(
   }
 
   task.emitProgress(1, `Batch static scan complete: ${scannedCount}/${total} extensions scanned`);
-  task.complete({ extensionId: 'batch', extensionName: 'Batch Analysis', version: '', findings: [], endpoints: [], scanDate: new Date().toISOString(), totalScanned: scannedCount } as any);
+  task.complete({
+    extensionId: "batch",
+    extensionName: "Batch Analysis",
+    version: "",
+    analysisDate: new Date().toISOString(),
+    publisher: "",
+    description: "",
+    repository: "",
+    homepage: "",
+    installCount: "0",
+    categories: [],
+    activationEvents: [],
+    jsFiles: [],
+    binaryFiles: [],
+    configFiles: [],
+    assetFiles: [],
+    agentConfigFiles: [],
+    fileStats: {},
+    fileTypes: [],
+    totalSize: 0,
+    permissions: {},
+    dependencies: {},
+    notableDependencies: {},
+    telemetryConfig: {},
+    vsixManifest: {},
+    endpoints: [],
+    bundledDependencies: [],
+    findings: [],
+    patternsSearched: {},
+    binaryHashes: [],
+    executiveSummary: "",
+    verdict: null,
+    totalScanned: scannedCount
+  });
 }
 
 /**

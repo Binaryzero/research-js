@@ -125,6 +125,9 @@ export interface AnalysisResult {
   // LLM-generated
   executiveSummary: string | null;
   verdict: 'CLEAN' | 'SUSPICIOUS' | 'MALICIOUS' | null;
+
+  // Batch analysis info
+  totalScanned?: number;
 }
 
 export interface LlmAssessment {
