@@ -6,9 +6,9 @@
  * FastAssessmentCache: Shared cache to avoid redundant heuristic assessments across models
  */
 
-import { join, dirname } from 'path';
+import { join, dirname, extname, relative, basename } from 'path';
 import { fileURLToPath } from 'url';
-import { readFileSync } from 'fs';
+import { readFileSync, readdirSync, statSync } from 'fs';
 import pLimit from 'p-limit';
 import type { Finding, LlmAssessment, LlmConfig, EndpointInfo, ConsensusConfig, AnalysisResult } from '../types/index.js';
 import type { PromptConfig } from '../config.js';
@@ -203,25 +203,135 @@ import {
 // If total source exceeds this, we split into multiple calls and merge.
 const EXEC_SUMMARY_CHUNK_SIZE = 50_000;
 
+// Always-include file classes for the executive-summary input set. These
+// carry malicious payloads disproportionately to their frequency, so we
+// add them even if they produced no regex findings.
+const ALWAYS_INCLUDE_BASENAMES = new Set(['package.json', 'extension.vsixmanifest', '.vsixmanifest']);
+const ALWAYS_INCLUDE_EXTS = new Set([
+  '.sh', '.bash', '.zsh', '.ps1', '.bat', '.cmd', // shell scripts
+  '.html', '.htm', '.svg',                          // webview-shaped assets
+]);
+// Sampling budget for zero-hit JS/TS files. Without this, an extension
+// with hundreds of JS files would blow the LLM context budget.
+const ZERO_HIT_JS_SAMPLE_LIMIT = 6;
+const ZERO_HIT_JS_BYTES_BUDGET = 60_000;
+const JS_EXTS = new Set(['.js', '.mjs', '.cjs', '.ts', '.tsx', '.jsx']);
+
+function walkExtensionFiles(extensionPath: string): string[] {
+  const out: string[] = [];
+  const walk = (dir: string) => {
+    try {
+      const entries = readdirSync(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        const fullPath = join(dir, entry.name);
+        if (entry.isDirectory()) {
+          if (entry.name === 'node_modules' || entry.name.startsWith('.')) continue;
+          walk(fullPath);
+        } else if (entry.isFile()) {
+          out.push(fullPath);
+        }
+      }
+    } catch {
+      // permission / missing dir — skip
+    }
+  };
+  walk(extensionPath);
+  return out;
+}
+
 /**
  * Read source files referenced by findings, returning per-file sections.
+ *
+ * The set includes:
+ *   1. Files containing at least one finding (existing behavior).
+ *   2. Always-include surface: package.json, .vsixmanifest, all shell
+ *      scripts (.sh/.bash/.zsh/.ps1/.bat/.cmd), and webview-shaped
+ *      assets (.html/.htm/.svg). These are not necessarily regex-walked
+ *      and routinely carry malicious payloads.
+ *   3. A bounded sample of zero-hit JS/TS files so the LLM gets exposure
+ *      to code that produced no regex matches (which may use obfuscated
+ *      identifiers, reflection, or otherwise-uncatalogued primitives).
  */
 function readFindingSourceFiles(findings: Finding[], extensionPath: string): Array<{ path: string; section: string }> {
-  const uniquePaths = new Set<string>();
+  const pathsToRead = new Set<string>();
+
   for (const f of findings) {
     const loc = f.location || '';
     const lastColon = loc.lastIndexOf(':');
     const filePath = lastColon > 0 ? loc.slice(0, lastColon) : loc;
-    if (filePath) uniquePaths.add(filePath);
+    if (filePath) pathsToRead.add(filePath);
+  }
+
+  // Walk the extension once so the always-include + sampling passes can
+  // consult the full inventory.
+  let allFiles: string[] = [];
+  try {
+    allFiles = walkExtensionFiles(extensionPath);
+  } catch {
+    allFiles = [];
+  }
+
+  // Always-include classes
+  for (const abs of allFiles) {
+    const rel = relative(extensionPath, abs);
+    const base = basename(abs).toLowerCase();
+    const ext = extname(abs).toLowerCase();
+    if (ALWAYS_INCLUDE_BASENAMES.has(base) || ALWAYS_INCLUDE_EXTS.has(ext)) {
+      pathsToRead.add(rel);
+    }
+  }
+
+  // Bounded sample of zero-hit JS/TS files
+  const hitRelative = new Set<string>();
+  for (const p of pathsToRead) hitRelative.add(p);
+  const zeroHitJs: string[] = [];
+  for (const abs of allFiles) {
+    const ext = extname(abs).toLowerCase();
+    if (!JS_EXTS.has(ext)) continue;
+    const rel = relative(extensionPath, abs);
+    if (hitRelative.has(rel)) continue;
+    // Skip likely-bundled / minified vendor code: too large to be useful
+    // as a sample, and the bundle-region tagger already handles attribution.
+    try {
+      const size = statSync(abs).size;
+      if (size > 200_000) continue;
+    } catch {
+      continue;
+    }
+    zeroHitJs.push(rel);
+  }
+  // Deterministic ordering: prefer entry-point-ish names first.
+  zeroHitJs.sort((a, b) => {
+    const score = (p: string) =>
+      /^(?:src\/)?(?:extension|index|main|activate)\b/i.test(p) ? 0 : 1;
+    const sa = score(a);
+    const sb = score(b);
+    if (sa !== sb) return sa - sb;
+    return a.length - b.length;
+  });
+  let bytesSoFar = 0;
+  let added = 0;
+  for (const rel of zeroHitJs) {
+    if (added >= ZERO_HIT_JS_SAMPLE_LIMIT || bytesSoFar >= ZERO_HIT_JS_BYTES_BUDGET) break;
+    try {
+      const size = statSync(join(extensionPath, rel)).size;
+      if (bytesSoFar + size > ZERO_HIT_JS_BYTES_BUDGET) continue;
+      pathsToRead.add(rel);
+      bytesSoFar += size;
+      added++;
+    } catch {
+      // skip
+    }
   }
 
   const files: Array<{ path: string; section: string }> = [];
-  for (const relativePath of uniquePaths) {
+  for (const relativePath of pathsToRead) {
     try {
       const content = readFileSync(join(extensionPath, relativePath), 'utf-8');
       files.push({ path: relativePath, section: `--- ${relativePath} ---\n${content}` });
     } catch {
-      // Skip unreadable files
+      // Skip unreadable files (e.g. binaries that landed in the set via
+      // a finding's location field).
     }
   }
   return files;

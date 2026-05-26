@@ -1,0 +1,26 @@
+EXIT=0
+[Patterns] Loaded /Users/william/.kandev/tasks/scanner-cannot-detec_v7b/research-js/docs/patterns.yaml (version: 1.5.1)
+[info] ms-toolsai.datawrangler-1.24.1 — 196 files, 49 in LLM input
+[Patterns] Loaded /Users/william/.kandev/tasks/scanner-cannot-detec_v7b/research-js/docs/patterns.yaml (version: 1.5.1)
+[info] ms-vscode-remote.remote-containers-0.459.0 — 117 files, 99 in LLM input
+[Patterns] Loaded /Users/william/.kandev/tasks/scanner-cannot-detec_v7b/research-js/docs/patterns.yaml (version: 1.5.1)
+[info] rust-lang.rust-analyzer-0.3.2896-darwin-arm64 — 11 files, 5 in LLM input
+[Patterns] Loaded /Users/william/.kandev/tasks/scanner-cannot-detec_v7b/research-js/docs/patterns.yaml (version: 1.5.1)
+[info] github.vscode-pull-request-github-0.144.0 — 56 files, 44 in LLM input
+
+# VSIX coverage measurement — 5 extension(s)
+
+| file class      | total |  in LLM input | coverage |
+|-----------------|------:|--------------:|---------:|
+| js_ts           |    50 |            50 | 100.0% |
+| manifest        |    11 |            11 | 100.0% |
+| shell_script    |     8 |             8 | 100.0% |
+| native_module   |     0 |             0 |    -    |
+| wasm            |     0 |             0 |    -    |
+| webview         |    69 |            69 | 100.0% |
+| config          |   133 |           110 |  82.7% |
+| doc             |    48 |             0 |   0.0% |
+| asset           |    12 |             0 |   0.0% |
+| lockfile        |     2 |             0 |   0.0% |
+| other           |   113 |             0 |   0.0% |
+| **total**       |   446 |           248 |  55.6% |

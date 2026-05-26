@@ -1,0 +1,26 @@
+EXIT=0
+[Patterns] Loaded /Users/william/.kandev/tasks/scanner-cannot-detec_v7b/research-js/docs/patterns.yaml (version: 1.5.1)
+[info] ms-vscode.remote-explorer-0.5.0 — 43 files, 6 in LLM input
+[Patterns] Loaded /Users/william/.kandev/tasks/scanner-cannot-detec_v7b/research-js/docs/patterns.yaml (version: 1.5.1)
+[info] ms-vscode.remote-server-1.5.3 — 49 files, 26 in LLM input
+[Patterns] Loaded /Users/william/.kandev/tasks/scanner-cannot-detec_v7b/research-js/docs/patterns.yaml (version: 1.5.1)
+[info] ms-vscode-remote.remote-ssh-edit-0.87.0 — 42 files, 6 in LLM input
+[Patterns] Loaded /Users/william/.kandev/tasks/scanner-cannot-detec_v7b/research-js/docs/patterns.yaml (version: 1.5.1)
+[info] malicious-extension — 6 files, 6 in LLM input
+
+# VSIX coverage measurement — 6 extension(s)
+
+| file class      | total |  in LLM input | coverage |
+|-----------------|------:|--------------:|---------:|
+| js_ts           |    22 |            22 | 100.0% |
+| manifest        |    11 |            11 | 100.0% |
+| shell_script    |     2 |             2 | 100.0% |
+| native_module   |     2 |             2 | 100.0% |
+| wasm            |     0 |             0 |    -    |
+| webview         |     8 |             8 | 100.0% |
+| config          |    96 |            20 |  20.8% |
+| doc             |    24 |             0 |   0.0% |
+| asset           |    17 |             0 |   0.0% |
+| lockfile        |     1 |             0 |   0.0% |
+| other           |     7 |             0 |   0.0% |
+| **total**       |   190 |            65 |  34.2% |
