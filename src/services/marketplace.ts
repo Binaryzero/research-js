@@ -1,3 +1,4 @@
+import { logger } from "../services/logger.js";
 /**
  * VS Code Marketplace API client
  * Search and retrieve extension information
@@ -201,7 +202,7 @@ export async function searchExtensions(
       };
     });
   } catch (error) {
-    console.error('Marketplace search error:', error);
+    logger.error({ err: error }, 'Marketplace search error');
     throw error;
   }
 }
