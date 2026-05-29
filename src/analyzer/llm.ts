@@ -1132,7 +1132,7 @@ If there are too many findings to assess completely, prioritize assessing the fi
                 results[idx] = mergeConsensusAssessments(allVotes);
               }
             } catch (err) {
-              getComponentLogger('Consensus').warn(`Failed for finding `);
+              getComponentLogger('Consensus').warn({ err, findingIndex: idx, category: finding.category, title: finding.title }, 'Failed for finding');
             }
           }));
         await Promise.all(consensusPromises);
