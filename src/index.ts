@@ -29,6 +29,7 @@ import { searchExtensions } from './services/marketplace.js';
 import { loadHistory, updateHistory, saveHistory } from './history.js';
 import type { AnalysisResult, ScanTask } from './types/index.js';
 import type { PromptConfig } from './config.js';
+import { logger, getComponentLogger } from "./services/logger.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const TEMPLATES_DIR = join(__dirname, '..', 'assets', 'templates');
@@ -932,7 +933,7 @@ ${indent(prompts.triage_batch?.user || '')}
 
       return { saved: true, message: 'Prompts saved to prompts.yaml and active in-memory.' };
     } catch (e) {
-      console.error('Failed to save prompts:', e);
+      logger.error({ err: e }, 'Failed to save prompts');
       return reply.status(500).send({ error: 'Failed to save prompts to file' });
     }
   });
@@ -994,7 +995,7 @@ ${indent(prompts.triage_batch?.user || '')}
       },
     };
 
-    console.log(`[LLM Analyze] Using model: ${modelName}, assessment mode: ${assessmentMode}`);
+    getComponentLogger('LLM Analyze').info({ modelName, assessmentMode }, 'Using model');
 
     // Run LLM analysis in background
     runScan(task, downloadUrl, {
@@ -1081,7 +1082,7 @@ ${indent(prompts.triage_batch?.user || '')}
       },
     };
 
-    console.log(`[Batch LLM] Using model: ${modelName}, assessment mode: ${assessmentMode}`);
+    getComponentLogger('Batch LLM').info({ modelName, assessmentMode }, 'Using model');
 
     // Run batch LLM analysis in background
     runBatchLlmAnalysis(task, extensions, {
@@ -1582,7 +1583,7 @@ export async function main() {
   
   await fastify.listen({ port: config.port, host: config.host });
   
-  console.log(`
+  logger.info(`
   Extension Security Analyzer (TypeScript)
 
   Server running at: http://${config.host}:${config.port}
@@ -1594,7 +1595,7 @@ export async function main() {
 // Run if called directly
 if (import.meta.url === `file://${process.argv[1]}`) {
   main().catch(err => {
-    console.error('Failed to start server:', err);
+    logger.fatal({ err }, 'Failed to start server');
     process.exit(1);
   });
 }

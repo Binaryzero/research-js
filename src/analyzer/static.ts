@@ -19,6 +19,8 @@ import type {
   PatternsConfig,
 } from '../types/index.js';
 import { loadPatterns, getAllPatterns } from './patterns.js';
+import { getComponentLogger } from "../services/logger.js";
+
 
 // ES Module equivalent of __dirname
 const __filename = fileURLToPath(import.meta.url);
@@ -371,8 +373,8 @@ export class StaticAnalyzer {
 
     const elapsed = Date.now() - startTime;
     if (this.verbose) {
-      console.log(`[Static] Analysis complete in ${elapsed}ms`);
-      console.log(`[Static] Files: ${files.length}, Findings: ${findings.length}, Endpoints: ${endpoints.length}`);
+      getComponentLogger('Static').info(`Analysis complete in ${elapsed}ms`);
+      getComponentLogger('Static').info(`Files: ${files.length}, Findings: ${findings.length}, Endpoints: ${endpoints.length}`);
     }
     
     return {

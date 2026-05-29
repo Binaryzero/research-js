@@ -64,6 +64,8 @@ const globalFastAssessmentCache = new FastAssessmentCache();
 
 // Import types for strategic mode
 import { PatternGroup, FileGroup } from './llm-batch.js';
+import { logger, getComponentLogger } from "../services/logger.js";
+
 
 /**
  * Parse the VERDICT line from an executive summary.
@@ -167,7 +169,7 @@ function mergeConsensusAssessments(assessments: LlmAssessment[]): LlmAssessment 
   const splitDecision = riskLevels.size > 1;
 
   if (splitDecision) {
-    console.log(`[Consensus] Split decision: votes=[${votes.map(v => v.riskLevel).join(', ')}] → ${riskLevel}`);
+    getComponentLogger('Consensus').info(`Split decision: votes=[${votes.map(v => v.riskLevel).join(', ')}] → ${riskLevel}`);
   }
 
   return {
@@ -493,7 +495,7 @@ export class LlmClient {
     this.fastAssessor = new FastRiskAssessor();
     this.prompts = prompts || this.getDefaultPrompts();
     this.useSharedCache = useSharedCache;
-    console.log(`[LLM] Client initialized with assessmentMode: ${config.assessmentMode}, sharedCache: ${useSharedCache}`);
+    getComponentLogger('LLM').info(`Client initialized with assessmentMode: ${config.assessmentMode}, sharedCache: ${useSharedCache}`);
   }
 
   get concurrency(): number {
@@ -575,20 +577,20 @@ Respond with JSON only.`,
     } = {}
   ): Promise<LlmAssessment[]> {
     // Route to appropriate mode based on config
-    console.log(`[LLM] Assessment mode: ${this.config.assessmentMode}, findings: ${findings.length}`);
+    getComponentLogger('LLM').info(`Assessment mode: ${this.config.assessmentMode}, findings: ${findings.length}`);
     if (this.config.assessmentMode === 'bulk') {
-      console.log('[LLM] Using BULK mode - single call for all findings');
+      getComponentLogger('LLM').info('Using BULK mode - single call for all findings');
       return this.bulkAssessAllFindings(findings, options);
     }
 
     // Triage batch: when >5 findings and triage_batch prompt is configured
     if (findings.length > 5 && this.prompts.triage_batch?.system && this.prompts.triage_batch?.user) {
-      console.log(`[LLM] Using TRIAGE BATCH mode - tiered batching${options.skipConsensus ? ' (consensus delegated to orchestrator)' : ''}`);
+      getComponentLogger('LLM').info(`Using TRIAGE BATCH mode - tiered batching${options.skipConsensus ? ' (consensus delegated to orchestrator)' : ''}`);
       return this.triageBatchAssess(findings, options);
     }
 
     // ≤5 findings or no triage_batch prompt: individual calls via strategic mode
-    console.log('[LLM] Using STRATEGIC mode - individual assessment calls');
+    getComponentLogger('LLM').info('Using STRATEGIC mode - individual assessment calls');
     return this.strategicAssessFindings(findings, options);
   }
 
@@ -642,10 +644,9 @@ Respond with JSON only.`,
     // Warn if maxTokens might be too low for bulk mode
     const estimatedTokensNeeded = pendingIndices.length * 100; // Rough estimate: 100 tokens per assessment
     if (this.config.maxTokens < estimatedTokensNeeded) {
-      console.warn(`[LLM] Warning: maxTokens (${this.config.maxTokens}) may be too low for ${pendingIndices.length} findings. ` +
-        `Estimated need: ~${estimatedTokensNeeded} tokens. Consider increasing LLM_MAX_TOKENS env var.`);
-    }
+      getComponentLogger("LLM").warn({ maxTokens: this.config.maxTokens, pendingFindings: pendingIndices.length, estimatedNeeded: estimatedTokensNeeded }, "maxTokens may be too low for findings");
 
+    }
     // Build single bulk prompt with all pending findings
     const pendingFindings = pendingIndices.map(i => findings[i]);
     const { system, user } = this.buildBulkAssessmentPrompt(pendingFindings);
@@ -654,10 +655,10 @@ Respond with JSON only.`,
 
     try {
       // Single LLM call for all findings
-      console.log(`[LLM] Bulk mode: Making single LLM call for ${pendingIndices.length} findings`);
-      console.log(`[LLM] Bulk mode: Prompt size - system: ${system.length} chars, user: ${user.length} chars`);
+      getComponentLogger('LLM').info(`Bulk mode: Making single LLM call for ${pendingIndices.length} findings`);
+      getComponentLogger('LLM').info(`Bulk mode: Prompt size - system: ${system.length} chars, user: ${user.length} chars`);
       const response = await this.generate(user, system);
-      console.log(`[LLM] Bulk mode: Received response, length: ${response.length}`);
+      getComponentLogger('LLM').info(`Bulk mode: Received response, length: ${response.length}`);
       options.onProgress?.(0.5, 'Received LLM response, parsing assessments...');
 
       // Parse JSON array response
@@ -688,7 +689,7 @@ Respond with JSON only.`,
       return results;
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : 'Unknown error';
-      console.warn(`Bulk assessment failed: ${errorMsg}. Falling back to strategic mode.`);
+      logger.warn(`Bulk assessment failed: ${errorMsg}. Falling back to strategic mode.`);
       options.onProgress?.(0.1, `Bulk mode failed, falling back to strategic sampling...`);
 
       // Fall back to strategic mode
@@ -773,35 +774,35 @@ If there are too many findings to assess completely, prioritize assessing the fi
       };
 
       // Approach 1: Try direct parse with fix
-      console.log(`[LLM] Bulk parse: Response starts with "${response.slice(0, 50)}..."`);
+      getComponentLogger('LLM').info(`Bulk parse: Response starts with "${response.slice(0, 50)}..."`);
       parsed = tryParse(response) || [];
       if (parsed.length > 0) {
-        console.log(`[LLM] Bulk mode: Direct parse succeeded with ${parsed.length} items`);
+        getComponentLogger('LLM').info(`Bulk mode: Direct parse succeeded with ${parsed.length} items`);
       } else {
-        console.log(`[LLM] Bulk parse: Direct parse failed, trying regex...`);
+        getComponentLogger('LLM').info('Bulk parse: Direct parse failed, trying regex...');
         // Approach 2: Try regex extraction with fix - handle markdown code blocks
         // First strip markdown formatting
         const cleaned = response.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
-        console.log(`[LLM] Bulk parse: Cleaned response starts with "${cleaned.slice(0, 30)}..."`);
+        getComponentLogger('LLM').info(`Bulk parse: Cleaned response starts with "${cleaned.slice(0, 30)}..."`);
 
         const jsonMatch = cleaned.match(/\[[\s\S]*\]/);
         if (jsonMatch) {
-          console.log(`[LLM] Bulk parse: Regex found array, length ${jsonMatch[0].length}`);
+          getComponentLogger('LLM').info(`Bulk parse: Regex found array, length ${jsonMatch[0].length}`);
           parsed = tryParse(jsonMatch[0]) || [];
           if (parsed.length > 0) {
-            console.log(`[LLM] Bulk mode: Regex extract succeeded with ${parsed.length} items`);
+            getComponentLogger('LLM').info(`Bulk mode: Regex extract succeeded with ${parsed.length} items`);
           }
         } else {
-          console.log(`[LLM] Bulk parse: Regex found no array in cleaned text`);
+          getComponentLogger('LLM').info('Bulk parse: Regex found no array in cleaned text');
         }
       }
 
       if (parsed.length === 0) {
-        console.log(`[LLM] Bulk parse: All approaches failed, response length: ${response.length}`);
+        getComponentLogger('LLM').info(`Bulk parse: All approaches failed, response length: ${response.length}`);
         throw new Error('No JSON array found in response');
       }
 
-      console.log(`[LLM] Bulk mode: Parsed ${parsed.length} assessments from response (expected ${expectedCount})`);
+      getComponentLogger('LLM').info(`Bulk mode: Parsed ${parsed.length} assessments from response (expected ${expectedCount})`);
 
       for (const item of parsed) {
         const result = LlmAssessmentSchema.safeParse(item);
@@ -810,7 +811,7 @@ If there are too many findings to assess completely, prioritize assessing the fi
         }
       }
     } catch (error) {
-      console.warn('Failed to parse bulk assessments:', error);
+      logger.warn({ err: error }, 'Failed to parse bulk assessments');
       // Return empty array to trigger fallback
     }
 
@@ -901,7 +902,7 @@ If there are too many findings to assess completely, prioritize assessing the fi
       batches.push({ indices: tierB.slice(i, i + TIER_B_MAX), tier: 'B' });
     }
 
-    console.log(`[LLM] Triage batch: ${batches.length} batches (${tierA.length} tier-A, ${tierB.length} tier-B)`);
+    getComponentLogger('LLM').info(`Triage batch: ${batches.length} batches (${tierA.length} tier-A, ${tierB.length} tier-B)`);
 
     const triagePrompt = this.prompts.triage_batch!;
     let totalProcessed = 0;
@@ -963,7 +964,7 @@ If there are too many findings to assess completely, prioritize assessing the fi
         // Approach 1: Try direct parse first
         parsed = tryParse(response) || [];
         if (parsed.length > 0) {
-          console.log(`[LLM] Triage batch: Direct parse succeeded with ${parsed.length} items`);
+          getComponentLogger('LLM').info(`Triage batch: Direct parse succeeded with ${parsed.length} items`);
         }
 
         // Approach 2: Try regex extraction if direct parse failed
@@ -973,7 +974,7 @@ If there are too many findings to assess completely, prioritize assessing the fi
             jsonStr = arrayMatch[0];
             parsed = tryParse(jsonStr) || [];
             if (parsed.length > 0) {
-              console.log(`[LLM] Triage batch: Regex extract succeeded with ${parsed.length} items`);
+              getComponentLogger('LLM').info(`Triage batch: Regex extract succeeded with ${parsed.length} items`);
             }
           }
         }
@@ -986,7 +987,7 @@ If there are too many findings to assess completely, prioritize assessing the fi
             jsonStr = response.slice(firstBracket, lastBracket + 1);
             parsed = tryParse(jsonStr) || [];
             if (parsed.length > 0) {
-              console.log(`[LLM] Triage batch: Bracket extraction succeeded with ${parsed.length} items`);
+              getComponentLogger('LLM').info(`Triage batch: Bracket extraction succeeded with ${parsed.length} items`);
             }
           }
         }
@@ -1023,7 +1024,7 @@ If there are too many findings to assess completely, prioritize assessing the fi
           }
           if (objects.length > 0) {
             parsed = objects;
-            console.log(`[LLM] Triage batch: Individual object extraction salvaged ${objects.length} items`);
+            getComponentLogger('LLM').info(`Triage batch: Individual object extraction salvaged ${objects.length} items`);
           }
         }
 
@@ -1039,10 +1040,10 @@ If there are too many findings to assess completely, prioritize assessing the fi
         }
 
         if (parsed.length > 0 && assessed.size === 0) {
-          console.warn(`[LLM] Triage batch: Parsed ${parsed.length} items but none matched batch indices`);
+          getComponentLogger('LLM').warn(`Triage batch: Parsed ${parsed.length} items but none matched batch indices`);
         }
       } catch (error) {
-        console.warn(`[LLM] Triage batch parse failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        getComponentLogger('LLM').warn(`Triage batch parse failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
       }
 
       // Track which findings were assessed via triage batch vs fallback
@@ -1056,14 +1057,14 @@ If there are too many findings to assess completely, prioritize assessing the fi
       // Fall back to individual assessment for any missing findings (sequential with concurrency limiter)
       const missing = batch.indices.filter(idx => !assessed.has(idx));
       if (missing.length > 0) {
-        console.warn(`[LLM] Triage batch: ${missing.length} findings missing, falling back to individual assessment (sequential)`);
+        getComponentLogger('LLM').warn(`Triage batch: ${missing.length} findings missing, falling back to individual assessment (sequential)`);
         const limit = pLimit(this.concurrency);
         const missingResults = await Promise.all(
           missing.map(idx => limit(async () => {
             try {
               return await this.assessFinding(findings[idx], options.skipConsensus);
             } catch (err) {
-              console.warn(`[LLM] Individual fallback failed for finding ${idx} (${findings[idx].category}/${findings[idx].title}): ${err instanceof Error ? err.message : err}`);
+              getComponentLogger('LLM').warn(`Individual fallback failed for finding ${idx} (${findings[idx].category}/${findings[idx].title}): ${err instanceof Error ? err.message : err}`);
               return {
                 riskLevel: findings[idx].riskLevel as LlmAssessment['riskLevel'],
                 isFalsePositive: false,
@@ -1106,7 +1107,7 @@ If there are too many findings to assess completely, prioritize assessing the fi
 
       if (consensusIndices.length > 0) {
         options.onProgress?.(0.90, `Consensus pass: ${consensusIndices.length} high/critical findings`);
-        console.log(`[Consensus] Triage batch consensus pass: ${consensusIndices.length} findings need quorum`);
+        getComponentLogger('Consensus').info(`Triage batch consensus pass: ${consensusIndices.length} findings need quorum`);
 
         // Use concurrency limiter to avoid 429 errors - submit both additional votes via limiter
         const limit = pLimit(this.concurrency);
@@ -1131,12 +1132,12 @@ If there are too many findings to assess completely, prioritize assessing the fi
                 results[idx] = mergeConsensusAssessments(allVotes);
               }
             } catch (err) {
-              console.warn(`[Consensus] Failed for finding ${idx} (${finding.category}/${finding.title}): ${err instanceof Error ? err.message : err}`);
+              getComponentLogger('Consensus').warn({ err, findingIndex: idx, category: finding.category, title: finding.title }, 'Failed for finding');
             }
           }));
         await Promise.all(consensusPromises);
 
-        console.log(`[Consensus] Triage consensus complete: ${consensusIndices.length} findings, ${consensusIndices.filter(idx => results[idx].consensus?.splitDecision).length} split decisions`);
+        getComponentLogger("Consensus").info(`Triage consensus complete: ${consensusIndices.length} findings, ${consensusIndices.filter(idx => results[idx].consensus?.splitDecision).length} split decisions`);
       }
     }
 
@@ -1155,7 +1156,7 @@ If there are too many findings to assess completely, prioritize assessing the fi
       skipConsensus?: boolean;
     } = {}
   ): Promise<LlmAssessment[]> {
-    console.log(`[LLM] Strategic mode: Processing ${findings.length} findings`);
+    getComponentLogger('LLM').info(`Strategic mode: Processing ${findings.length} findings`);
     const results: LlmAssessment[] = new Array(findings.length);
     const pendingIndices: number[] = [];
 
@@ -1228,7 +1229,7 @@ If there are too many findings to assess completely, prioritize assessing the fi
     // Fill any missing assessments with a conservative default
     for (let i = 0; i < findings.length; i++) {
       if (!results[i]) {
-        console.warn(`[LLM] Finding ${i} (${findings[i].title} in ${findings[i].location}) has no assessment — defaulting to investigate`);
+        getComponentLogger("LLM").warn(`Finding ${i} (${findings[i].title} in ${findings[i].location}) has no assessment — defaulting to investigate`);
         results[i] = {
           riskLevel: findings[i].riskLevel as LlmAssessment['riskLevel'],
           isFalsePositive: false,
@@ -1296,7 +1297,7 @@ If there are too many findings to assess completely, prioritize assessing the fi
 
     if (useConsensus) {
       // Consensus mode: 3 calls, merge per-finding via majority vote
-      console.log(`[Consensus] Quorum for ${pattern.category}/${pattern.patternName} (${pattern.risk} risk, ${samples.length} findings)`);
+      getComponentLogger('Consensus').info(`Quorum for ${pattern.category}/${pattern.patternName} (${pattern.risk} risk, ${samples.length} findings)`);
       const runs = await Promise.all([0, 1, 2].map(() => this.generate(user, system)));
       llmCalls = 3;
 
@@ -1311,7 +1312,7 @@ If there are too many findings to assess completely, prioritize assessing the fi
         const candidates = parsed.map(m => m.get(idx)).filter((a): a is LlmAssessment => !!a);
         assessments.set(idx, candidates.length >= 2 ? mergeConsensusAssessments(candidates) : candidates[0]);
       }
-      console.log(`[Consensus] Merged ${assessments.size} findings, ${[...assessments.values()].filter(a => a.consensus?.splitDecision).length} split decisions`);
+      getComponentLogger("Consensus").info(`Merged ${assessments.size} findings, ${[...assessments.values()].filter(a => a.consensus?.splitDecision).length} split decisions`);
     } else {
       const response = await this.generate(user, system);
       llmCalls = 1;
@@ -1330,7 +1331,7 @@ If there are too many findings to assess completely, prioritize assessing the fi
     const useConsensus = !skipConsensus && (finding.riskLevel === 'high' || finding.riskLevel === 'critical');
 
     if (useConsensus) {
-      console.log(`[Consensus] Individual quorum for "${finding.title}" at ${finding.location} (${finding.riskLevel} risk)`);
+      getComponentLogger('Consensus').info(`Individual quorum for "${finding.title}" at ${finding.location} (${finding.riskLevel} risk)`);
       // Use concurrency limiter to avoid 429 errors - submit all 3 simultaneously
       const responses = await Promise.all([0, 1, 2].map(() => this.generate(user, system)));
       const candidates = responses.map(r => parseSingleAssessment(r)).filter((a): a is LlmAssessment => !!a);
@@ -1576,7 +1577,7 @@ If there are too many findings to assess completely, prioritize assessing the fi
     }
 
     // Multiple chunks — generate partial summaries then merge
-    console.log(`[LLM] Executive summary: splitting ${sourceChunks.length} source chunks`);
+    getComponentLogger('LLM').info(`Executive summary: splitting ${sourceChunks.length} source chunks`);
     const partialSummaries: string[] = [];
 
     for (let i = 0; i < sourceChunks.length; i++) {
@@ -1614,7 +1615,7 @@ export class ConsensusOrchestrator {
     this.mainClient = mainClient;
     this.judges = judges.filter(j => j !== null);
     this.consensusConfig = consensusConfig;
-    console.log(`[Orchestrator] Initialized: main + ${this.judges.length} judge(s), allFindings=${consensusConfig.judgesValidateAllFindings}`);
+    getComponentLogger('Orchestrator').info({ judgesCount: this.judges.length, judgesValidateAllFindings: consensusConfig.judgesValidateAllFindings }, 'Initialized orchestrator');
   }
 
   async isAvailable(): Promise<boolean> {
@@ -1758,12 +1759,12 @@ export class ConsensusOrchestrator {
     // All models generate in parallel — all wrapped with catch for graceful degradation
     const summaries = await Promise.all([
       this.mainClient.generateExecutiveSummary(result, extensionPath).catch((err): string => {
-        console.warn(`[Orchestrator] Main model summary failed: ${err instanceof Error ? err.message : err}`);
+        getComponentLogger('Orchestrator').warn({ err }, 'Main model summary failed');
         return '';
       }),
       ...this.judges.map((j, jIdx) =>
         j.generateExecutiveSummary(result, extensionPath).catch((err): string => {
-          console.warn(`[Orchestrator] Judge ${jIdx + 1} summary failed: ${err instanceof Error ? err.message : err}`);
+          getComponentLogger('Orchestrator').warn({ err, judgeIndex: jIdx + 1 }, 'Judge summary failed');
           return '';
         })
       ),
@@ -1773,7 +1774,7 @@ export class ConsensusOrchestrator {
     const parsed = validSummaries.map(s => parseVerdictFromSummary(s));
 
     if (parsed.length === 0) {
-      console.warn('[Orchestrator] All models failed to produce executive summary');
+      getComponentLogger('Orchestrator').warn('All models failed to produce executive summary');
       return '';
     }
     if (parsed.length === 1) return validSummaries[0];
@@ -1793,7 +1794,7 @@ export class ConsensusOrchestrator {
 
     const modelLabels = ['Main', ...this.judges.map((_, i) => `Judge ${i + 1}`)];
     const verdictLog = parsed.map((p, i) => `${modelLabels[i]}=${p.verdict}`).join(', ');
-    console.log(`[Orchestrator] Verdict consensus: [${verdictLog}] → ${winningVerdict}`);
+    getComponentLogger('Orchestrator').info(`Verdict consensus: [${verdictLog}] → ${winningVerdict}`);
 
     return `VERDICT: ${winningVerdict}\n${prose}`;
   }

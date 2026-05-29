@@ -9,6 +9,8 @@ import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { load } from 'js-yaml';
 import type { ServerConfig, LlmConfig, AppConfig, ModelSlotConfig } from './types/index.js';
 import { AppConfigSchema } from './schemas/config.js';
+import { getComponentLogger } from "./services/logger.js";
+
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -58,7 +60,7 @@ export function loadPrompts(promptsFile: string): PromptConfig {
   try {
     const content = readFileSync(promptsFile, 'utf-8');
     const config = load(content) as PromptConfig;
-    console.log(`[Prompts] Loaded ${promptsFile} (version: ${config.version || 'unknown'})`);
+    getComponentLogger('Prompts').info(`Loaded ${promptsFile} (version: ${config.version || 'unknown'})`);
     return config;
   } catch (error) {
     throw new Error(`Failed to load prompts file ${promptsFile}: ${error}`);
@@ -202,17 +204,16 @@ export function loadAppConfig(): AppConfig {
       const raw = JSON.parse(readFileSync(CONFIG_FILE, 'utf-8'));
       const validated = AppConfigSchema.partial().safeParse(raw);
       if (!validated.success) {
-        console.warn('[Config] config.json failed validation, using defaults:',
-          validated.error.flatten().fieldErrors);
+        getComponentLogger("Config").warn({ errors: validated.error.flatten().fieldErrors }, "config.json failed validation, using defaults");
       } else {
         appConfig = { ...appConfig, ...validated.data, main: { ...appConfig.main, ...validated.data.main }, consensus: { ...appConfig.consensus, ...validated.data.consensus } };
         if (Array.isArray(validated.data.judges)) {
           appConfig.judges = validated.data.judges;
         }
-        console.log(`[Config] Loaded config.json (version: ${appConfig.version}, judges: ${appConfig.judges.length})`);
+        getComponentLogger('Config').info(`Loaded config.json (version: ${appConfig.version}, judges: ${appConfig.judges.length})`);
       }
     } catch (err) {
-      console.warn(`[Config] Failed to parse config.json, using defaults:`, err);
+      getComponentLogger("Config").warn({ err: err }, "Failed to parse config.json, using defaults");
     }
   }
 
@@ -235,7 +236,7 @@ export function loadAppConfig(): AppConfig {
 export function saveAppConfig(appConfig: AppConfig): void {
   _appConfig = appConfig;
   writeFileSync(CONFIG_FILE, JSON.stringify(appConfig, null, 2), 'utf-8');
-  console.log(`[Config] Saved config.json (judges: ${appConfig.judges.length})`);
+  getComponentLogger('Config').info(`Saved config.json (judges: ${appConfig.judges.length})`);
 }
 
 /**

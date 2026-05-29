@@ -6,6 +6,8 @@
 import type { Finding, LlmAssessment } from '../types/index.js';
 import type { PromptConfig } from '../config.js';
 import { LlmAssessmentSchema } from './schemas.js';
+import { getComponentLogger } from "../services/logger.js";
+
 
 export interface FileGroup {
   filePath: string;
@@ -297,7 +299,7 @@ export function parseStrategicAssessments(
     // Approach 1: Try direct parse first
     parsed = tryParse(response) || [];
     if (parsed.length > 0 && Array.isArray(parsed)) {
-      console.log(`[LLM] Strategic parse: Direct parse succeeded with ${parsed.length} items`);
+      getComponentLogger('LLM').info(`Strategic parse: Direct parse succeeded with ${parsed.length} items`);
     }
 
     // Approach 2: Try regex extraction if direct parse failed
@@ -307,7 +309,7 @@ export function parseStrategicAssessments(
         jsonStr = arrayMatch[0];
         parsed = tryParse(jsonStr) || [];
         if (parsed.length > 0 && Array.isArray(parsed)) {
-          console.log(`[LLM] Strategic parse: Regex extract succeeded with ${parsed.length} items`);
+          getComponentLogger('LLM').info(`Strategic parse: Regex extract succeeded with ${parsed.length} items`);
         }
       }
     }
@@ -320,7 +322,7 @@ export function parseStrategicAssessments(
         jsonStr = response.slice(firstBracket, lastBracket + 1);
         parsed = tryParse(jsonStr) || [];
         if (parsed.length > 0 && Array.isArray(parsed)) {
-          console.log(`[LLM] Strategic parse: Bracket extraction succeeded with ${parsed.length} items`);
+          getComponentLogger('LLM').info(`Strategic parse: Bracket extraction succeeded with ${parsed.length} items`);
         }
       }
     }
@@ -350,17 +352,17 @@ export function parseStrategicAssessments(
       }
       if (objects.length > 0) {
         parsed = objects;
-        console.log(`[LLM] Strategic parse: Individual object extraction salvaged ${objects.length} items`);
+        getComponentLogger('LLM').info(`Strategic parse: Individual object extraction salvaged ${objects.length} items`);
       }
     }
 
     if (!Array.isArray(parsed) || parsed.length === 0) {
-      console.warn(`[LLM] Failed to parse JSON array from response (${response.length} chars)`);
+      getComponentLogger('LLM').warn(`Failed to parse JSON array from response (${response.length} chars)`);
       return assessments;
     }
 
     if (parsed.length < samples.length) {
-      console.warn(`[LLM] Response contained ${parsed.length} assessments but expected ${samples.length}`);
+      getComponentLogger('LLM').warn(`Response contained ${parsed.length} assessments but expected ${samples.length}`);
     }
 
     for (let i = 0; i < parsed.length && i < samples.length; i++) {
@@ -370,7 +372,7 @@ export function parseStrategicAssessments(
       }
     }
   } catch (error) {
-    console.warn(`[LLM] Error parsing strategic assessments: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    getComponentLogger('LLM').warn(`Error parsing strategic assessments: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 
   return assessments;

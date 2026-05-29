@@ -5,6 +5,8 @@
 import { readFileSync, existsSync } from 'fs';
 import { load } from 'js-yaml';
 import type { PatternsConfig, PatternDefinition, PatternCategory } from '../types/index.js';
+import { getComponentLogger } from "../services/logger.js";
+
 
 /**
  * Load patterns from YAML file - throws if not found
@@ -21,7 +23,7 @@ export function loadPatterns(patternsFile: string): PatternsConfig {
   try {
     const content = readFileSync(patternsFile, 'utf-8');
     const config = load(content) as PatternsConfig;
-    console.log(`[Patterns] Loaded ${patternsFile} (version: ${config.version || 'unknown'})`);
+    getComponentLogger('Patterns').info(`Loaded ${patternsFile} (version: ${config.version || 'unknown'})`);
     return config;
   } catch (error) {
     throw new Error(`Failed to load patterns file ${patternsFile}: ${error}`);
