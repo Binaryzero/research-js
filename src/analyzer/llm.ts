@@ -1615,7 +1615,7 @@ export class ConsensusOrchestrator {
     this.mainClient = mainClient;
     this.judges = judges.filter(j => j !== null);
     this.consensusConfig = consensusConfig;
-    getComponentLogger('Orchestrator').info(`Initialized: main + `);
+    getComponentLogger('Orchestrator').info({ judgesCount: this.judges.length, judgesValidateAllFindings: consensusConfig.judgesValidateAllFindings }, 'Initialized orchestrator');
   }
 
   async isAvailable(): Promise<boolean> {
