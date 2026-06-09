@@ -3,7 +3,7 @@
     "tester.test-cancel": {
       "extension_name": "test-cancel",
       "version": "1.0.0",
-      "scan_date": "2026-05-26T17:14:53.161Z",
+      "scan_date": "2026-06-09T20:22:03.501Z",
       "suspicion_score": 3,
       "llm_adjusted_score": null,
       "llm_analyzed": false,
@@ -28,5 +28,5 @@
       "verdict": null
     }
   },
-  "last_updated": "2026-05-26T17:14:53.161Z"
+  "last_updated": "2026-06-09T20:22:03.501Z"
 }

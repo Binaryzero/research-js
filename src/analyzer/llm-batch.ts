@@ -304,7 +304,7 @@ export function parseStrategicAssessments(
 
     // Approach 2: Try regex extraction if direct parse failed
     if (parsed.length === 0 || !Array.isArray(parsed)) {
-      const arrayMatch = response.match(/\[[\s\S]*\]/);
+      const arrayMatch = response.match(/\[\s*\{[\s\S]*\}\s*\]/);
       if (arrayMatch) {
         jsonStr = arrayMatch[0];
         parsed = tryParse(jsonStr) || [];

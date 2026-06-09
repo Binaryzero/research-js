@@ -781,11 +781,9 @@ If there are too many findings to assess completely, prioritize assessing the fi
       } else {
         getComponentLogger('LLM').info('Bulk parse: Direct parse failed, trying regex...');
         // Approach 2: Try regex extraction with fix - handle markdown code blocks
-        // First strip markdown formatting
-        const cleaned = response.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
-        getComponentLogger('LLM').info(`Bulk parse: Cleaned response starts with "${cleaned.slice(0, 30)}..."`);
+        getComponentLogger('LLM').info('Bulk parse: Trying regex extraction...');
 
-        const jsonMatch = cleaned.match(/\[[\s\S]*\]/);
+        const jsonMatch = response.match(/\[\s*\{[\s\S]*\}\s*\]/);
         if (jsonMatch) {
           getComponentLogger('LLM').info(`Bulk parse: Regex found array, length ${jsonMatch[0].length}`);
           parsed = tryParse(jsonMatch[0]) || [];
@@ -793,7 +791,7 @@ If there are too many findings to assess completely, prioritize assessing the fi
             getComponentLogger('LLM').info(`Bulk mode: Regex extract succeeded with ${parsed.length} items`);
           }
         } else {
-          getComponentLogger('LLM').info('Bulk parse: Regex found no array in cleaned text');
+          getComponentLogger('LLM').info('Bulk parse: Regex found no array');
         }
       }
 
@@ -969,7 +967,7 @@ If there are too many findings to assess completely, prioritize assessing the fi
 
         // Approach 2: Try regex extraction if direct parse failed
         if (parsed.length === 0) {
-          const arrayMatch = response.match(/\[[\s\S]*\]/);
+          const arrayMatch = response.match(/\[\s*\{[\s\S]*\}\s*\]/);
           if (arrayMatch) {
             jsonStr = arrayMatch[0];
             parsed = tryParse(jsonStr) || [];
