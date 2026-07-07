@@ -13,7 +13,7 @@ import { fileURLToPath } from 'url';
 import { EventEmitter } from 'events';
 import { randomUUID } from 'crypto';
 import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync, readFileSync, rmSync } from 'fs';
-import { readFile, writeFile } from 'fs/promises';
+import { readFile, writeFile, mkdir } from 'fs/promises';
 import { marked } from 'marked';
 import nunjucks from 'nunjucks';
 
@@ -1123,19 +1123,18 @@ async function saveScanToHistory(
 ): Promise<void> {
   const next = historyWriteChain.then(async () => {
     const historyDir = dirname(historyPath);
-    if (!existsSync(historyDir)) {
-      mkdirSync(historyDir, { recursive: true });
-    }
+    await mkdir(historyDir, { recursive: true });
 
     let scans: Record<string, unknown> = {};
-    if (existsSync(historyPath)) {
-      try {
-        scans = JSON.parse(await readFile(historyPath, 'utf-8')).scans || {};
-      } catch {
-        scans = {};
+    try {
+      const content = await readFile(historyPath, "utf-8");
+      scans = JSON.parse(content).scans || {};
+    } catch (e: any) {
+      if (e.code !== "ENOENT") {
+        logger.error(`Failed to read history file: ${e.message}`);
       }
+      scans = {};
     }
-
     scans[extensionId.toLowerCase()] = entry;
     await writeFile(
       historyPath,
