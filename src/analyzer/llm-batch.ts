@@ -317,7 +317,9 @@ export function parseStrategicAssessments(
 
       // Try converting single quotes to double quotes
       // Note: this is a naive replacement and might fail if there are escaped quotes or single quotes in strings
-      const doubleQuoted = fixed.replace(/'/g, '"');
+      const doubleQuoted = fixed
+        .replace(/'([^'\\]*(?:\\.[^'\\]*)*)'/g, '"$1"')
+        .replace(/\\'/g, "'");
       result = attempt(doubleQuoted);
       if (result) return result;
 
