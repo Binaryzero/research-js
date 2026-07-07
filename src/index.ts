@@ -12,8 +12,9 @@ import { tmpdir } from 'os';
 import { fileURLToPath } from 'url';
 import { EventEmitter } from 'events';
 import { randomUUID } from 'crypto';
-import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync, readFileSync, rmSync } from 'fs';
-import { readFile, writeFile } from 'fs/promises';
+import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync, readFileSync, rmSync, createWriteStream } from 'fs';
+import { readFile, writeFile, mkdir } from 'fs/promises';
+import { pipeline } from 'stream/promises';
 import { marked } from 'marked';
 import nunjucks from 'nunjucks';
 
@@ -267,14 +268,10 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
         } else if (part.type === 'file' && part.filename) {
           // Save uploaded VSIX to a temp directory
           const tempDir = `/tmp/vsix_upload_${Date.now()}`;
-          mkdirSync(tempDir, { recursive: true });
-          const safeFilename = basename(part.filename).replace(/[^a-zA-Z0-9._-]/g, '_') || 'upload.vsix';
+          await mkdir(tempDir, { recursive: true });
+          const safeFilename = basename(part.filename).replace(/[^a-zA-Z0-9._-]/g, "_") || "upload.vsix";
           const filePath = join(tempDir, safeFilename);
-          const chunks: Buffer[] = [];
-          for await (const chunk of part.file) {
-            chunks.push(chunk);
-          }
-          writeFileSync(filePath, Buffer.concat(chunks));
+          await pipeline(part.file, createWriteStream(filePath));
           uploadedFilePath = filePath;
         }
       }
