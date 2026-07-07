@@ -1626,12 +1626,11 @@ export class ConsensusOrchestrator {
    * Verify all configured judges are reachable. Throws if any required judge is down.
    */
   async verifyJudges(): Promise<void> {
-    for (const judge of this.judges) {
-      const available = await judge.isAvailable();
-      if (!available) {
+    await Promise.all(this.judges.map(async (judge) => {
+      if (!(await judge.isAvailable())) {
         throw new Error(`Judge model is not reachable. Disable the judge or fix the connection before running LLM analysis.`);
       }
-    }
+    }));
   }
 
   /**
