@@ -12,7 +12,7 @@ import { tmpdir } from 'os';
 import { fileURLToPath } from 'url';
 import { EventEmitter } from 'events';
 import { randomUUID } from 'crypto';
-import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync, readFileSync, rmSync } from 'fs';
+import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync, readFileSync, rmSync } from 'fs';
 import { readFile, writeFile } from 'fs/promises';
 import { marked } from 'marked';
 import nunjucks from 'nunjucks';
@@ -274,7 +274,7 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
           for await (const chunk of part.file) {
             chunks.push(chunk);
           }
-          writeFileSync(filePath, Buffer.concat(chunks));
+          await writeFile(filePath, Buffer.concat(chunks));
           uploadedFilePath = filePath;
         }
       }
@@ -929,7 +929,7 @@ ${indent(prompts.triage_batch?.user || '')}
           }
         }
       }
-      writeFileSync(promptsPath, yamlContent);
+      await writeFile(promptsPath, yamlContent);
 
       return { saved: true, message: 'Prompts saved to prompts.yaml and active in-memory.' };
     } catch (e) {

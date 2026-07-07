@@ -4,9 +4,6 @@
 version: "1.8"
 
 # System prompt for assessing security findings
-# Available variables: {category}, {title}, {location}, {evidence},
-#   {file_type}, {is_minified}, {probable_origin}, {neighboring_imports},
-#   {match_highlight}, {pattern_risk}
 finding_assessment:
   system: |
     You are a security analyst assessing VS Code extension findings.
@@ -197,11 +194,12 @@ finding_assessment:
 
     Respond with JSON only, no markdown formatting.
 
+  common_false_positives: |
+
+  genuine_concerns: |
+
+
 # System prompt for generating executive summaries
-# Available variables: {extensionName}, {version}, {publisher}, {totalFiles},
-#   {findingsCount}, {findingsByCategory}, {notableDependencies},
-#   {telemetryServices}, {endpointsList}, {extensionDescription}, {activationEvents},
-#   {sourceFiles}
 executive_summary:
   system: |
     You are a security analyst writing the executive summary of a VS Code extension
@@ -326,9 +324,8 @@ executive_summary:
 
     Then write 2-3 paragraphs of neutral prose. No bullet points, no tables, no headers.
 
+
 # Prose generation for findings
-# Available variables: {title}, {location}, {category}, {assessment}, {evidence},
-#   {file_type}, {probable_origin}, {match_highlight}
 finding_prose:
   system: |
     You are a technical writer producing individual finding entries for a VS Code
@@ -392,13 +389,8 @@ finding_prose:
 
     Write 2-3 sentences of neutral prose. No JSON, no headers, no labels.
 
-# Batch triage prompt for processing multiple findings at once
-# Reduces token cost and improves cross-finding context (e.g., recognizing
-# that 14 fetch() matches all originate from the same bundled axios library).
-# Available variables: {extensionName}, {findingsJson}
-# Each finding in {findingsJson} includes: category, title, location, evidence,
-#   file_type, is_minified, probable_origin, match_highlight, neighboring_imports,
-#   priority, pattern_risk
+
+# Batch triage prompt
 triage_batch:
   system: |
     You are a security analyst performing batch triage on VS Code extension findings.
