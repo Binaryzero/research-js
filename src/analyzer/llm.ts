@@ -1034,7 +1034,9 @@ If there are too many findings to assess completely, prioritize assessing the fi
           if (result) return result;
 
           // Try converting single quotes to double quotes
-          const doubleQuoted = fixed.replace(/'/g, '"');
+          const doubleQuoted = fixed
+            .replace(/'([^'\\]*(?:\\.[^'\\]*)*)'/g, '"$1"')
+            .replace(/\\'/g, "'");
           result = attempt(doubleQuoted);
           if (result) return result;
 
