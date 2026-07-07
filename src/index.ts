@@ -13,7 +13,7 @@ import { fileURLToPath } from 'url';
 import { EventEmitter } from 'events';
 import { randomUUID } from 'crypto';
 import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync, readFileSync, rmSync } from 'fs';
-import { readFile, writeFile } from 'fs/promises';
+import { readFile, writeFile, readdir, stat } from 'fs/promises';
 import { marked } from 'marked';
 import nunjucks from 'nunjucks';
 
@@ -431,18 +431,19 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
     const reports: Array<{ name: string; mtime: string; size: number }> = [];
     
     if (existsSync(reportsDir)) {
-      const files = readdirSync(reportsDir).filter(f => f.endsWith('.md'));
+      const files = (await readdir(reportsDir)).filter(f => f.endsWith('.md'));
       
-      for (const file of files) {
-        const stats = statSync(join(reportsDir, file));
-        reports.push({
+      const statsPromises = files.map(async (file) => {
+        const s = await stat(join(reportsDir, file));
+        return {
           name: file,
-          mtime: stats.mtime.toISOString(),
-          size: stats.size,
-        });
-      }
+          mtime: s.mtime.toISOString(),
+          size: s.size,
+        };
+      });
+
+      reports.push(...(await Promise.all(statsPromises)));
     }
-    
     reports.sort((a, b) => b.mtime.localeCompare(a.mtime));
     return { reports };
   });
