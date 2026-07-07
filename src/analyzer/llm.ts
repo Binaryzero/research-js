@@ -783,7 +783,7 @@ If there are too many findings to assess completely, prioritize assessing the fi
         // Approach 2: Try regex extraction with fix - handle markdown code blocks
         getComponentLogger('LLM').info('Bulk parse: Trying regex extraction...');
 
-        const jsonMatch = response.match(/\[\s*\{[\s\S]*\}\s*\]/);
+        const jsonMatch = response.match(/\[\s*\{[\s\S]*?\}\s*\]/);
         if (jsonMatch) {
           getComponentLogger('LLM').info(`Bulk parse: Regex found array, length ${jsonMatch[0].length}`);
           parsed = tryParse(jsonMatch[0]) || [];
