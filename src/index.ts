@@ -12,8 +12,9 @@ import { tmpdir } from 'os';
 import { fileURLToPath } from 'url';
 import { EventEmitter } from 'events';
 import { randomUUID } from 'crypto';
-import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync, readFileSync, rmSync } from 'fs';
-import { writeFile } from 'fs/promises';
+import { existsSync, mkdirSync, unlinkSync, writeFileSync, readFileSync, rmSync, createWriteStream } from 'fs';
+import { writeFile, readdir, stat, mkdir } from 'fs/promises';
+import { pipeline } from 'stream/promises';
 import { marked } from 'marked';
 import nunjucks from 'nunjucks';
 
@@ -266,16 +267,17 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
           params[part.fieldname] = part.value as string;
         } else if (part.type === 'file' && part.filename) {
           // Save uploaded VSIX to a temp directory
-          const tempDir = `/tmp/vsix_upload_${Date.now()}`;
-          mkdirSync(tempDir, { recursive: true });
+          const tempDir = `/tmp/vsix_upload_${Date.now()}_${randomUUID()}`;
+          await mkdir(tempDir, { recursive: true });
           const safeFilename = basename(part.filename).replace(/[^a-zA-Z0-9._-]/g, '_') || 'upload.vsix';
           const filePath = join(tempDir, safeFilename);
-          const chunks: Buffer[] = [];
-          for await (const chunk of part.file) {
-            chunks.push(chunk);
+          try {
+            await pipeline(part.file, createWriteStream(filePath));
+            uploadedFilePath = filePath;
+          } catch (err) {
+            rmSync(tempDir, { recursive: true, force: true });
+            throw err;
           }
-          writeFileSync(filePath, Buffer.concat(chunks));
-          uploadedFilePath = filePath;
         }
       }
     } else {
@@ -431,18 +433,25 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
     const reports: Array<{ name: string; mtime: string; size: number }> = [];
     
     if (existsSync(reportsDir)) {
-      const files = readdirSync(reportsDir).filter(f => f.endsWith('.md'));
-      
-      for (const file of files) {
-        const stats = statSync(join(reportsDir, file));
-        reports.push({
+      const files = (await readdir(reportsDir)).filter(f => f.endsWith('.md'));
+
+      const statsResults = await Promise.allSettled(files.map(async (file) => {
+        const s = await stat(join(reportsDir, file));
+        return {
           name: file,
-          mtime: stats.mtime.toISOString(),
-          size: stats.size,
-        });
+          mtime: s.mtime.toISOString(),
+          size: s.size,
+        };
+      }));
+
+      for (const result of statsResults) {
+        if (result.status === 'fulfilled') {
+          reports.push(result.value);
+        }
+        // A rejected stat (e.g. file deleted between readdir and stat) is
+        // skipped instead of failing the whole listing.
       }
     }
-    
     reports.sort((a, b) => b.mtime.localeCompare(a.mtime));
     return { reports };
   });

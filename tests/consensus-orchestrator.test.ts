@@ -140,4 +140,41 @@ describe('ConsensusOrchestrator', () => {
       expect(judgeProvider.calls.length).toBeGreaterThan(0);
     });
   });
+
+  describe('verifyJudges', () => {
+    it('resolves when all judges are available', async () => {
+      const mainClient = makeClient(mainProvider);
+      const judge1 = makeClient(new MockProvider('judge1'));
+      const judge2 = makeClient(new MockProvider('judge2'));
+      const orchestrator = new ConsensusOrchestrator(mainClient, [judge1, judge2], { judgesValidateAllFindings: false });
+
+      await expect(orchestrator.verifyJudges()).resolves.toBeUndefined();
+    });
+
+    it('rejects when a judge is unavailable', async () => {
+      const mainClient = makeClient(mainProvider);
+      const judge1 = makeClient(new MockProvider('judge1'));
+      const judge2 = makeClient(new MockProvider('judge2'));
+
+      // Mock judge2 to be unavailable
+      vi.spyOn(judge2, 'isAvailable').mockResolvedValue(false);
+
+      const orchestrator = new ConsensusOrchestrator(mainClient, [judge1, judge2], { judgesValidateAllFindings: false });
+
+      await expect(orchestrator.verifyJudges()).rejects.toThrow('Judge model is not reachable');
+    });
+
+    it('rejects when a judge isAvailable throws', async () => {
+      const mainClient = makeClient(mainProvider);
+      const judge1 = makeClient(new MockProvider('judge1'));
+      const judge2 = makeClient(new MockProvider('judge2'));
+
+      // Mock judge2 to throw
+      vi.spyOn(judge2, 'isAvailable').mockRejectedValue(new Error('Network error'));
+
+      const orchestrator = new ConsensusOrchestrator(mainClient, [judge1, judge2], { judgesValidateAllFindings: false });
+
+      await expect(orchestrator.verifyJudges()).rejects.toThrow('Judge model is not reachable');
+    });
+  });
 });
