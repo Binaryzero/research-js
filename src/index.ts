@@ -267,17 +267,17 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
           params[part.fieldname] = part.value as string;
         } else if (part.type === 'file' && part.filename) {
           // Save uploaded VSIX to a temp directory
-          const tempDir = `/tmp/vsix_upload_${Date.now()}`;
+          const tempDir = `/tmp/vsix_upload_${Date.now()}_${randomUUID()}`;
           await mkdir(tempDir, { recursive: true });
-          const safeFilename = basename(part.filename).replace(/[^a-zA-Z0-9._-]/g, "_") || "upload.vsix";
+          const safeFilename = basename(part.filename).replace(/[^a-zA-Z0-9._-]/g, '_') || 'upload.vsix';
           const filePath = join(tempDir, safeFilename);
           try {
             await pipeline(part.file, createWriteStream(filePath));
+            uploadedFilePath = filePath;
           } catch (err) {
             rmSync(tempDir, { recursive: true, force: true });
             throw err;
           }
-          uploadedFilePath = filePath;
         }
       }
     } else {
