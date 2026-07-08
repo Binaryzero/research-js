@@ -271,7 +271,12 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
           await mkdir(tempDir, { recursive: true });
           const safeFilename = basename(part.filename).replace(/[^a-zA-Z0-9._-]/g, "_") || "upload.vsix";
           const filePath = join(tempDir, safeFilename);
-          await pipeline(part.file, createWriteStream(filePath));
+          try {
+            await pipeline(part.file, createWriteStream(filePath));
+          } catch (err) {
+            rmSync(tempDir, { recursive: true, force: true });
+            throw err;
+          }
           uploadedFilePath = filePath;
         }
       }
