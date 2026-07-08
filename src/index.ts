@@ -12,8 +12,9 @@ import { tmpdir } from 'os';
 import { fileURLToPath } from 'url';
 import { EventEmitter } from 'events';
 import { randomUUID } from 'crypto';
-import { existsSync, mkdirSync, unlinkSync, writeFileSync, readFileSync, rmSync } from 'fs';
-import { readFile, writeFile, readdir, stat } from 'fs/promises';
+import { existsSync, mkdirSync, unlinkSync, writeFileSync, readFileSync, rmSync, createWriteStream } from 'fs';
+import { readFile, writeFile, readdir, stat, mkdir } from 'fs/promises';
+import { pipeline } from 'stream/promises';
 import { marked } from 'marked';
 import nunjucks from 'nunjucks';
 
