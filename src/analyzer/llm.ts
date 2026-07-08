@@ -1633,7 +1633,8 @@ export class ConsensusOrchestrator {
         return false;
       }
     }));
-    if (availabilities.some((available) => !available)) {
+
+    if (availabilities.some(available => !available)) {
       throw new Error(`Judge model is not reachable. Disable the judge or fix the connection before running LLM analysis.`);
     }
   }
