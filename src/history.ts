@@ -20,12 +20,12 @@ export type HistoryScans = Record<string, unknown>;
 
 export function loadHistory(path: string): HistoryScans {
   if (!existsSync(path)) return {};
+  const content = readFileSync(path, 'utf-8');
   try {
-    const content = readFileSync(path, 'utf-8');
     const data = JSON.parse(content);
     return data.scans || {};
-  } catch {
-    return {};
+  } catch (e) {
+    throw new Error(`Failed to parse history file at ${path}: ${e instanceof Error ? e.message : String(e)}`);
   }
 }
 

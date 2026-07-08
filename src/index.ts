@@ -13,7 +13,7 @@ import { fileURLToPath } from 'url';
 import { EventEmitter } from 'events';
 import { randomUUID } from 'crypto';
 import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync, readFileSync, rmSync } from 'fs';
-import { readFile, writeFile, mkdir } from 'fs/promises';
+import { readFile, writeFile } from 'fs/promises';
 import { marked } from 'marked';
 import nunjucks from 'nunjucks';
 
@@ -1105,48 +1105,20 @@ ${indent(prompts.triage_batch?.user || '')}
   return { fastify, config };
 }
 
-// Serializes concurrent saveScanToHistory calls within this process so
-// interleaved read-modify-write cycles can't clobber each other (PR #5).
-let historyWriteChain: Promise<unknown> = Promise.resolve();
 
 /**
  * Persist one scan's summary into the JSON history file.
  *
- * Sole writer of the history file. Concurrent callers are serialized via
- * a module-level promise chain so no entry is lost when scans finish
- * near-simultaneously.
+ * Uses updateHistory from history.js for atomic, serialized writes.
  */
-async function saveScanToHistory(
+export async function saveScanToHistory(
   historyPath: string,
   extensionId: string,
   entry: Record<string, unknown>
 ): Promise<void> {
-  const next = historyWriteChain.then(async () => {
-    const historyDir = dirname(historyPath);
-    await mkdir(historyDir, { recursive: true });
-
-    let scans: Record<string, unknown> = {};
-    try {
-      const content = await readFile(historyPath, "utf-8");
-      scans = JSON.parse(content).scans || {};
-    } catch (e: any) {
-      if (e.code !== "ENOENT") {
-        logger.error(`Failed to read history file: ${e.message}`);
-      }
-      scans = {};
-    }
+  await updateHistory(historyPath, (scans) => {
     scans[extensionId.toLowerCase()] = entry;
-    await writeFile(
-      historyPath,
-      JSON.stringify({ scans, last_updated: new Date().toISOString() }, null, 2)
-    );
   });
-
-  // Swallow rejections on the shared chain so one failed write doesn't
-  // poison every subsequent caller; individual callers still see their
-  // own error via the returned promise.
-  historyWriteChain = next.catch(() => {});
-  return next;
 }
 
 interface ExtensionScanOptions {
