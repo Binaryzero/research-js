@@ -1,0 +1,317 @@
+# Instincts generated from https://github.com/Binaryzero/research-js
+# Generated: 2026-07-08T20:07:01.579Z
+# Version: 2.0
+# NOTE: This file supplements (does not replace) any existing curated instincts.
+# High-confidence manually curated instincts should be preserved alongside these.
+
+---
+id: research-js-commit-length
+trigger: "when writing a commit message"
+confidence: 0.6
+domain: git
+source: repo-analysis
+source_repo: https://github.com/Binaryzero/research-js
+---
+
+# Research Js Commit Length
+
+## Action
+
+Write moderate-length commit messages (~58 characters)
+
+## Evidence
+
+- Average commit message length: 58 chars
+- Based on 3 commits
+
+---
+id: research-js-naming-files
+trigger: "when creating a new file"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/Binaryzero/research-js
+---
+
+# Research Js Naming Files
+
+## Action
+
+Use snake_case naming convention
+
+## Evidence
+
+- Analyzed file naming patterns in repository
+- Dominant pattern: snake_case
+
+---
+id: research-js-import-relative
+trigger: "when importing modules"
+confidence: 0.75
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/Binaryzero/research-js
+---
+
+# Research Js Import Relative
+
+## Action
+
+Use relative imports for project files
+
+## Evidence
+
+- Import analysis shows relative import pattern
+- Example: import { x } from '../lib/x'
+
+---
+id: research-js-export-style
+trigger: "when exporting from a module"
+confidence: 0.7
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/Binaryzero/research-js
+---
+
+# Research Js Export Style
+
+## Action
+
+Prefer named exports
+
+## Evidence
+
+- Export pattern analysis
+- Dominant style: named
+
+---
+id: research-js-test-separate
+trigger: "when writing tests"
+confidence: 0.8
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/Binaryzero/research-js
+---
+
+# Research Js Test Separate
+
+## Action
+
+Place tests in the tests/ or __tests__/ directory, mirroring src structure
+
+## Evidence
+
+- Separate test directory pattern detected
+- Tests live in dedicated test folders
+
+---
+id: research-js-instinct-file-naming
+trigger: "When creating a new file in the repository"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: Binaryzero/research-js
+---
+
+# Research Js Instinct File Naming
+
+## Action
+
+Name the file using snake_case convention
+
+## Evidence
+
+- Pattern in namingConventions.files: 'snake_case'
+
+---
+id: research-js-instinct-function-naming
+trigger: "When defining a new function"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: Binaryzero/research-js
+---
+
+# Research Js Instinct Function Naming
+
+## Action
+
+Use camelCase for the function name
+
+## Evidence
+
+- Pattern in namingConventions.functions: 'camelCase'
+
+---
+id: research-js-instinct-class-naming
+trigger: "When defining a new class"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: Binaryzero/research-js
+---
+
+# Research Js Instinct Class Naming
+
+## Action
+
+Use PascalCase for the class name
+
+## Evidence
+
+- Pattern in namingConventions.classes: 'PascalCase'
+
+---
+id: research-js-instinct-constant-naming
+trigger: "When defining a constant"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: Binaryzero/research-js
+---
+
+# Research Js Instinct Constant Naming
+
+## Action
+
+Use SCREAMING_SNAKE_CASE for the constant name
+
+## Evidence
+
+- Pattern in namingConventions.constants: 'SCREAMING_SNAKE_CASE'
+
+---
+id: research-js-instinct-import-style
+trigger: "When importing modules within the codebase"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: Binaryzero/research-js
+---
+
+# Research Js Instinct Import Style
+
+## Action
+
+Use relative import paths
+
+## Evidence
+
+- Pattern in importStyle: 'relative'
+
+---
+id: research-js-instinct-export-style
+trigger: "When exporting code from a module"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: Binaryzero/research-js
+---
+
+# Research Js Instinct Export Style
+
+## Action
+
+Use named exports
+
+## Evidence
+
+- Pattern in exportStyle: 'named'
+
+---
+id: research-js-instinct-error-handling
+trigger: "When handling errors in code"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: Binaryzero/research-js
+---
+
+# Research Js Instinct Error Handling
+
+## Action
+
+Use try-catch blocks for error handling
+
+## Evidence
+
+- Pattern in errorHandling.style: 'try-catch'
+
+---
+id: research-js-instinct-test-location
+trigger: "When adding or updating tests"
+confidence: 0.8
+domain: testing
+source: repo-analysis
+source_repo: Binaryzero/research-js
+---
+
+# Research Js Instinct Test Location
+
+## Action
+
+Place test files in the 'tests' folder, separate from source files
+
+## Evidence
+
+- Pattern in architecture.folderStructure.testLocation: 'separate'
+- Common folder: 'tests'
+
+---
+id: research-js-instinct-git-commit-prefix-fix
+trigger: "When committing a bug fix"
+confidence: 0.9
+domain: git
+source: repo-analysis
+source_repo: Binaryzero/research-js
+---
+
+# Research Js Instinct Git Commit Prefix Fix
+
+## Action
+
+Prefix the commit message with 'fix'
+
+## Evidence
+
+- Seen in commit: 'fix(review): clean up temp upload dir when the write stream pipeline fails'
+- Pattern in commits.prefixes: ['fix']
+
+---
+id: research-js-instinct-git-commit-format-length
+trigger: "When writing a commit message"
+confidence: 0.7
+domain: git
+source: repo-analysis
+source_repo: Binaryzero/research-js
+---
+
+# Research Js Instinct Git Commit Format Length
+
+## Action
+
+Keep the commit message concise, around 58 characters on average
+
+## Evidence
+
+- Pattern in commits.averageLength: 58
+
+---
+id: research-js-instinct-git-commit-format-scope
+trigger: "When writing a commit message for a specific area"
+confidence: 0.7
+domain: git
+source: repo-analysis
+source_repo: Binaryzero/research-js
+---
+
+# Research Js Instinct Git Commit Format Scope
+
+## Action
+
+Use the format 'type(scope): message' for commit messages
+
+## Evidence
+
+- Seen in commit: 'fix(review): clean up temp upload dir when the write stream pipeline fails'
+
