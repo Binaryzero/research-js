@@ -12,7 +12,7 @@ import { tmpdir } from 'os';
 import { fileURLToPath } from 'url';
 import { EventEmitter } from 'events';
 import { randomUUID } from 'crypto';
-import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync, readFileSync, rmSync } from 'fs';
+import { existsSync, mkdirSync, unlinkSync, writeFileSync, readFileSync, rmSync } from 'fs';
 import { readFile, writeFile, readdir, stat } from 'fs/promises';
 import { marked } from 'marked';
 import nunjucks from 'nunjucks';
@@ -432,17 +432,23 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
     
     if (existsSync(reportsDir)) {
       const files = (await readdir(reportsDir)).filter(f => f.endsWith('.md'));
-      
-      const statsPromises = files.map(async (file) => {
+
+      const statsResults = await Promise.allSettled(files.map(async (file) => {
         const s = await stat(join(reportsDir, file));
         return {
           name: file,
           mtime: s.mtime.toISOString(),
           size: s.size,
         };
-      });
+      }));
 
-      reports.push(...(await Promise.all(statsPromises)));
+      for (const result of statsResults) {
+        if (result.status === 'fulfilled') {
+          reports.push(result.value);
+        }
+        // A rejected stat (e.g. file deleted between readdir and stat) is
+        // skipped instead of failing the whole listing.
+      }
     }
     reports.sort((a, b) => b.mtime.localeCompare(a.mtime));
     return { reports };
