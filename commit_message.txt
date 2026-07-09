@@ -1,5 +1,0 @@
-⚡ Optimize verifyJudges to run checks in parallel
-
-💡 **What:** Replaced the sequential for loop in verifyJudges with Promise.all mapping over the array of judges to perform the availability check concurrently.
-🎯 **Why:** To improve performance. The previous code was awaiting network calls (model availability checks) sequentially, which scaled linearly O(n) with the number of judges. Since these network calls do not depend on each other, firing them in parallel reduces the overall time complexity to roughly O(1) (bounded by the slowest request).
-📊 **Measured Improvement:** A simulated benchmark with a 50ms availability delay and 5 judges showed a reduction in total time from ~253ms to ~51ms, representing an ~80% improvement over baseline. This matches the theoretical expectation where checking all judges concurrently takes roughly the time of checking one judge.
