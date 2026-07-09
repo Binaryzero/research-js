@@ -267,17 +267,16 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
           params[part.fieldname] = part.value as string;
         } else if (part.type === 'file' && part.filename) {
           // Save uploaded VSIX to a temp directory
-          const tempDir = `/tmp/vsix_upload_${Date.now()}_${randomUUID()}`;
-          await mkdir(tempDir, { recursive: true });
+          const tempDir = `/tmp/vsix_upload_${Date.now()}`;
+          mkdirSync(tempDir, { recursive: true });
           const safeFilename = basename(part.filename).replace(/[^a-zA-Z0-9._-]/g, '_') || 'upload.vsix';
           const filePath = join(tempDir, safeFilename);
-          try {
-            await pipeline(part.file, createWriteStream(filePath));
-            uploadedFilePath = filePath;
-          } catch (err) {
-            rmSync(tempDir, { recursive: true, force: true });
-            throw err;
+          const chunks: Buffer[] = [];
+          for await (const chunk of part.file) {
+            chunks.push(chunk);
           }
+          writeFileSync(filePath, Buffer.concat(chunks));
+          uploadedFilePath = filePath;
         }
       }
     } else {
@@ -433,25 +432,18 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
     const reports: Array<{ name: string; mtime: string; size: number }> = [];
     
     if (existsSync(reportsDir)) {
-      const files = (await readdir(reportsDir)).filter(f => f.endsWith('.md'));
+      const files = readdirSync(reportsDir).filter(f => f.endsWith('.md'));
 
-      const statsResults = await Promise.allSettled(files.map(async (file) => {
-        const s = await stat(join(reportsDir, file));
-        return {
+      for (const file of files) {
+        const stats = statSync(join(reportsDir, file));
+        reports.push({
           name: file,
-          mtime: s.mtime.toISOString(),
-          size: s.size,
-        };
-      }));
-
-      for (const result of statsResults) {
-        if (result.status === 'fulfilled') {
-          reports.push(result.value);
-        }
-        // A rejected stat (e.g. file deleted between readdir and stat) is
-        // skipped instead of failing the whole listing.
+          mtime: stats.mtime.toISOString(),
+          size: stats.size,
+        });
       }
     }
+
     reports.sort((a, b) => b.mtime.localeCompare(a.mtime));
     return { reports };
   });
@@ -1114,49 +1106,20 @@ ${indent(prompts.triage_batch?.user || '')}
   return { fastify, config };
 }
 
-// Serializes concurrent saveScanToHistory calls within this process so
-// interleaved read-modify-write cycles can't clobber each other (PR #5).
-let historyWriteChain: Promise<unknown> = Promise.resolve();
 
 /**
  * Persist one scan's summary into the JSON history file.
  *
- * Sole writer of the history file. Concurrent callers are serialized via
- * a module-level promise chain so no entry is lost when scans finish
- * near-simultaneously.
+ * Uses updateHistory from history.js for atomic, serialized writes.
  */
-async function saveScanToHistory(
+export async function saveScanToHistory(
   historyPath: string,
   extensionId: string,
   entry: Record<string, unknown>
 ): Promise<void> {
-  const next = historyWriteChain.then(async () => {
-    const historyDir = dirname(historyPath);
-    if (!existsSync(historyDir)) {
-      mkdirSync(historyDir, { recursive: true });
-    }
-
-    let scans: Record<string, unknown> = {};
-    if (existsSync(historyPath)) {
-      try {
-        scans = JSON.parse(await readFile(historyPath, 'utf-8')).scans || {};
-      } catch {
-        scans = {};
-      }
-    }
-
+  await updateHistory(historyPath, (scans) => {
     scans[extensionId.toLowerCase()] = entry;
-    await writeFile(
-      historyPath,
-      JSON.stringify({ scans, last_updated: new Date().toISOString() }, null, 2)
-    );
   });
-
-  // Swallow rejections on the shared chain so one failed write doesn't
-  // poison every subsequent caller; individual callers still see their
-  // own error via the returned promise.
-  historyWriteChain = next.catch(() => {});
-  return next;
 }
 
 interface ExtensionScanOptions {
