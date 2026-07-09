@@ -12,9 +12,8 @@ import { tmpdir } from 'os';
 import { fileURLToPath } from 'url';
 import { EventEmitter } from 'events';
 import { randomUUID } from 'crypto';
-import { existsSync, mkdirSync, unlinkSync, writeFileSync, readFileSync, rmSync, createWriteStream } from 'fs';
-import { readFile, writeFile, readdir, stat, mkdir } from 'fs/promises';
-import { pipeline } from 'stream/promises';
+import { existsSync, mkdirSync, unlinkSync, writeFileSync, readFileSync, rmSync } from 'fs';
+import { readdir, stat, writeFile } from 'fs/promises';
 import { marked } from 'marked';
 import nunjucks from 'nunjucks';
 
@@ -429,22 +428,30 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
   // API: List reports
   // ---------------------------------------------------------------
   fastify.get('/api/reports', async () => {
-    const reports: Array<{ name: string; mtime: string; size: number }> = [];
-    
-    if (existsSync(reportsDir)) {
-      const files = readdirSync(reportsDir).filter(f => f.endsWith('.md'));
+    if (!existsSync(reportsDir)) {
+      return { reports: [] };
+    }
 
-      for (const file of files) {
-        const stats = statSync(join(reportsDir, file));
-        reports.push({
+    const files = (await readdir(reportsDir)).filter(f => f.endsWith('.md'));
+
+    // stat each file concurrently; skip any that fail (e.g. deleted mid-scan)
+    // rather than failing the whole listing.
+    const settled = await Promise.allSettled(
+      files.map(async (file) => {
+        const stats = await stat(join(reportsDir, file));
+        return {
           name: file,
           mtime: stats.mtime.toISOString(),
           size: stats.size,
-        });
-      }
-    }
+        };
+      })
+    );
 
-    reports.sort((a, b) => b.mtime.localeCompare(a.mtime));
+    const reports = settled
+      .filter((r): r is PromiseFulfilledResult<{ name: string; mtime: string; size: number }> => r.status === 'fulfilled')
+      .map((r) => r.value)
+      .sort((a, b) => b.mtime.localeCompare(a.mtime));
+
     return { reports };
   });
   
@@ -692,33 +699,43 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
         pageSize: params.page_size || 50,
       });
       
-      // Augment with scan history (case-insensitive lookup)
-      const scans = loadHistory(historyPath);
-      for (const ext of results) {
-        const found = findScanByExtensionId(scans, ext.extensionId);
-        if (found) {
-          const info = found.data;
-          const score = (info.llm_adjusted_score as number) ?? (info.suspicion_score as number) ?? 0;
-          ext.scan = {
-            score,
-            risk_label: getRiskLabel(score),
-            risk_color: getRiskColor(score),
-            findings_count: (info.findings_count as number) || 0,
-            llm_analyzed: (info.llm_analyzed as boolean) || false,
-            report_name: info.report_path ? basename(info.report_path as string) : '',
-            scan_date: (info.scan_date as string) || '',
-            breakdown: (info.breakdown as Record<string, unknown>) || {},
-            static_score: info.suspicion_score as number | undefined,
-            // Include true_positives for LLM-analyzed extensions (used by batch UI)
-            ...(info.true_positives !== undefined && { true_positives: info.true_positives as number }),
-            verdict: (info.verdict as string) || null,
-          };
+      // Augment with scan history (case-insensitive lookup). A corrupt history
+      // file (loadHistory now throws on parse failure) must not blank the whole
+      // search — degrade to un-augmented results instead of a blanket 500.
+      try {
+        const scans = loadHistory(historyPath);
+        for (const ext of results) {
+          const found = findScanByExtensionId(scans, ext.extensionId);
+          if (found) {
+            const info = found.data;
+            const score = (info.llm_adjusted_score as number) ?? (info.suspicion_score as number) ?? 0;
+            ext.scan = {
+              score,
+              risk_label: getRiskLabel(score),
+              risk_color: getRiskColor(score),
+              findings_count: (info.findings_count as number) || 0,
+              llm_analyzed: (info.llm_analyzed as boolean) || false,
+              report_name: info.report_path ? basename(info.report_path as string) : '',
+              scan_date: (info.scan_date as string) || '',
+              breakdown: (info.breakdown as Record<string, unknown>) || {},
+              static_score: info.suspicion_score as number | undefined,
+              // Include true_positives for LLM-analyzed extensions (used by batch UI)
+              ...(info.true_positives !== undefined && { true_positives: info.true_positives as number }),
+              verdict: (info.verdict as string) || null,
+            };
+          }
         }
+      } catch (histError) {
+        logger.error({ err: histError }, 'History augmentation failed; returning un-augmented search results');
       }
-      
+
       return { results, total: results.length };
     } catch (error) {
-      return reply.status(500).send({ error: 'Marketplace search failed' });
+      // Surface the real cause instead of swallowing it behind a generic message —
+      // this is what made the "search returns nothing" failure so hard to diagnose.
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error({ err: error }, 'Marketplace search failed');
+      return reply.status(500).send({ error: `Marketplace search failed: ${message}` });
     }
   });
   

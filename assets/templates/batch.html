@@ -92,6 +92,7 @@
                         <option value="Low Risk">Low Risk</option>
                     </select>
                 </div>
+                <button type="button" class="btn btn-outline btn-sm" onclick="clearResultFilters()">Clear filters</button>
             </div>
         </div>
 
@@ -169,24 +170,29 @@ function loadFilterSettings() {
     if (saved.sort_by) document.getElementById('sort-by').value = saved.sort_by;
     if (!saved.sort_by) document.getElementById('sort-by').value = 'Published Date';
     if (saved.page_size) document.getElementById('page-size').value = saved.page_size;
-    // Restore result filters
-    if (saved.filter_scan) document.getElementById('filter-scan-status').value = saved.filter_scan;
-    if (saved.filter_verdict) document.getElementById('filter-verdict').value = saved.filter_verdict;
-    if (saved.filter_llm) document.getElementById('filter-llm').value = saved.filter_llm;
-    if (saved.filter_risk) document.getElementById('filter-risk').value = saved.filter_risk;
+    // Result filters are intentionally NOT restored across page loads. Persisting
+    // them silently hid every search result: the default sort returns brand-new
+    // extensions (no scan), and every filter option except "unscanned" requires a
+    // scan to exist — so one stale saved filter zeroed the page on load, forever.
+    // Filters always start at "All"; in-session filtering still works.
 }
 
 function saveFilterSettings() {
+    // Persist only the search parameters, never the result filters (see above).
     const settings = {
         category: document.getElementById('category').value,
         sort_by: document.getElementById('sort-by').value,
         page_size: document.getElementById('page-size').value,
-        filter_scan: document.getElementById('filter-scan-status').value,
-        filter_verdict: document.getElementById('filter-verdict').value,
-        filter_llm: document.getElementById('filter-llm').value,
-        filter_risk: document.getElementById('filter-risk').value,
     };
     localStorage.setItem('batchFilters', JSON.stringify(settings));
+}
+
+function clearResultFilters() {
+    document.getElementById('filter-scan-status').value = '';
+    document.getElementById('filter-verdict').value = '';
+    document.getElementById('filter-llm').value = '';
+    document.getElementById('filter-risk').value = '';
+    applyResultFilters();
 }
 
 // -- Filter listeners for auto-search --
@@ -271,8 +277,15 @@ function doSearch(e) {
 async function executeSearch(formData) {
     try {
         const resp = await fetch('/api/search', { method: 'POST', body: formData });
+        if (!resp.ok) {
+            let detail = 'Search failed (' + resp.status + ')';
+            try { const err = await resp.json(); detail = err.error || err.detail || detail; } catch {}
+            throw new Error(detail);
+        }
         const data = await resp.json();
-        searchResults = data.results;
+        // Guard against a malformed/empty body so a bad response can't throw
+        // inside the filter/render path and blank the page with no explanation.
+        searchResults = Array.isArray(data.results) ? data.results : [];
         selectedExtensions.clear();
         updateBulkActions();
         applyResultFilters();
@@ -292,8 +305,10 @@ function renderResults(results) {
     const unanalyzed = results.filter(r => r.scan && !r.scan.llm_analyzed);
     const scannedCount = results.length - unscanned.length;
 
-    document.getElementById('results-title').textContent =
-        `${results.length} results (${scannedCount} scanned, ${unscanned.length} new, ${unanalyzed.length} LLM-ready)`;
+    const hiddenByFilters = Math.max(0, searchResults.length - results.length);
+    let titleText = `${results.length} results (${scannedCount} scanned, ${unscanned.length} new, ${unanalyzed.length} LLM-ready)`;
+    if (hiddenByFilters > 0) titleText += ` · ${hiddenByFilters} hidden by filters`;
+    document.getElementById('results-title').textContent = titleText;
 
     const scanAllBtn = document.getElementById('scan-all-btn');
     const llmAllBtn = document.getElementById('llm-all-btn');
