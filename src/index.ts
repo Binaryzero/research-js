@@ -535,45 +535,37 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
       offset?: number;
     };
     
-    let scans = loadHistory(historyPath);
-    const entries = Object.entries(scans);
-    
+    const scans = loadHistory(historyPath);
+    // Filters COMPOSE: each narrows the running result rather than re-deriving
+    // from the full history (the previous code re-filtered the original entries
+    // in every block, so only the last-applied filter took effect).
+    let entries = Object.entries(scans);
+
     // Filter by search term
     if (query.search) {
       const searchLower = query.search.toLowerCase();
-      const filtered = entries.filter(([eid]) => eid.toLowerCase().includes(searchLower));
-      scans = Object.fromEntries(filtered);
+      entries = entries.filter(([eid]) => eid.toLowerCase().includes(searchLower));
     }
-    
+
     // Filter by risk level
     if (query.risk) {
-      const filtered = entries.filter(([, info]) => {
+      entries = entries.filter(([, info]) => {
         const scanInfo = info as Record<string, unknown>;
         const score = (scanInfo.llm_adjusted_score as number) ?? (scanInfo.suspicion_score as number) ?? 0;
-        const label = getRiskLabel(score);
-        return label === query.risk;
+        return getRiskLabel(score) === query.risk;
       });
-      scans = Object.fromEntries(filtered);
     }
-    
+
     // Filter by LLM status
     if (query.llm === 'llm') {
-      const filtered = entries.filter(([, info]) => {
-        const scanInfo = info as Record<string, unknown>;
-        return scanInfo.llm_analyzed === true;
-      });
-      scans = Object.fromEntries(filtered);
+      entries = entries.filter(([, info]) => (info as Record<string, unknown>).llm_analyzed === true);
     } else if (query.llm === 'no-llm') {
-      const filtered = entries.filter(([, info]) => {
-        const scanInfo = info as Record<string, unknown>;
-        return scanInfo.llm_analyzed !== true;
-      });
-      scans = Object.fromEntries(filtered);
+      entries = entries.filter(([, info]) => (info as Record<string, unknown>).llm_analyzed !== true);
     }
-    
-    // Calculate display values
+
+    // Calculate display values from the composed result
     const displayScans: Record<string, Record<string, unknown>> = {};
-    for (const [eid, info] of Object.entries(scans)) {
+    for (const [eid, info] of entries) {
       const scanInfo = info as Record<string, unknown>;
       const score = (scanInfo.llm_adjusted_score as number) ?? (scanInfo.suspicion_score as number) ?? 0;
       displayScans[eid] = {
