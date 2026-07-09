@@ -1055,7 +1055,7 @@ ${indent(prompts.triage_batch?.user || '')}
       reportsDir: config.reportsDir,
       config,
       prompts: getPrompts(),
-    });
+    }).catch(err => task.fail(err.message));
 
     return { scan_id: task.id };
   });
