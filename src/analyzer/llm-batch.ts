@@ -281,73 +281,19 @@ export function parseStrategicAssessments(
     let parsed: unknown[] = [];
     let jsonStr: string | null = null;
 
-        // Helper: try to fix common JSON issues and parse
-    const tryParse = (text: string): any => {
-      if (!text) return null;
-
-      const attempt = (str: string) => {
+    // Helper: try to fix common JSON issues and parse
+    const tryParse = (text: string): unknown[] | null => {
+      try {
+        return JSON.parse(text) as unknown[];
+      } catch {
+        // Try fixing trailing commas before closing brackets
+        const fixed = text.replace(/,(\s*[}\]])/g, '$1');
         try {
-          return JSON.parse(str);
+          return JSON.parse(fixed) as unknown[];
         } catch {
           return null;
         }
-      };
-
-      // 1. Try original
-      let result = attempt(text);
-      if (result) return result;
-
-      // 2. Clean and apply fixes
-      let fixed = text.trim();
-
-      // Remove markdown code blocks
-      fixed = fixed.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
-      result = attempt(fixed);
-      if (result) return result;
-
-      // Common fixes: trailing commas and Python-style booleans/nulls
-      fixed = fixed
-        .replace(/,(\s*[}\]])/g, '$1')
-        .replace(/:\s*True\b/g, ': true')
-        .replace(/:\s*False\b/g, ': false')
-        .replace(/:\s*None\b/g, ': null');
-
-      result = attempt(fixed);
-      if (result) return result;
-
-      // Try converting single quotes to double quotes
-      // Note: this is a naive replacement and might fail if there are escaped quotes or single quotes in strings
-      const doubleQuoted = fixed
-        .replace(/'([^'\\]*(?:\\.[^'\\]*)*)'/g, '"$1"')
-        .replace(/\\'/g, "'");
-      result = attempt(doubleQuoted);
-      if (result) return result;
-
-      // Try fixing unescaped newlines in strings
-      const fixNewlines = (str: string) => {
-        let inString = false;
-        let escaped = false;
-        let out = '';
-        for (let i = 0; i < str.length; i++) {
-          const char = str[i];
-          if (char === '"' && !escaped) inString = !inString;
-          if (inString && (char === '\n' || char === '\r')) {
-            out += char === '\n' ? '\\n' : '\\r';
-          } else {
-            out += char;
-          }
-          escaped = char === '\\' && !escaped;
-        }
-        return out;
-      };
-
-      result = attempt(fixNewlines(fixed));
-      if (result) return result;
-
-      result = attempt(fixNewlines(doubleQuoted));
-      if (result) return result;
-
-      return null;
+      }
     };
 
     // Approach 1: Try direct parse first
@@ -358,7 +304,7 @@ export function parseStrategicAssessments(
 
     // Approach 2: Try regex extraction if direct parse failed
     if (parsed.length === 0 || !Array.isArray(parsed)) {
-      const arrayMatch = response.match(/\[\s*\{[\s\S]*?\}\s*\]/);
+      const arrayMatch = response.match(/\[[\s\S]*\]/);
       if (arrayMatch) {
         jsonStr = arrayMatch[0];
         parsed = tryParse(jsonStr) || [];
@@ -398,11 +344,10 @@ export function parseStrategicAssessments(
           }
         }
         if (objEnd === -1) break;
-        const candidate = response.slice(objStart, objEnd);
-        const obj = tryParse(candidate);
-        if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
-          objects.push(obj);
-        }
+        try {
+          const obj = JSON.parse(response.slice(objStart, objEnd));
+          if (obj && typeof obj === 'object') objects.push(obj);
+        } catch { /* skip malformed */ }
         searchFrom = objEnd;
       }
       if (objects.length > 0) {

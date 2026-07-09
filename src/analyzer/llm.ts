@@ -759,71 +759,18 @@ If there are too many findings to assess completely, prioritize assessing the fi
       let parsed: unknown[] = [];
 
       // Helper: try to fix common JSON issues and parse
-      const tryParse = (text: string): any => {
-        if (!text) return null;
-
-        const attempt = (str: string) => {
+      const tryParse = (text: string): unknown[] | null => {
+        try {
+          return JSON.parse(text) as unknown[];
+        } catch {
+          // Try fixing trailing commas before closing brackets
+          const fixed = text.replace(/,(\s*[}\]])/g, '$1');
           try {
-            return JSON.parse(str);
+            return JSON.parse(fixed) as unknown[];
           } catch {
             return null;
           }
-        };
-
-        // 1. Try original
-        let result = attempt(text);
-        if (result) return result;
-
-        // 2. Clean and apply fixes
-        let fixed = text.trim();
-
-        // Remove markdown code blocks
-        fixed = fixed.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
-        result = attempt(fixed);
-        if (result) return result;
-
-        // Common fixes: trailing commas and Python-style booleans/nulls
-        fixed = fixed
-          .replace(/,(\s*[}\]])/g, '$1')
-          .replace(/:\s*True\b/g, ': true')
-          .replace(/:\s*False\b/g, ': false')
-          .replace(/:\s*None\b/g, ': null');
-
-        result = attempt(fixed);
-        if (result) return result;
-
-        // Try converting single quotes to double quotes
-        const doubleQuoted = fixed
-          .replace(/'([^'\\]*(?:\\.[^'\\]*)*)'/g, '"$1"')
-          .replace(/\\'/g, "'");
-        result = attempt(doubleQuoted);
-        if (result) return result;
-
-        // Try fixing unescaped newlines in strings
-        const fixNewlines = (str: string) => {
-          let inString = false;
-          let escaped = false;
-          let out = '';
-          for (let i = 0; i < str.length; i++) {
-            const char = str[i];
-            if (char === '"' && !escaped) inString = !inString;
-            if (inString && (char === '\n' || char === '\r')) {
-              out += char === '\n' ? '\\n' : '\\r';
-            } else {
-              out += char;
-            }
-            escaped = char === '\\' && !escaped;
-          }
-          return out;
-        };
-
-        result = attempt(fixNewlines(fixed));
-        if (result) return result;
-
-        result = attempt(fixNewlines(doubleQuoted));
-        if (result) return result;
-
-        return null;
+        }
       };
 
       // Approach 1: Try direct parse with fix
@@ -834,9 +781,11 @@ If there are too many findings to assess completely, prioritize assessing the fi
       } else {
         getComponentLogger('LLM').info('Bulk parse: Direct parse failed, trying regex...');
         // Approach 2: Try regex extraction with fix - handle markdown code blocks
-        getComponentLogger('LLM').info('Bulk parse: Trying regex extraction...');
+        // First strip markdown formatting
+        const cleaned = response.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+        getComponentLogger('LLM').info(`Bulk parse: Cleaned response starts with "${cleaned.slice(0, 30)}..."`);
 
-        const jsonMatch = response.match(/\[\s*\{[\s\S]*?\}\s*\]/);
+        const jsonMatch = cleaned.match(/\[[\s\S]*\]/);
         if (jsonMatch) {
           getComponentLogger('LLM').info(`Bulk parse: Regex found array, length ${jsonMatch[0].length}`);
           parsed = tryParse(jsonMatch[0]) || [];
@@ -844,7 +793,7 @@ If there are too many findings to assess completely, prioritize assessing the fi
             getComponentLogger('LLM').info(`Bulk mode: Regex extract succeeded with ${parsed.length} items`);
           }
         } else {
-          getComponentLogger('LLM').info('Bulk parse: Regex found no array');
+          getComponentLogger('LLM').info('Bulk parse: Regex found no array in cleaned text');
         }
       }
 
@@ -998,71 +947,18 @@ If there are too many findings to assess completely, prioritize assessing the fi
         let jsonStr: string | null = null;
 
         // Helper: try to fix common JSON issues and parse
-        const tryParse = (text: string): any => {
-          if (!text) return null;
-
-          const attempt = (str: string) => {
+        const tryParse = (text: string): unknown[] | null => {
+          try {
+            return JSON.parse(text) as unknown[];
+          } catch {
+            // Try fixing trailing commas before closing brackets
+            const fixed = text.replace(/,(\s*[}\]])/g, '$1');
             try {
-              return JSON.parse(str);
+              return JSON.parse(fixed) as unknown[];
             } catch {
               return null;
             }
-          };
-
-          // 1. Try original
-          let result = attempt(text);
-          if (result) return result;
-
-          // 2. Clean and apply fixes
-          let fixed = text.trim();
-
-          // Remove markdown code blocks
-          fixed = fixed.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
-          result = attempt(fixed);
-          if (result) return result;
-
-          // Common fixes: trailing commas and Python-style booleans/nulls
-          fixed = fixed
-            .replace(/,(\s*[}\]])/g, '$1')
-            .replace(/:\s*True\b/g, ': true')
-            .replace(/:\s*False\b/g, ': false')
-            .replace(/:\s*None\b/g, ': null');
-
-          result = attempt(fixed);
-          if (result) return result;
-
-          // Try converting single quotes to double quotes
-          const doubleQuoted = fixed
-            .replace(/'([^'\\]*(?:\\.[^'\\]*)*)'/g, '"$1"')
-            .replace(/\\'/g, "'");
-          result = attempt(doubleQuoted);
-          if (result) return result;
-
-          // Try fixing unescaped newlines in strings
-          const fixNewlines = (str: string) => {
-            let inString = false;
-            let escaped = false;
-            let out = '';
-            for (let i = 0; i < str.length; i++) {
-              const char = str[i];
-              if (char === '"' && !escaped) inString = !inString;
-              if (inString && (char === '\n' || char === '\r')) {
-                out += char === '\n' ? '\\n' : '\\r';
-              } else {
-                out += char;
-              }
-              escaped = char === '\\' && !escaped;
-            }
-            return out;
-          };
-
-          result = attempt(fixNewlines(fixed));
-          if (result) return result;
-
-          result = attempt(fixNewlines(doubleQuoted));
-          if (result) return result;
-
-          return null;
+          }
         };
 
         // Approach 1: Try direct parse first
@@ -1073,7 +969,7 @@ If there are too many findings to assess completely, prioritize assessing the fi
 
         // Approach 2: Try regex extraction if direct parse failed
         if (parsed.length === 0) {
-          const arrayMatch = response.match(/\[\s*\{[\s\S]*?\}\s*\]/);
+          const arrayMatch = response.match(/\[[\s\S]*\]/);
           if (arrayMatch) {
             jsonStr = arrayMatch[0];
             parsed = tryParse(jsonStr) || [];
@@ -1730,16 +1626,11 @@ export class ConsensusOrchestrator {
    * Verify all configured judges are reachable. Throws if any required judge is down.
    */
   async verifyJudges(): Promise<void> {
-    const availabilities = await Promise.all(this.judges.map(async (judge) => {
-      try {
-        return await judge.isAvailable();
-      } catch {
-        return false;
+    for (const judge of this.judges) {
+      const available = await judge.isAvailable();
+      if (!available) {
+        throw new Error(`Judge model is not reachable. Disable the judge or fix the connection before running LLM analysis.`);
       }
-    }));
-
-    if (availabilities.some(available => !available)) {
-      throw new Error(`Judge model is not reachable. Disable the judge or fix the connection before running LLM analysis.`);
     }
   }
 
