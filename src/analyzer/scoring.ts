@@ -25,6 +25,14 @@ export function setScoringConfig(config: ScoringConfig): void {
   const posInt = (val: number | undefined, dflt: number, minVal = 0): number =>
     typeof val === 'number' && Number.isFinite(val) && val >= minVal ? Math.floor(val) : dflt;
 
+  // Enforce the descending-order invariant (verySuspicious >= suspicious >= moderate)
+  // programmatically, not just via the Zod .refine (which only guards the config-file
+  // path). This setter also serves direct/programmatic callers, and out-of-order
+  // thresholds would make thresholdRows() walk high→low incorrectly and mislabel risk.
+  const moderate = posInt(config?.thresholds?.moderate, DEFAULT_SCORING.thresholds.moderate, 1);
+  const suspicious = Math.max(posInt(config?.thresholds?.suspicious, DEFAULT_SCORING.thresholds.suspicious, 1), moderate);
+  const verySuspicious = Math.max(posInt(config?.thresholds?.verySuspicious, DEFAULT_SCORING.thresholds.verySuspicious, 1), suspicious);
+
   activeScoring = {
     riskWeights: {
       critical: posInt(config?.riskWeights?.critical, DEFAULT_SCORING.riskWeights.critical),
@@ -38,11 +46,7 @@ export function setScoringConfig(config: ScoringConfig): void {
       malicious: posInt(config?.verdictBoost?.malicious, DEFAULT_SCORING.verdictBoost.malicious),
       suspicious: posInt(config?.verdictBoost?.suspicious, DEFAULT_SCORING.verdictBoost.suspicious),
     },
-    thresholds: {
-      verySuspicious: posInt(config?.thresholds?.verySuspicious, DEFAULT_SCORING.thresholds.verySuspicious, 1),
-      suspicious: posInt(config?.thresholds?.suspicious, DEFAULT_SCORING.thresholds.suspicious, 1),
-      moderate: posInt(config?.thresholds?.moderate, DEFAULT_SCORING.thresholds.moderate, 1),
-    },
+    thresholds: { verySuspicious, suspicious, moderate },
   };
 }
 
