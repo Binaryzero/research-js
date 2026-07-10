@@ -233,8 +233,28 @@
                         </div>
                         <div class="form-group">
                             <label for="concurrency">LLM Concurrency</label>
-                            <input type="number" id="concurrency" min="1" max="50" value="10">
-                            <p class="form-hint">Number of parallel LLM requests during analysis.</p>
+                            <input type="number" id="concurrency" min="1" max="50" value="20">
+                            <p class="form-hint">Parallel LLM requests during analysis. Total in-flight with judges = this × (1 + judges).</p>
+                        </div>
+                        <div class="form-group">
+                            <label for="tier-a-batch-size">Tier-A Batch Size</label>
+                            <input type="number" id="tier-a-batch-size" min="1" max="50" value="5">
+                            <p class="form-hint">Findings per high-risk (injection/credentials) triage batch. Smaller = more focused per call.</p>
+                        </div>
+                        <div class="form-group">
+                            <label for="consensus-votes">Consensus Votes</label>
+                            <input type="number" id="consensus-votes" min="1" max="9" value="3">
+                            <p class="form-hint">Votes cast per high/critical finding when reaching consensus (majority wins).</p>
+                        </div>
+                        <div class="form-group">
+                            <label>Evidence Length — chars of code sent per finding, by mode</label>
+                            <div style="display:grid; grid-template-columns:repeat(2,1fr); gap:var(--space-2);">
+                                <div><label for="evidence-strategic" class="form-hint">Strategic</label><input type="number" id="evidence-strategic" min="100" max="200000" value="600"></div>
+                                <div><label for="evidence-triage" class="form-hint">Triage</label><input type="number" id="evidence-triage" min="100" max="200000" value="1500"></div>
+                                <div><label for="evidence-bulk" class="form-hint">Bulk</label><input type="number" id="evidence-bulk" min="100" max="200000" value="800"></div>
+                                <div><label for="evidence-individual" class="form-hint">Individual</label><input type="number" id="evidence-individual" min="100" max="200000" value="1500"></div>
+                            </div>
+                            <p class="form-hint">More context reduces false positives but uses more of the model's context window per call.</p>
                         </div>
                         <div class="form-group">
                             <label for="prompt-profile">Prompt Profile</label>
@@ -607,7 +627,15 @@ async function loadAppConfig() {
         // Consensus & scan options
         document.getElementById('judges-validate-all').checked = appConfig.consensus?.judgesValidateAllFindings || false;
         document.getElementById('assessment-mode').value = appConfig.assessmentMode || 'strategic';
-        document.getElementById('concurrency').value = appConfig.concurrency || 10;
+        document.getElementById('concurrency').value = appConfig.concurrency || 20;
+        const tuning = appConfig.llmTuning || {};
+        const ev = tuning.evidenceMaxChars || {};
+        document.getElementById('tier-a-batch-size').value = tuning.tierABatchSize ?? 5;
+        document.getElementById('consensus-votes').value = tuning.consensusVotes ?? 3;
+        document.getElementById('evidence-strategic').value = ev.strategic ?? 600;
+        document.getElementById('evidence-triage').value = ev.triage ?? 1500;
+        document.getElementById('evidence-bulk').value = ev.bulk ?? 800;
+        document.getElementById('evidence-individual').value = ev.individual ?? 1500;
         document.getElementById('default-no-llm').checked = appConfig.defaultNoLlm || false;
         document.getElementById('default-full').checked = appConfig.defaultFull || false;
         document.getElementById('prompt-profile').value = appConfig.promptProfile || 'default';
@@ -823,7 +851,17 @@ async function saveAllSettings(e) {
         },
         assessmentMode: document.getElementById('assessment-mode').value,
         promptProfile: document.getElementById('prompt-profile').value || 'default',
-        concurrency: parseInt(document.getElementById('concurrency').value) || 10,
+        concurrency: parseInt(document.getElementById('concurrency').value, 10) || 20,
+        llmTuning: {
+            tierABatchSize: parseInt(document.getElementById('tier-a-batch-size').value, 10) || 5,
+            consensusVotes: parseInt(document.getElementById('consensus-votes').value, 10) || 3,
+            evidenceMaxChars: {
+                strategic: parseInt(document.getElementById('evidence-strategic').value, 10) || 600,
+                triage: parseInt(document.getElementById('evidence-triage').value, 10) || 1500,
+                bulk: parseInt(document.getElementById('evidence-bulk').value, 10) || 800,
+                individual: parseInt(document.getElementById('evidence-individual').value, 10) || 1500,
+            },
+        },
         defaultNoLlm: document.getElementById('default-no-llm').checked,
         defaultFull: document.getElementById('default-full').checked,
     };

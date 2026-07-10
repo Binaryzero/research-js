@@ -30,6 +30,26 @@ export const ConsensusConfigSchema = z.object({
 });
 
 /**
+ * Per-mode evidence length limits (characters of finding code sent to the LLM).
+ * Each field defaults to its historical hardcoded value so behavior is preserved.
+ */
+export const EvidenceMaxCharsSchema = z.object({
+  strategic: z.number().min(100).max(200000).default(600),
+  triage: z.number().min(100).max(200000).default(1500),
+  bulk: z.number().min(100).max(200000).default(800),
+  individual: z.number().min(100).max(200000).default(1500),
+});
+
+/**
+ * Pipeline-level LLM tuning knobs (previously hardcoded in the analyzer).
+ */
+export const LlmTuningSchema = z.object({
+  tierABatchSize: z.number().min(1).max(50).default(5),
+  consensusVotes: z.number().min(1).max(9).default(3),
+  evidenceMaxChars: EvidenceMaxCharsSchema.default({}),
+});
+
+/**
  * Full application configuration schema
  */
 export const AppConfigSchema = z.object({
@@ -40,6 +60,7 @@ export const AppConfigSchema = z.object({
   assessmentMode: z.enum(['strategic', 'bulk']),
   promptProfile: z.string(),
   concurrency: z.number().min(1).max(50),
+  llmTuning: LlmTuningSchema.default({}),
   defaultNoLlm: z.boolean(),
   defaultFull: z.boolean(),
 });

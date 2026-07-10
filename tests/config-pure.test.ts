@@ -5,7 +5,38 @@
 import { describe, it, expect } from 'vitest';
 import { slotToLlmConfig, getPromptsForProfile } from '../src/config.js';
 import type { PromptConfig } from '../src/config.js';
+import { LlmTuningSchema, AppConfigSchema } from '../src/schemas/config.js';
 import { makeModelSlot, makeAppConfig, makePromptConfig } from './fixtures.js';
+
+// ─── LlmTuning config surface ──────────────────────────────────
+
+describe('LlmTuningSchema', () => {
+  it('fills every knob with its behavior-preserving default from {}', () => {
+    const t = LlmTuningSchema.parse({});
+    expect(t).toEqual({
+      tierABatchSize: 5,
+      consensusVotes: 3,
+      evidenceMaxChars: { strategic: 600, triage: 1500, bulk: 800, individual: 1500 },
+    });
+  });
+
+  it('keeps other defaults when only one knob is provided', () => {
+    const t = LlmTuningSchema.parse({ tierABatchSize: 12, evidenceMaxChars: { triage: 8000 } });
+    expect(t.tierABatchSize).toBe(12);
+    expect(t.consensusVotes).toBe(3);
+    expect(t.evidenceMaxChars).toEqual({ strategic: 600, triage: 8000, bulk: 800, individual: 1500 });
+  });
+
+  it('rejects out-of-range values', () => {
+    expect(LlmTuningSchema.safeParse({ tierABatchSize: 0 }).success).toBe(false);
+    expect(LlmTuningSchema.safeParse({ consensusVotes: 99 }).success).toBe(false);
+  });
+
+  it('lets a config.json without llmTuning validate (partial)', () => {
+    const raw = { version: '1', concurrency: 20 };
+    expect(AppConfigSchema.partial().safeParse(raw).success).toBe(true);
+  });
+});
 
 // ─── slotToLlmConfig ───────────────────────────────────────────
 
@@ -60,13 +91,13 @@ describe('slotToLlmConfig', () => {
     expect(result.assessmentMode).toBe('strategic');
   });
 
-  it('returns a plain object with exactly 10 keys', () => {
+  it('returns a plain object with exactly 11 keys', () => {
     const result = slotToLlmConfig(makeModelSlot(), makeAppConfig());
     const keys = Object.keys(result);
-    expect(keys).toHaveLength(10);
+    expect(keys).toHaveLength(11);
     expect(keys).toEqual(expect.arrayContaining([
       'model', 'baseUrl', 'provider', 'timeout', 'maxTokens',
-      'temperature', 'concurrency', 'assessmentMode', 'apiKey', 'batchSize',
+      'temperature', 'concurrency', 'assessmentMode', 'apiKey', 'batchSize', 'llmTuning',
     ]));
   });
 });

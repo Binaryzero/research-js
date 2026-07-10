@@ -205,6 +205,21 @@ export interface PatternsConfig {
   endpoint_filtering?: Record<string, unknown>;
 }
 
+// Max evidence characters passed to the LLM per assessment mode.
+export interface EvidenceMaxChars {
+  strategic: number;   // strategic bulk prompt (default 600)
+  triage: number;      // triage batch prompt (default 1500)
+  bulk: number;        // bulk-mode prompt (default 800)
+  individual: number;  // single-finding / consensus prompt (default 1500)
+}
+
+// Pipeline-level LLM tuning knobs (not per-model). Previously hardcoded.
+export interface LlmTuning {
+  tierABatchSize: number;   // findings per high-risk (tier A) triage batch (default 5)
+  consensusVotes: number;   // total votes per high/critical finding in consensus (default 3)
+  evidenceMaxChars: EvidenceMaxChars;
+}
+
 // LLM Configuration
 export interface LlmConfig {
   model: string;
@@ -218,6 +233,7 @@ export interface LlmConfig {
   stream?: boolean; // Enable streaming for large responses
   apiKey?: string; // Optional API key for OpenAI-compatible endpoints
   batchSize?: number; // Max findings per triage batch (default: 20)
+  llmTuning?: LlmTuning; // Pipeline tuning knobs (from AppConfig)
 }
 
 // Multi-model configuration for consensus
@@ -248,6 +264,7 @@ export interface AppConfig {
   assessmentMode: 'strategic' | 'bulk';
   promptProfile: string;    // Global prompt profile — applies to all models uniformly
   concurrency: number;
+  llmTuning: LlmTuning;
   defaultNoLlm: boolean;
   defaultFull: boolean;
 }
