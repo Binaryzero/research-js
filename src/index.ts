@@ -1007,6 +1007,10 @@ ${indent(prompts.triage_batch?.user || '')}
 
     getComponentLogger('LLM Analyze').info({ modelName, assessmentMode }, 'Using model');
 
+    // Reuse the stored findings from the prior static scan when available, so we
+    // don't re-download and re-run static analysis just to feed the LLM.
+    const persisted = loadPersistedResult(config.reportsDir, `${publisher}.${extensionName}`);
+
     // Run LLM analysis in background
     runScan(task, downloadUrl, {
       noLlm: false,
@@ -1016,6 +1020,7 @@ ${indent(prompts.triage_batch?.user || '')}
       config: configWithMode,
       prompts,
       extensionInfo: { publisher, extension: extensionName },
+      precomputedResult: persisted ?? undefined,
     }).catch(err => task.fail(err instanceof Error ? err.message : String(err)));
 
     return { scan_id: task.id };
@@ -1143,6 +1148,8 @@ interface ExtensionScanOptions {
   extensionInfo?: { publisher: string; extension: string } | null;
   /** Used by batch flows where the caller already knows the canonical ID */
   forceExtensionId?: string;
+  /** Reuse these findings instead of downloading + re-running static analysis (LLM re-analysis). */
+  precomputedResult?: AnalysisResult;
   staticVerbose?: boolean;
   onProgress: (fraction: number, message: string) => void;
   isCancelled: () => boolean;
@@ -1171,7 +1178,18 @@ async function runExtensionScan(
   inputSource: string,
   options: ExtensionScanOptions
 ): Promise<ExtensionScanOutcome | null> {
-  let extensionPath = inputSource;
+  let result: AnalysisResult;
+  // Empty when reusing stored findings — the exec-summary source reader tolerates
+  // a missing path (walkExtensionFiles swallows it) and builds from findings alone.
+  let extensionPath = '';
+
+  if (options.precomputedResult) {
+    // LLM re-analysis: reuse the stored findings and skip download, extraction,
+    // and static analysis entirely (also avoids marketplace version drift).
+    result = options.precomputedResult;
+    options.onProgress(0.4, `Reusing ${result.findings.length} stored findings (skipped re-scan)`);
+  } else {
+  extensionPath = inputSource;
 
   if (inputSource.startsWith('http://') || inputSource.startsWith('https://')) {
     options.onProgress(0.02, 'Downloading extension...');
@@ -1204,8 +1222,9 @@ async function runExtensionScan(
     verbose: options.staticVerbose ?? true,
     patternsFile: options.config.patternsFile,
   });
-  const result = await analyzer.analyze();
+  result = await analyzer.analyze();
   options.onProgress(0.4, `Static analysis complete: ${result.findings.length} findings`);
+  }
 
   LlmClient.clearFastAssessmentCache();
 
@@ -1313,6 +1332,14 @@ async function runExtensionScan(
   const reportPath = join(options.reportsDir, reportName);
   await writeFile(reportPath, markdown);
 
+  // Persist the structured result so LLM re-analysis can reuse the findings
+  // instead of re-downloading and re-running static analysis.
+  try {
+    await writeFile(join(options.reportsDir, `${safeName}.json`), JSON.stringify(result, null, 2));
+  } catch (err) {
+    logger.warn({ err }, 'Failed to persist findings JSON');
+  }
+
   await saveScanToHistory(options.historyPath, result.extensionId, {
     extension_name: result.extensionName,
     version: result.version,
@@ -1328,6 +1355,22 @@ async function runExtensionScan(
   });
 
   return { result, score, breakdown, reportPath, reportName, markdown, llmAnalyzed };
+}
+
+/**
+ * Load a persisted AnalysisResult (structured findings) for an extension, if a
+ * prior scan saved one. Lets LLM re-analysis reuse findings instead of re-scanning.
+ */
+export function loadPersistedResult(reportsDir: string, extensionId: string): AnalysisResult | null {
+  const safeName = extensionId.replace(/[<>:"/\\|?*]/g, '_');
+  const dataPath = join(reportsDir, `${safeName}.json`);
+  if (!existsSync(dataPath)) return null;
+  try {
+    return JSON.parse(readFileSync(dataPath, 'utf-8')) as AnalysisResult;
+  } catch (err) {
+    logger.warn({ err, extensionId }, 'Failed to read persisted findings JSON; will re-scan');
+    return null;
+  }
 }
 
 /**
@@ -1357,6 +1400,7 @@ async function runScan(
     config: Awaited<ReturnType<typeof getConfig>>;
     prompts?: PromptConfig;
     extensionInfo?: { publisher: string; extension: string } | null;
+    precomputedResult?: AnalysisResult;
   }
 ): Promise<void> {
   task.status = 'running';
@@ -1374,6 +1418,7 @@ async function runScan(
       config: options.config,
       prompts: options.prompts,
       extensionInfo: options.extensionInfo,
+      precomputedResult: options.precomputedResult,
       staticVerbose: true,
       onProgress: (p, m) => task.emitProgress(p, m),
       isCancelled: () => task.cancelled,
@@ -1451,6 +1496,8 @@ async function runBatchLlmAnalysis(
     const tempDirs: string[] = [];
     try {
       const downloadUrl = `https://marketplace.visualstudio.com/items?itemName=${ext.publisher}.${ext.extensionName}`;
+      // Reuse stored findings from the prior static scan; only re-scan if none exist.
+      const persisted = loadPersistedResult(options.reportsDir, extensionId);
       const outcome = await runExtensionScan(downloadUrl, {
         noLlm: false,
         modelName: options.modelName,
@@ -1460,6 +1507,7 @@ async function runBatchLlmAnalysis(
         config: options.config,
         prompts: options.prompts,
         forceExtensionId: extensionId,
+        precomputedResult: persisted ?? undefined,
         staticVerbose: options.verbose,
         onProgress: (p, m) => task.emitProgress(i / total + p / total, `[${i + 1}/${total}] ${m}`),
         isCancelled: () => task.cancelled,
