@@ -99,7 +99,17 @@ const MAX_SCANS_IN_MEMORY = parseInt(process.env.MAX_SCANS_IN_MEMORY || '10', 10
 function cleanupOldScans() {
   const completedScans = Array.from(scans.entries())
     .filter(([, task]) => task.status === 'complete' || task.status === 'failed' || task.status === 'cancelled')
-    .sort((a, b) => (a[1].result?.analysisDate || '').localeCompare(b[1].result?.analysisDate || ''));
+    // Failed/cancelled tasks have result === null (no analysisDate). Sort those
+    // LAST (treat as newest) so a just-run failed/cancelled scan isn't evicted
+    // first — otherwise the user gets a 404 fetching its status.
+    .sort((a, b) => {
+      const dateA = a[1].result?.analysisDate;
+      const dateB = b[1].result?.analysisDate;
+      if (!dateA && !dateB) return 0;
+      if (!dateA) return 1;
+      if (!dateB) return -1;
+      return dateA.localeCompare(dateB);
+    });
   
   // Remove oldest scans if we have too many
   while (completedScans.length > MAX_SCANS_IN_MEMORY) {
