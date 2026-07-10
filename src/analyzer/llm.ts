@@ -16,6 +16,7 @@ import { getEndpointFiltering } from './patterns.js';
 import type { LlmProvider } from '../providers/llm-provider.js';
 import { createProvider } from '../providers/index.js';
 import { LlmAssessmentSchema, IndexedLlmAssessmentSchema } from './schemas.js';
+import { getAnalysisLimits } from './analysis-limits.js';
 
 /**
  * Fast assessment cache - shared across LlmClient instances to avoid redundant work
@@ -201,10 +202,6 @@ import {
  * Returns a single string with --- filename --- headers between each file's content,
  * or an empty string if there are no findings.
  */
-// Max chars of source content per executive summary LLM call.
-// If total source exceeds this, we split into multiple calls and merge.
-const EXEC_SUMMARY_CHUNK_SIZE = 50_000;
-
 // Always-include file classes for the executive-summary input set. These
 // carry malicious payloads disproportionately to their frequency, so we
 // add them even if they produced no regex findings.
@@ -213,10 +210,6 @@ const ALWAYS_INCLUDE_EXTS = new Set([
   '.sh', '.bash', '.zsh', '.ps1', '.bat', '.cmd', // shell scripts
   '.html', '.htm', '.svg',                          // webview-shaped assets
 ]);
-// Sampling budget for zero-hit JS/TS files. Without this, an extension
-// with hundreds of JS files would blow the LLM context budget.
-const ZERO_HIT_JS_SAMPLE_LIMIT = 6;
-const ZERO_HIT_JS_BYTES_BUDGET = 60_000;
 const JS_EXTS = new Set(['.js', '.mjs', '.cjs', '.ts', '.tsx', '.jsx']);
 
 /**
@@ -298,6 +291,7 @@ function readFindingSourceFiles(findings: Finding[], extensionPath: string): Arr
   }
 
   // Bounded sample of zero-hit JS/TS files
+  const { zeroHitSampleLimit: ZERO_HIT_JS_SAMPLE_LIMIT, zeroHitBytesBudget: ZERO_HIT_JS_BYTES_BUDGET } = getAnalysisLimits();
   const hitRelative = new Set<string>();
   for (const p of pathsToRead) hitRelative.add(p);
   const zeroHitJs: string[] = [];
@@ -368,6 +362,7 @@ export function chunkSourceFiles(findings: Finding[], extensionPath: string): st
   const files = readFindingSourceFiles(findings, extensionPath);
   if (files.length === 0) return [''];
 
+  const EXEC_SUMMARY_CHUNK_SIZE = getAnalysisLimits().execSummaryChunkChars;
   const totalSize = files.reduce((sum, f) => sum + f.section.length, 0);
   if (totalSize <= EXEC_SUMMARY_CHUNK_SIZE) {
     return [files.map(f => f.section).join('\n')];
@@ -1421,7 +1416,7 @@ If there are too many findings to assess completely, prioritize assessing the fi
     jsFiles?: string[];
   }, extensionPath: string): Promise<string> {
     // Limit findings for executive summary to avoid memory issues
-    const MAX_FINDINGS_FOR_SUMMARY = 100;
+    const MAX_FINDINGS_FOR_SUMMARY = getAnalysisLimits().maxFindingsForSummary;
     const findingsForSummary = result.findings.slice(0, MAX_FINDINGS_FOR_SUMMARY);
     const hasMoreFindings = result.findings.length > MAX_FINDINGS_FOR_SUMMARY;
 
