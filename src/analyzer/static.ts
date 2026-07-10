@@ -1032,10 +1032,37 @@ export class StaticAnalyzer {
     // could hang the (synchronous) scan and wedge the event loop, so bound the
     // input each regex sees. Longer lines are matched against a prefix only.
     const MAX_SCAN_LINE_LENGTH = 10_000;
+    let truncationReported = false;
 
     for (let lineNum = 0; lineNum < lines.length; lineNum++) {
       const line = lines[lineNum];
-      const scanLine = line.length > MAX_SCAN_LINE_LENGTH ? line.slice(0, MAX_SCAN_LINE_LENGTH) : line;
+      const isTruncated = line.length > MAX_SCAN_LINE_LENGTH;
+      const scanLine = isTruncated ? line.slice(0, MAX_SCAN_LINE_LENGTH) : line;
+
+      // Surface the truncation so it isn't a silent evasion (a payload hidden
+      // past the scanned prefix). One finding per file is enough.
+      if (isTruncated && !truncationReported) {
+        truncationReported = true;
+        findings.push({
+          category: 'obfuscation',
+          title: 'Scan Line Truncated',
+          location: `${relativePath}:${lineNum + 1}`,
+          observation: `Line exceeds ${MAX_SCAN_LINE_LENGTH} chars and was truncated for pattern matching (ReDoS guard); content past the prefix was not scanned and may hide code.`,
+          evidence: line.slice(0, 200) + '… [truncated]',
+          lineStart: Math.max(1, lineNum),
+          lineEnd: lineNum + 1,
+          context: '',
+          isFalsePositive: false,
+          falsePositiveReason: '',
+          riskLevel: 'medium',
+          patternName: 'scan_line_truncated',
+          fileType,
+          isMinified,
+          probableOrigin,
+          matchHighlight: '',
+          neighboringImports: '',
+        });
+      }
 
       for (const { category, name, definition, regex } of this.compiledPatterns) {
         const re = new RegExp(regex.source, regex.flags);

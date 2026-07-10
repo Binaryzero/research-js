@@ -140,14 +140,46 @@ export async function downloadExtension(
   const destPath = join(destDir, filename);
 
   // Download using native fetch
+  // Follow redirects manually so each hop is re-validated — an allowed host
+  // (gallery.vsassets.io) may 302 to a CDN, but must never be redirected to an
+  // internal/private address (SSRF via open redirect).
+  const isSafeRedirectTarget = (u: string): boolean => {
+    try {
+      const parsed = new URL(u);
+      if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return false;
+      const h = parsed.hostname.toLowerCase();
+      if (h === 'localhost') return false;
+      if (/^127\.|^169\.254\.|^10\.|^172\.(1[6-9]|2\d|3[01])\.|^192\.168\./.test(h)) return false;
+      if (h === '::1' || h.startsWith('fe80:') || h.startsWith('fc') || h.startsWith('fd')) return false;
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
   try {
-    const response = await fetch(downloadUrl, {
-      method: 'GET',
-      headers: {
-        'user-agent': 'extension-security-analyzer/1.0',
-      },
-      redirect: 'follow',
-    });
+    const MAX_REDIRECTS = 5;
+    const fetchOpts = {
+      method: 'GET' as const,
+      headers: { 'user-agent': 'extension-security-analyzer/1.0' },
+      redirect: 'manual' as const,
+    };
+    let currentUrl = downloadUrl;
+    let response = await fetch(currentUrl, fetchOpts);
+
+    for (let hops = 0; response.status >= 300 && response.status < 400; hops++) {
+      const location = response.headers.get('location');
+      if (!location) break;
+      if (hops >= MAX_REDIRECTS) {
+        throw new Error('Too many redirects while downloading');
+      }
+      const next = new URL(location, currentUrl).toString();
+      if (!isSafeRedirectTarget(next)) {
+        throw new Error('Refusing to follow a download redirect to a disallowed target');
+      }
+      currentUrl = next;
+      response = await fetch(currentUrl, fetchOpts);
+    }
 
     if (!response.ok) {
       throw new Error(`Download failed: ${response.status}`);
