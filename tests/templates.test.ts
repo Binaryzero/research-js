@@ -3,6 +3,7 @@ import { describe, it, expect } from 'vitest';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { readFileSync } from 'fs';
+import nunjucks from 'nunjucks';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const TEMPLATES_DIR = join(__dirname, '..', 'assets', 'templates');
@@ -118,5 +119,23 @@ describe('Template Rendering', () => {
     expect(content).toContain('report_name');
     expect(content).toContain('report-content');
     expect(content).toContain('markdown');
+  });
+
+  // Regression: with autoescape on (the production @fastify/view config),
+  // interpolating a server value into an inline <script> via `{{ x | dump }}`
+  // HTML-escapes the quotes (" → &quot;), producing broken JS that throws
+  // "Unexpected token '&'" and breaks every report page. Render for real and
+  // assert the inline script is still valid JavaScript.
+  it('report.html inline script stays valid JS after autoescape render', () => {
+    const env = nunjucks.configure(TEMPLATES_DIR, { autoescape: true });
+    const html = env.render('report.html', { report_name: 'pub.ext.md' });
+
+    const scriptBodies = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(m => m[1]);
+    const reportScript = scriptBodies.find(s => s.includes('reportName')) ?? '';
+
+    expect(reportScript).not.toBe('');
+    expect(reportScript).not.toContain('&quot;');
+    // new Function parses the body without executing it — throws on a syntax error.
+    expect(() => new Function(reportScript)).not.toThrow();
   });
 });
