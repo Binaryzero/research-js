@@ -20,7 +20,7 @@
             </select>
             <select id="risk-filter" aria-label="Filter by risk">
                 <option value="">All Risks</option>
-                <option value="Low">Low</option>
+                <option value="Low Risk">Low Risk</option>
                 <option value="Moderate">Moderate</option>
                 <option value="Suspicious">Suspicious</option>
                 <option value="Very Suspicious">Very Suspicious</option>
@@ -58,7 +58,7 @@
     <div id="progress-area" class="progress-card" style="display:none;" aria-live="polite">
         <div class="progress-header">
             <span id="progress-title">Analyzing...</span>
-            <button class="btn btn-outline btn-sm" id="cancel-btn" onclick="cancelCurrentScan()">
+            <button class="btn btn-outline btn-sm" id="cancel-btn" onclick="cancelHistoryScan()">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
                 Cancel
             </button>
@@ -117,14 +117,27 @@ function formatInstalls(n) {
     return n;
 }
 
-// Get risk badge
-function getRiskBadge(score) {
-    let riskClass, label;
-    if (score >= 70) { riskClass = 'risk-critical'; label = 'Critical'; }
-    else if (score >= 40) { riskClass = 'risk-high'; label = 'High'; }
-    else if (score >= 20) { riskClass = 'risk-medium'; label = 'Medium'; }
-    else { riskClass = 'risk-low'; label = 'Low'; }
-    return `<span class="risk-badge ${riskClass}">${label}</span>`;
+// Risk color name (from the server's scoring) → concrete color. Using the
+// server-provided risk_label/risk_color keeps this table consistent with the
+// scoring engine (50/30/15 → Very Suspicious/Suspicious/Moderate/Low Risk)
+// instead of re-deriving with a contradictory client threshold.
+const RISK_COLORS = {
+    red: '#e74c3c',
+    orange: '#e67e22',
+    yellow: '#ca8a04',
+    green: '#27ae60',
+    gray: '#95a5a6',
+};
+
+function riskColorFor(info) {
+    return RISK_COLORS[info.risk_color] || RISK_COLORS.gray;
+}
+
+// Render the risk badge from the server-computed label/color.
+function renderRiskBadge(info) {
+    const bg = riskColorFor(info);
+    const label = info.risk_label || 'Unknown';
+    return `<span class="risk-badge" style="background:${bg};color:#fff">${label}</span>`;
 }
 
 // Current filter state
@@ -132,6 +145,12 @@ let currentSearch = '';
 let currentSessionFilter = '';
 let currentRiskFilter = '';
 let currentLlmFilter = '';
+
+// The rows currently displayed, as [extensionId, info] pairs. This is the
+// source of truth for bulk actions — do NOT re-derive extension IDs by
+// scraping rendered table cells (textContent concatenates the id with the
+// scan date, corrupting the id).
+let _historyEntries = [];
 
 // Pagination state
 let currentPage = 0;
@@ -185,6 +204,9 @@ async function loadHistory() {
             return dateB - dateA;
         });
 
+        // Keep the data model in sync for bulk actions (see _historyEntries).
+        _historyEntries = entries;
+
         entries.forEach(([eid, info]) => {
             // Determine which score to use: LLM-adjusted if available and LLM was run, otherwise static
             let score;
@@ -198,11 +220,10 @@ async function loadHistory() {
             }
             const row = document.createElement('tr');
 
-            // Risk cell color based on the displayed score
-            let riskColor = 'var(--safe)';
-            if (score >= 70) riskColor = 'var(--danger)';
-            else if (score >= 40) riskColor = 'var(--warning)';
-            else if (score >= 20) riskColor = 'var(--caution)';
+            // Risk cell color from the server-computed risk_color, keeping the
+            // score coloring consistent with the badge and avoiding the
+            // undefined --safe/--caution CSS variables.
+            const riskColor = riskColorFor(info);
 
             // Determine LLM status display
             const llmStatus = info.llm_analyzed
@@ -250,7 +271,7 @@ async function loadHistory() {
                 '<span style="font-size:0.75rem;color:var(--fg-muted);">' + (info.scan_date || 'Unknown date') + '</span>' +
                 '</td>' +
                 '<td style="color:' + riskColor + ';font-weight:600;">' + scoreDisplay + '</td>' +
-                '<td>' + getRiskBadge(score) + '</td>' +
+                '<td>' + renderRiskBadge(info) + '</td>' +
                 '<td>' + verdictHtml + '</td>' +
                 '<td>' + truePositives + ' / ' + (info.findings_count || 0) + '</td>' +
                 '<td style="text-align:center;">' + llmStatus + '</td>' +
@@ -354,21 +375,14 @@ async function rescanExtension(eid) {
 
 // Rescan all extensions in history (static analysis)
 async function rescanAllHistory() {
-    const tbody = document.getElementById('history-body');
-    const rows = tbody.querySelectorAll('tr');
-    if (!rows || rows.length === 0) {
+    if (!_historyEntries || _historyEntries.length === 0) {
         toastInfo('No extensions to rescan');
         return;
     }
 
-    const extensionList = Array.from(rows).map(row => {
-        const cells = row.querySelectorAll('td');
-        const extIdFull = cells[0]?.textContent || '';
-        const extId = extIdFull.split('\n')[0].trim();
-        const parts = extId.split('.');
-        const publisher = parts[0] || '';
-        const extensionName = parts.slice(1).join('.');
-        return { publisher, extensionName };
+    const extensionList = _historyEntries.map(([eid]) => {
+        const parts = eid.split('.');
+        return { publisher: parts[0] || '', extensionName: parts.slice(1).join('.') };
     }).filter(item => item.publisher && item.extensionName);
 
     if (extensionList.length === 0) {
@@ -460,7 +474,9 @@ async function rescanWithLlm(eid) {
     });
 }
 
-function cancelCurrentScan() {
+// Named uniquely so app.js's global window.cancelCurrentScan (which manages a
+// different tracker) cannot overwrite it and turn Cancel into a no-op.
+function cancelHistoryScan() {
     if (_historyTracker) {
         _historyTracker.cancel();
         _historyTracker = null;
@@ -482,26 +498,17 @@ async function clearHistory() {
 
 // LLM Analyze All for history page
 async function llmAnalyzeAllHistory() {
-    const tbody = document.getElementById('history-body');
-    const rows = tbody.querySelectorAll('tr');
-    if (!rows || rows.length === 0) return;
+    if (!_historyEntries || _historyEntries.length === 0) return;
 
-    const extensionList = Array.from(rows).map(row => {
-        const cells = row.querySelectorAll('td');
-        // Extension ID is in the first cell (cells[0])
-        const extIdFull = cells[0]?.textContent || '';
-        // Extract just the extension ID (first line before the date)
-        const extId = extIdFull.split('\n')[0].trim();
-        const parts = extId.split('.');
-        const publisher = parts[0] || '';
-        const extensionName = parts.slice(1).join('.') || '';
-        
-        // Skip extensions already LLM analyzed (LLM status is in cells[4])
-        const llmCell = cells[4]?.textContent?.trim() || '';
-        if (llmCell.includes('✓')) return null;
-        
-        return { publisher, extensionName };
-    }).filter(item => item.publisher && item.extensionName);
+    const extensionList = _historyEntries
+        // Skip extensions already LLM-analyzed — read the flag from the data
+        // model, not a rendered cell (the old code checked the wrong column).
+        .filter(([, info]) => !info.llm_analyzed)
+        .map(([eid]) => {
+            const parts = eid.split('.');
+            return { publisher: parts[0] || '', extensionName: parts.slice(1).join('.') || '' };
+        })
+        .filter(item => item.publisher && item.extensionName);
 
     if (extensionList.length === 0) {
         toastInfo('No unanalyzed LLM scans found in current filter.');
@@ -540,14 +547,6 @@ async function llmAnalyzeAllHistory() {
         toastError('Error starting batch LLM analysis: ' + err.message);
         document.getElementById('progress-area').style.display = 'none';
     });
-}
-
-// Get risk label helper
-function getRiskLabel(score) {
-    if (score >= 70) return 'Very Suspicious';
-    if (score >= 40) return 'Suspicious';
-    if (score >= 20) return 'Moderate';
-    return 'Low';
 }
 
 // Sort state
@@ -698,7 +697,7 @@ function getRiskValue(cell) {
     const badge = cell.querySelector('span');
     if (!badge) return 0;
     const label = badge.textContent.trim();
-    const values = { 'Very Suspicious': 4, 'Suspicious': 3, 'Moderate': 2, 'Low': 1 };
+    const values = { 'Very Suspicious': 4, 'Suspicious': 3, 'Moderate': 2, 'Low Risk': 1, 'Low': 1 };
     return values[label] || 0;
 }
 </script>

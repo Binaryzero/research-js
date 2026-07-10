@@ -21,7 +21,7 @@
 <div id="progress-area" class="progress-card" style="display:none" aria-live="polite">
     <div class="progress-header">
         <span id="progress-title">Analyzing...</span>
-        <button class="btn btn-outline btn-sm" id="cancel-btn" onclick="cancelCurrentScan()">
+        <button class="btn btn-outline btn-sm" id="cancel-btn" onclick="cancelReportScan()">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
             Cancel
         </button>
@@ -239,7 +239,9 @@ function extractExtensionId(name) {
 // Cancel current scan
 let _reportTracker = null;
 
-function cancelCurrentScan() {
+// Named uniquely so app.js's global window.cancelCurrentScan (a different
+// tracker) cannot overwrite it and make Cancel a no-op.
+function cancelReportScan() {
     if (_reportTracker) {
         _reportTracker.cancel();
         _reportTracker = null;

@@ -12,9 +12,8 @@ import { tmpdir } from 'os';
 import { fileURLToPath } from 'url';
 import { EventEmitter } from 'events';
 import { randomUUID } from 'crypto';
-import { existsSync, mkdirSync, unlinkSync, writeFileSync, readFileSync, rmSync, createWriteStream } from 'fs';
-import { readFile, writeFile, readdir, stat, mkdir } from 'fs/promises';
-import { pipeline } from 'stream/promises';
+import { existsSync, mkdirSync, unlinkSync, writeFileSync, readFileSync, rmSync } from 'fs';
+import { readdir, stat, writeFile } from 'fs/promises';
 import { marked } from 'marked';
 import nunjucks from 'nunjucks';
 
@@ -325,7 +324,7 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
       config: configWithProvider,
       prompts,
       extensionInfo,
-    }).catch(err => task.fail(err.message));
+    }).catch(err => task.fail(err instanceof Error ? err.message : String(err)));
     
     return { scan_id: task.id };
   });
@@ -429,22 +428,30 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
   // API: List reports
   // ---------------------------------------------------------------
   fastify.get('/api/reports', async () => {
-    const reports: Array<{ name: string; mtime: string; size: number }> = [];
-    
-    if (existsSync(reportsDir)) {
-      const files = readdirSync(reportsDir).filter(f => f.endsWith('.md'));
+    if (!existsSync(reportsDir)) {
+      return { reports: [] };
+    }
 
-      for (const file of files) {
-        const stats = statSync(join(reportsDir, file));
-        reports.push({
+    const files = (await readdir(reportsDir)).filter(f => f.endsWith('.md'));
+
+    // stat each file concurrently; skip any that fail (e.g. deleted mid-scan)
+    // rather than failing the whole listing.
+    const settled = await Promise.allSettled(
+      files.map(async (file) => {
+        const stats = await stat(join(reportsDir, file));
+        return {
           name: file,
           mtime: stats.mtime.toISOString(),
           size: stats.size,
-        });
-      }
-    }
+        };
+      })
+    );
 
-    reports.sort((a, b) => b.mtime.localeCompare(a.mtime));
+    const reports = settled
+      .filter((r): r is PromiseFulfilledResult<{ name: string; mtime: string; size: number }> => r.status === 'fulfilled')
+      .map((r) => r.value)
+      .sort((a, b) => b.mtime.localeCompare(a.mtime));
+
     return { reports };
   });
   
@@ -528,45 +535,37 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
       offset?: number;
     };
     
-    let scans = loadHistory(historyPath);
-    const entries = Object.entries(scans);
-    
+    const scans = loadHistory(historyPath);
+    // Filters COMPOSE: each narrows the running result rather than re-deriving
+    // from the full history (the previous code re-filtered the original entries
+    // in every block, so only the last-applied filter took effect).
+    let entries = Object.entries(scans);
+
     // Filter by search term
     if (query.search) {
       const searchLower = query.search.toLowerCase();
-      const filtered = entries.filter(([eid]) => eid.toLowerCase().includes(searchLower));
-      scans = Object.fromEntries(filtered);
+      entries = entries.filter(([eid]) => eid.toLowerCase().includes(searchLower));
     }
-    
+
     // Filter by risk level
     if (query.risk) {
-      const filtered = entries.filter(([, info]) => {
+      entries = entries.filter(([, info]) => {
         const scanInfo = info as Record<string, unknown>;
         const score = (scanInfo.llm_adjusted_score as number) ?? (scanInfo.suspicion_score as number) ?? 0;
-        const label = getRiskLabel(score);
-        return label === query.risk;
+        return getRiskLabel(score) === query.risk;
       });
-      scans = Object.fromEntries(filtered);
     }
-    
+
     // Filter by LLM status
     if (query.llm === 'llm') {
-      const filtered = entries.filter(([, info]) => {
-        const scanInfo = info as Record<string, unknown>;
-        return scanInfo.llm_analyzed === true;
-      });
-      scans = Object.fromEntries(filtered);
+      entries = entries.filter(([, info]) => (info as Record<string, unknown>).llm_analyzed === true);
     } else if (query.llm === 'no-llm') {
-      const filtered = entries.filter(([, info]) => {
-        const scanInfo = info as Record<string, unknown>;
-        return scanInfo.llm_analyzed !== true;
-      });
-      scans = Object.fromEntries(filtered);
+      entries = entries.filter(([, info]) => (info as Record<string, unknown>).llm_analyzed !== true);
     }
-    
-    // Calculate display values
+
+    // Calculate display values from the composed result
     const displayScans: Record<string, Record<string, unknown>> = {};
-    for (const [eid, info] of Object.entries(scans)) {
+    for (const [eid, info] of entries) {
       const scanInfo = info as Record<string, unknown>;
       const score = (scanInfo.llm_adjusted_score as number) ?? (scanInfo.suspicion_score as number) ?? 0;
       displayScans[eid] = {
@@ -692,33 +691,43 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
         pageSize: params.page_size || 50,
       });
       
-      // Augment with scan history (case-insensitive lookup)
-      const scans = loadHistory(historyPath);
-      for (const ext of results) {
-        const found = findScanByExtensionId(scans, ext.extensionId);
-        if (found) {
-          const info = found.data;
-          const score = (info.llm_adjusted_score as number) ?? (info.suspicion_score as number) ?? 0;
-          ext.scan = {
-            score,
-            risk_label: getRiskLabel(score),
-            risk_color: getRiskColor(score),
-            findings_count: (info.findings_count as number) || 0,
-            llm_analyzed: (info.llm_analyzed as boolean) || false,
-            report_name: info.report_path ? basename(info.report_path as string) : '',
-            scan_date: (info.scan_date as string) || '',
-            breakdown: (info.breakdown as Record<string, unknown>) || {},
-            static_score: info.suspicion_score as number | undefined,
-            // Include true_positives for LLM-analyzed extensions (used by batch UI)
-            ...(info.true_positives !== undefined && { true_positives: info.true_positives as number }),
-            verdict: (info.verdict as string) || null,
-          };
+      // Augment with scan history (case-insensitive lookup). A corrupt history
+      // file (loadHistory now throws on parse failure) must not blank the whole
+      // search — degrade to un-augmented results instead of a blanket 500.
+      try {
+        const scans = loadHistory(historyPath);
+        for (const ext of results) {
+          const found = findScanByExtensionId(scans, ext.extensionId);
+          if (found) {
+            const info = found.data;
+            const score = (info.llm_adjusted_score as number) ?? (info.suspicion_score as number) ?? 0;
+            ext.scan = {
+              score,
+              risk_label: getRiskLabel(score),
+              risk_color: getRiskColor(score),
+              findings_count: (info.findings_count as number) || 0,
+              llm_analyzed: (info.llm_analyzed as boolean) || false,
+              report_name: info.report_path ? basename(info.report_path as string) : '',
+              scan_date: (info.scan_date as string) || '',
+              breakdown: (info.breakdown as Record<string, unknown>) || {},
+              static_score: info.suspicion_score as number | undefined,
+              // Include true_positives for LLM-analyzed extensions (used by batch UI)
+              ...(typeof info.true_positives === 'number' && { true_positives: info.true_positives }),
+              verdict: (info.verdict as string) || null,
+            };
+          }
         }
+      } catch (histError) {
+        logger.error({ err: histError }, 'History augmentation failed; returning un-augmented search results');
       }
-      
+
       return { results, total: results.length };
     } catch (error) {
-      return reply.status(500).send({ error: 'Marketplace search failed' });
+      // Surface the real cause instead of swallowing it behind a generic message —
+      // this is what made the "search returns nothing" failure so hard to diagnose.
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error({ err: error }, 'Marketplace search failed');
+      return reply.status(500).send({ error: `Marketplace search failed: ${message}` });
     }
   });
   
@@ -1007,7 +1016,7 @@ ${indent(prompts.triage_batch?.user || '')}
       config: configWithMode,
       prompts,
       extensionInfo: { publisher, extension: extensionName },
-    }).catch(err => task.fail(err.message));
+    }).catch(err => task.fail(err instanceof Error ? err.message : String(err)));
 
     return { scan_id: task.id };
   });
@@ -1038,7 +1047,7 @@ ${indent(prompts.triage_batch?.user || '')}
       reportsDir: config.reportsDir,
       config,
       prompts: getPrompts(),
-    });
+    }).catch(err => task.fail(err instanceof Error ? err.message : String(err)));
 
     return { scan_id: task.id };
   });
@@ -1093,7 +1102,7 @@ ${indent(prompts.triage_batch?.user || '')}
       reportsDir: config.reportsDir,
       config: configWithMode,
       prompts,
-    }).catch(err => task.fail(err.message));
+    }).catch(err => task.fail(err instanceof Error ? err.message : String(err)));
 
     return { scan_id: task.id };
   });
