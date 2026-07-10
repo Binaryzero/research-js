@@ -2,21 +2,36 @@
  * Risk scoring for analysis results
  */
 
-import type { AnalysisResult } from '../types/index.js';
+import type { AnalysisResult, ScoringConfig } from '../types/index.js';
 
-const RISK_WEIGHTS: Record<string, number> = {
-  critical: 10,
-  high: 5,
-  medium: 2,
-  low: 1,
+// Behavior-preserving defaults — these mirror the previously hardcoded values.
+export const DEFAULT_SCORING: ScoringConfig = {
+  riskWeights: { critical: 10, high: 5, medium: 2, low: 1 },
+  injectionBoost: 5,
+  binaryBoost: 5,
+  verdictBoost: { malicious: 25, suspicious: 5 },
+  thresholds: { verySuspicious: 50, suspicious: 30, moderate: 15 },
 };
 
-const THRESHOLDS: Array<[number, string, string]> = [
-  [50, 'Very Suspicious', 'red'],
-  [30, 'Suspicious', 'orange'],
-  [15, 'Moderate', 'yellow'],
-  [0, 'Low Risk', 'green'],
-];
+// Active scoring config, synced from AppConfig at load/save time (see config.ts).
+// Defaults keep scoring identical until an operator changes it.
+let activeScoring: ScoringConfig = DEFAULT_SCORING;
+
+/** Set the scoring weights used by all scoring functions (called from config load/save). */
+export function setScoringConfig(config: ScoringConfig): void {
+  activeScoring = config;
+}
+
+/** Label/color rows derived from the configured thresholds (text/colors are fixed). */
+function thresholdRows(): Array<[number, string, string]> {
+  const t = activeScoring.thresholds;
+  return [
+    [t.verySuspicious, 'Very Suspicious', 'red'],
+    [t.suspicious, 'Suspicious', 'orange'],
+    [t.moderate, 'Moderate', 'yellow'],
+    [0, 'Low Risk', 'green'],
+  ];
+}
 
 export interface ScoreBreakdown {
   findingsScore: number;
@@ -52,7 +67,7 @@ export function calculateSuspicionScore(
     if (options.adjustForLlm && finding.isFalsePositive) continue;
 
     const risk = (finding.riskLevel || '').toLowerCase();
-    let weight = RISK_WEIGHTS[risk] || 0;
+    let weight = (activeScoring.riskWeights as Record<string, number>)[risk] || 0;
 
     // Boost findings the LLM flagged for investigation
     if (options.adjustForLlm && finding.recommendation === 'investigate') {
@@ -60,7 +75,7 @@ export function calculateSuspicionScore(
     }
     // Injection detection is a strong signal
     if (options.adjustForLlm && finding.injectionDetected) {
-      weight += 5;
+      weight += activeScoring.injectionBoost;
     }
 
     findingsScore += weight;
@@ -77,7 +92,7 @@ export function calculateSuspicionScore(
   
   // Binary files
   const binaryCount = result.binaryFiles.length;
-  if (binaryCount) structuralScore += 5;
+  if (binaryCount) structuralScore += activeScoring.binaryBoost;
   details.binaryCount = binaryCount;
   
   // File type mismatches
@@ -103,9 +118,9 @@ export function calculateSuspicionScore(
   
   // Verdict boost — MALICIOUS guarantees "Very Suspicious" threshold
   if (options.adjustForLlm && result.verdict === 'MALICIOUS') {
-    findingsScore += 25;
+    findingsScore += activeScoring.verdictBoost.malicious;
   } else if (options.adjustForLlm && result.verdict === 'SUSPICIOUS') {
-    findingsScore += 5;
+    findingsScore += activeScoring.verdictBoost.suspicious;
   }
 
   const total = findingsScore + structuralScore;
@@ -124,7 +139,7 @@ export function calculateSuspicionScore(
  * Get risk label from score
  */
 export function getRiskLabel(score: number): string {
-  for (const [threshold, label] of THRESHOLDS) {
+  for (const [threshold, label] of thresholdRows()) {
     if (score >= threshold) return label;
   }
   return 'Low Risk';
@@ -134,7 +149,7 @@ export function getRiskLabel(score: number): string {
  * Get risk color from score
  */
 export function getRiskColor(score: number): string {
-  for (const [threshold, , color] of THRESHOLDS) {
+  for (const [threshold, , color] of thresholdRows()) {
     if (score >= threshold) return color;
   }
   return 'green';
