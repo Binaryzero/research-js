@@ -905,14 +905,20 @@ If there are too many findings to assess completely, prioritize assessing the fi
     getComponentLogger('LLM').info(`Triage batch: ${batches.length} batches (${tierA.length} tier-A, ${tierB.length} tier-B)`);
 
     const triagePrompt = this.prompts.triage_batch!;
-    let totalProcessed = 0;
 
-    for (const batch of batches) {
-      options.onProgress?.(
-        0.1 + (totalProcessed / pendingIndices.length) * 0.8,
-        `Triage batch tier ${batch.tier}: ${batch.indices.length} findings`
-      );
+    // Concurrency budget for dispatching triage batches. The calls are network-
+    // bound (not GPU-bound on a cloud/hosted backend), so running batches in
+    // parallel is the dominant wall-clock win; the cap keeps us under the
+    // provider's rate limit (429s). Tunable via LLM_CONCURRENCY (default 10);
+    // the orchestrator may pass a tighter per-model cap via options.concurrencyLimit.
+    const batchConcurrency = options.concurrencyLimit ?? this.concurrency;
+    const batchLimit = pLimit(Math.max(1, batchConcurrency));
+    let batchesDone = 0;
 
+    // Phase 1: dispatch every triage batch concurrently. Each batch writes its
+    // assessments into `results` by absolute finding index, so batches are
+    // independent and order-free.
+    await Promise.all(batches.map(batch => batchLimit(async () => {
       // Build findingsJson for this batch
       const findingsJson = batch.indices.map(idx => {
         const f = findings[idx];
@@ -937,7 +943,13 @@ If there are too many findings to assess completely, prioritize assessing the fi
         .replace('{findingsJson}', JSON.stringify(findingsJson, null, 2))
         .replace('{extensionName}', options.extensionName || 'Unknown');
 
-      const response = await this.generate(user, system);
+      let response: string;
+      try {
+        response = await this.generate(user, system);
+      } catch (err) {
+        getComponentLogger('LLM').warn(`Triage batch generate failed (${batch.indices.length} findings): ${err instanceof Error ? err.message : err}`);
+        return; // leave these indices unassessed → handled by the fallback phase
+      }
 
       // Parse response — expect JSON array with index field per assessment
       const assessed = new Set<number>();
@@ -1046,41 +1058,39 @@ If there are too many findings to assess completely, prioritize assessing the fi
         getComponentLogger('LLM').warn(`Triage batch parse failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
       }
 
-      // Track which findings were assessed via triage batch vs fallback
-      const batchAssessedIndices = new Set<number>();
-      for (const idx of batch.indices) {
-        if (assessed.has(idx)) {
-          batchAssessedIndices.add(idx);
-        }
-      }
+      batchesDone++;
+      options.onProgress?.(
+        0.1 + (batchesDone / batches.length) * 0.6,
+        `Triaged ${batchesDone}/${batches.length} batches`
+      );
+    })));
 
-      // Fall back to individual assessment for any missing findings (sequential with concurrency limiter)
-      const missing = batch.indices.filter(idx => !assessed.has(idx));
-      if (missing.length > 0) {
-        getComponentLogger('LLM').warn(`Triage batch: ${missing.length} findings missing, falling back to individual assessment (sequential)`);
-        const limit = pLimit(this.concurrency);
-        const missingResults = await Promise.all(
-          missing.map(idx => limit(async () => {
-            try {
-              return await this.assessFinding(findings[idx], options.skipConsensus);
-            } catch (err) {
-              getComponentLogger('LLM').warn(`Individual fallback failed for finding ${idx} (${findings[idx].category}/${findings[idx].title}): ${err instanceof Error ? err.message : err}`);
-              return {
-                riskLevel: findings[idx].riskLevel as LlmAssessment['riskLevel'],
-                isFalsePositive: false,
-                falsePositiveReason: '',
-                explanation: 'Individual assessment fallback failed',
-                recommendation: 'investigate' as const,
-              };
-            }
-          }))
-        );
-        missing.forEach((idx, i) => {
-          results[idx] = missingResults[i];
-        });
-      }
-
-      totalProcessed += batch.indices.length;
+    // Phase 2: individual fallback for any pending finding a batch did not cover
+    // (the LLM omitted its index, or the batch call failed). Phase 1's
+    // Promise.all has fully settled, so reusing `batchLimit` here cannot deadlock.
+    const missingIndices = pendingIndices.filter(idx => !results[idx]);
+    if (missingIndices.length > 0) {
+      getComponentLogger('LLM').warn(`Triage: ${missingIndices.length} findings missing from batch responses, falling back to individual assessment`);
+      options.onProgress?.(0.75, `Individual fallback: ${missingIndices.length} findings`);
+      const fallbackResults = await Promise.all(
+        missingIndices.map(idx => batchLimit(async () => {
+          try {
+            return await this.assessFinding(findings[idx], options.skipConsensus);
+          } catch (err) {
+            getComponentLogger('LLM').warn(`Individual fallback failed for finding ${idx} (${findings[idx].category}/${findings[idx].title}): ${err instanceof Error ? err.message : err}`);
+            return {
+              riskLevel: findings[idx].riskLevel as LlmAssessment['riskLevel'],
+              isFalsePositive: false,
+              falsePositiveReason: '',
+              explanation: 'Individual assessment fallback failed',
+              recommendation: 'investigate' as const,
+            };
+          }
+        }))
+      );
+      missingIndices.forEach((idx, i) => {
+        results[idx] = fallbackResults[i];
+      });
     }
 
     // Fill any remaining gaps
