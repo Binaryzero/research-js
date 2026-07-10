@@ -117,6 +117,11 @@ export function makeAppConfig(overrides?: Partial<AppConfig>): AppConfig {
     assessmentMode: 'strategic',
     promptProfile: 'default',
     concurrency: 10,
+    llmTuning: {
+      tierABatchSize: 5,
+      consensusVotes: 3,
+      evidenceMaxChars: { strategic: 600, triage: 1500, bulk: 800, individual: 1500 },
+    },
     defaultNoLlm: false,
     defaultFull: false,
     ...overrides,

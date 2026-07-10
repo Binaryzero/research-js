@@ -211,7 +211,8 @@ export function selectDiverseSamples(
 export function buildStrategicBulkPrompt(
   patternGroup: PatternGroup,
   samples: SampledFinding[],
-  prompts: PromptConfig
+  prompts: PromptConfig,
+  evidenceMaxChars: number = 600
 ): { system: string; user: string } {
   const system = `${prompts.finding_assessment.system}
 
@@ -247,7 +248,7 @@ Format:
     findingsList += `\n=== File: ${filePath} ===\n`;
     for (const sample of fileSamples) {
       findingsList += `\n[${idx++}] Location: ${sample.finding.location} (${sample.reason})\n`;
-      findingsList += `Code:\n${sample.finding.evidence.slice(0, 600)}\n`;
+      findingsList += `Code:\n${sample.finding.evidence.slice(0, evidenceMaxChars)}\n`;
     }
   }
 

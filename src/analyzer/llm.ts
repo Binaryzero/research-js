@@ -738,7 +738,7 @@ If there are too many findings to assess completely, prioritize assessing the fi
       for (const finding of catFindings) {
         parts.push(`\n[${findingNum + 1}] ${finding.title}\n`);
         parts.push(`File: ${finding.location}\n`);
-        parts.push(`Code:\n\`\`\`\n${finding.evidence.slice(0, 800)}\n\`\`\`\n`);
+        parts.push(`Code:\n\`\`\`\n${finding.evidence.slice(0, this.config.llmTuning?.evidenceMaxChars?.bulk ?? 800)}\n\`\`\`\n`);
         findingNum++;
       }
     }
@@ -879,7 +879,7 @@ If there are too many findings to assess completely, prioritize assessing the fi
     if (pendingIndices.length === 0) return results;
 
     const TIER_A_CATEGORIES = new Set(['prompt_injection', 'malicious_agent_instructions', 'obfuscation', 'credentials']);
-    const TIER_A_MAX = 5;
+    const TIER_A_MAX = this.config.llmTuning?.tierABatchSize ?? 5;
     const TIER_B_MAX = this.config.batchSize ?? 20;
 
     // Split into tier A and tier B
@@ -927,7 +927,7 @@ If there are too many findings to assess completely, prioritize assessing the fi
           category: f.category,
           title: f.title,
           location: f.location,
-          evidence: f.evidence.slice(0, 1500),
+          evidence: f.evidence.slice(0, this.config.llmTuning?.evidenceMaxChars?.triage ?? 1500),
           file_type: f.fileType || 'unknown',
           is_minified: f.isMinified || false,
           probable_origin: f.probableOrigin || 'unknown',
@@ -1129,15 +1129,14 @@ If there are too many findings to assess completely, prioritize assessing the fi
             try {
               const { system, user } = this.buildFindingPrompt(finding);
 
-              const [resp2, resp3] = await Promise.all([
-                this.generate(user, system),
-                this.generate(user, system),
-              ]);
+              // firstVote is already in hand; gather (consensusVotes - 1) more.
+              const consensusVotes = this.config.llmTuning?.consensusVotes ?? 3;
+              const extraResponses = await Promise.all(
+                Array.from({ length: Math.max(0, consensusVotes - 1) }, () => this.generate(user, system))
+              );
+              const extraVotes = extraResponses.map(r => parseSingleAssessment(r));
 
-              const vote2 = parseSingleAssessment(resp2);
-              const vote3 = parseSingleAssessment(resp3);
-
-              const allVotes = [firstVote, vote2, vote3].filter((v): v is LlmAssessment => !!v);
+              const allVotes = [firstVote, ...extraVotes].filter((v): v is LlmAssessment => !!v);
               if (allVotes.length >= 2) {
                 results[idx] = mergeConsensusAssessments(allVotes);
               }
@@ -1276,7 +1275,7 @@ If there are too many findings to assess completely, prioritize assessing the fi
       .replace('{title}', finding.title)
       .replace('{location}', finding.location)
       .replace('{pattern_risk}', finding.riskLevel)
-      .replace('{evidence}', finding.evidence.slice(0, 1500))
+      .replace('{evidence}', finding.evidence.slice(0, this.config.llmTuning?.evidenceMaxChars?.individual ?? 1500))
       .replace('{file_type}', finding.fileType || 'unknown')
       .replace('{is_minified}', String(finding.isMinified || false))
       .replace('{probable_origin}', finding.probableOrigin || 'unknown')
@@ -1299,17 +1298,18 @@ If there are too many findings to assess completely, prioritize assessing the fi
     const samples = selectDiverseSamples(fileGroup, sampleSize);
 
     // Build strategic prompt
-    const { system, user } = buildStrategicBulkPrompt(pattern, samples, this.prompts);
+    const { system, user } = buildStrategicBulkPrompt(pattern, samples, this.prompts, this.config.llmTuning?.evidenceMaxChars?.strategic ?? 600);
 
     const useConsensus = !skipConsensus && (pattern.risk === 'high' || pattern.risk === 'critical');
     let assessments: Map<number, LlmAssessment>;
     let llmCalls = 0;
 
     if (useConsensus) {
-      // Consensus mode: 3 calls, merge per-finding via majority vote
+      // Consensus mode: N calls, merge per-finding via majority vote
+      const consensusVotes = this.config.llmTuning?.consensusVotes ?? 3;
       getComponentLogger('Consensus').info(`Quorum for ${pattern.category}/${pattern.patternName} (${pattern.risk} risk, ${samples.length} findings)`);
-      const runs = await Promise.all([0, 1, 2].map(() => this.generate(user, system)));
-      llmCalls = 3;
+      const runs = await Promise.all(Array.from({ length: consensusVotes }, () => this.generate(user, system)));
+      llmCalls = consensusVotes;
 
       const parsed = runs.map(r => parseStrategicAssessments(r, samples));
 
@@ -1342,8 +1342,9 @@ If there are too many findings to assess completely, prioritize assessing the fi
 
     if (useConsensus) {
       getComponentLogger('Consensus').info(`Individual quorum for "${finding.title}" at ${finding.location} (${finding.riskLevel} risk)`);
-      // Use concurrency limiter to avoid 429 errors - submit all 3 simultaneously
-      const responses = await Promise.all([0, 1, 2].map(() => this.generate(user, system)));
+      // Submit all consensus votes simultaneously (bounded by the caller's limiter).
+      const consensusVotes = this.config.llmTuning?.consensusVotes ?? 3;
+      const responses = await Promise.all(Array.from({ length: consensusVotes }, () => this.generate(user, system)));
       const candidates = responses.map(r => parseSingleAssessment(r)).filter((a): a is LlmAssessment => !!a);
       if (candidates.length >= 2) return mergeConsensusAssessments(candidates);
       if (candidates.length === 1) return candidates[0];

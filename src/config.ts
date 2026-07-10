@@ -166,6 +166,11 @@ function defaultAppConfig(): AppConfig {
     // Aggressive default for network-bound cloud/hosted backends (calls are not
     // GPU-serialized). Override with LLM_CONCURRENCY. Lower it if you hit 429s.
     concurrency: 20,
+    llmTuning: {
+      tierABatchSize: 5,
+      consensusVotes: 3,
+      evidenceMaxChars: { strategic: 600, triage: 1500, bulk: 800, individual: 1500 },
+    },
     defaultNoLlm: false,
     defaultFull: false,
   };
@@ -186,6 +191,7 @@ export function slotToLlmConfig(slot: ModelSlotConfig, appConfig: AppConfig): Ll
     assessmentMode: appConfig.assessmentMode,
     apiKey: slot.apiKey,
     batchSize: slot.batchSize,
+    llmTuning: appConfig.llmTuning,
   };
 }
 
@@ -208,7 +214,22 @@ export function loadAppConfig(): AppConfig {
       if (!validated.success) {
         getComponentLogger("Config").warn({ errors: validated.error.flatten().fieldErrors }, "config.json failed validation, using defaults");
       } else {
-        appConfig = { ...appConfig, ...validated.data, main: { ...appConfig.main, ...validated.data.main }, consensus: { ...appConfig.consensus, ...validated.data.consensus } };
+        appConfig = {
+          ...appConfig,
+          ...validated.data,
+          main: { ...appConfig.main, ...validated.data.main },
+          consensus: { ...appConfig.consensus, ...validated.data.consensus },
+          // Deep-merge tuning so a partial llmTuning in config.json keeps the
+          // other defaults instead of dropping them.
+          llmTuning: {
+            ...appConfig.llmTuning,
+            ...validated.data.llmTuning,
+            evidenceMaxChars: {
+              ...appConfig.llmTuning.evidenceMaxChars,
+              ...(validated.data.llmTuning?.evidenceMaxChars ?? {}),
+            },
+          },
+        };
         if (Array.isArray(validated.data.judges)) {
           appConfig.judges = validated.data.judges;
         }
@@ -227,6 +248,8 @@ export function loadAppConfig(): AppConfig {
   if (process.env.LLM_TEMPERATURE) appConfig.main.temperature = parseFloat(process.env.LLM_TEMPERATURE);
   if (process.env.LLM_CONCURRENCY) appConfig.concurrency = parseInt(process.env.LLM_CONCURRENCY, 10);
   if (process.env.LLM_ASSESSMENT_MODE) appConfig.assessmentMode = process.env.LLM_ASSESSMENT_MODE as AppConfig['assessmentMode'];
+  if (process.env.LLM_TIER_A_BATCH_SIZE) appConfig.llmTuning.tierABatchSize = parseInt(process.env.LLM_TIER_A_BATCH_SIZE, 10);
+  if (process.env.LLM_CONSENSUS_VOTES) appConfig.llmTuning.consensusVotes = parseInt(process.env.LLM_CONSENSUS_VOTES, 10);
 
   _appConfig = appConfig;
   return appConfig;

@@ -814,6 +814,15 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
       assessmentMode: body.assessmentMode || current.assessmentMode,
       promptProfile: body.promptProfile || current.promptProfile,
       concurrency: body.concurrency ?? current.concurrency,
+      // Deep-merge tuning so a partial update preserves the other knobs.
+      llmTuning: {
+        ...current.llmTuning,
+        ...body.llmTuning,
+        evidenceMaxChars: {
+          ...current.llmTuning.evidenceMaxChars,
+          ...(body.llmTuning?.evidenceMaxChars ?? {}),
+        },
+      },
       defaultNoLlm: body.defaultNoLlm ?? current.defaultNoLlm,
       defaultFull: body.defaultFull ?? current.defaultFull,
     };
