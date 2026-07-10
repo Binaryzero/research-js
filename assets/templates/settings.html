@@ -284,6 +284,17 @@
                             <p class="form-hint">Below the Moderate threshold is "Low Risk". Labels and colors are fixed.</p>
                         </div>
                         <div class="form-group">
+                            <label>Analysis limits</label>
+                            <div style="display:grid; grid-template-columns:repeat(2,1fr); gap:var(--space-2);">
+                                <div><label for="limit-summary-findings" class="form-hint">Findings in exec summary</label><input type="number" id="limit-summary-findings" min="1" max="100000" value="100"></div>
+                                <div><label for="limit-evidence-chars" class="form-hint">Evidence chars / finding</label><input type="number" id="limit-evidence-chars" min="100" max="1000000" value="4000"></div>
+                                <div><label for="limit-summary-chunk" class="form-hint">Exec-summary chunk chars</label><input type="number" id="limit-summary-chunk" min="1000" max="10000000" value="50000"></div>
+                                <div><label for="limit-zerohit-samples" class="form-hint">Zero-hit JS samples</label><input type="number" id="limit-zerohit-samples" min="0" max="1000" value="6"></div>
+                                <div><label for="limit-zerohit-bytes" class="form-hint">Zero-hit byte budget</label><input type="number" id="limit-zerohit-bytes" min="0" max="100000000" value="60000"></div>
+                            </div>
+                            <p class="form-hint">Pipeline size caps for static extraction and the executive summary. Raise them to include more per scan.</p>
+                        </div>
+                        <div class="form-group">
                             <label for="prompt-profile">Prompt Profile</label>
                             <select id="prompt-profile">
                                 <option value="default">Default</option>
@@ -678,6 +689,12 @@ async function loadAppConfig() {
         document.getElementById('threshold-very').value = th.verySuspicious ?? 50;
         document.getElementById('threshold-suspicious').value = th.suspicious ?? 30;
         document.getElementById('threshold-moderate').value = th.moderate ?? 15;
+        const al = appConfig.analysisLimits || {};
+        document.getElementById('limit-summary-findings').value = al.maxFindingsForSummary ?? 100;
+        document.getElementById('limit-evidence-chars').value = al.maxEvidenceChars ?? 4000;
+        document.getElementById('limit-summary-chunk').value = al.execSummaryChunkChars ?? 50000;
+        document.getElementById('limit-zerohit-samples').value = al.zeroHitSampleLimit ?? 6;
+        document.getElementById('limit-zerohit-bytes').value = al.zeroHitBytesBudget ?? 60000;
         document.getElementById('default-no-llm').checked = appConfig.defaultNoLlm || false;
         document.getElementById('default-full').checked = appConfig.defaultFull || false;
         document.getElementById('prompt-profile').value = appConfig.promptProfile || 'default';
@@ -924,6 +941,13 @@ async function saveAllSettings(e) {
                 suspicious: numVal('threshold-suspicious', 30),
                 moderate: numVal('threshold-moderate', 15),
             },
+        },
+        analysisLimits: {
+            maxFindingsForSummary: numVal('limit-summary-findings', 100),
+            maxEvidenceChars: numVal('limit-evidence-chars', 4000),
+            execSummaryChunkChars: numVal('limit-summary-chunk', 50000),
+            zeroHitSampleLimit: numVal('limit-zerohit-samples', 6),
+            zeroHitBytesBudget: numVal('limit-zerohit-bytes', 60000),
         },
         defaultNoLlm: document.getElementById('default-no-llm').checked,
         defaultFull: document.getElementById('default-full').checked,

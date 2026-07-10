@@ -19,6 +19,7 @@ import type {
   PatternsConfig,
 } from '../types/index.js';
 import { loadPatterns, getAllPatterns } from './patterns.js';
+import { getAnalysisLimits } from './analysis-limits.js';
 import { getComponentLogger } from "../services/logger.js";
 
 
@@ -570,7 +571,7 @@ export class StaticAnalyzer {
     const SCRIPT_EXTS = new Set(['.sh', '.bash', '.zsh', '.ps1', '.bat', '.cmd']);
     const NATIVE_EXTS = new Set(['.node', '.wasm']);
     const WEBVIEW_EXTS = new Set(['.html', '.htm', '.svg']);
-    const MAX_EVIDENCE = 4000;
+    const MAX_EVIDENCE = getAnalysisLimits().maxEvidenceChars;
 
     // 1. package.json scripts/activationEvents/contributes — the manifest
     //    keys most often abused for delivery. The .json file is already

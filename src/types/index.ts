@@ -268,6 +268,15 @@ export interface ScoringConfig {
   thresholds: { verySuspicious: number; suspicious: number; moderate: number };
 }
 
+// Analysis-pipeline size limits (previously hardcoded in llm.ts / static.ts).
+export interface AnalysisLimits {
+  maxFindingsForSummary: number;  // findings included in the exec summary (default 100)
+  maxEvidenceChars: number;       // chars of code captured per finding at scan time (default 4000)
+  execSummaryChunkChars: number;  // source bytes per exec-summary chunk (default 50000)
+  zeroHitSampleLimit: number;     // JS files sampled when there are no findings (default 6)
+  zeroHitBytesBudget: number;     // byte budget for that zero-hit sampling (default 60000)
+}
+
 export interface AppConfig {
   version: string;
   main: ModelSlotConfig;
@@ -278,6 +287,7 @@ export interface AppConfig {
   concurrency: number;
   llmTuning: LlmTuning;
   scoring: ScoringConfig;
+  analysisLimits: AnalysisLimits;
   defaultNoLlm: boolean;
   defaultFull: boolean;
 }

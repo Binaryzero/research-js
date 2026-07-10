@@ -129,6 +129,13 @@ export function makeAppConfig(overrides?: Partial<AppConfig>): AppConfig {
       verdictBoost: { malicious: 25, suspicious: 5 },
       thresholds: { verySuspicious: 50, suspicious: 30, moderate: 15 },
     },
+    analysisLimits: {
+      maxFindingsForSummary: 100,
+      maxEvidenceChars: 4000,
+      execSummaryChunkChars: 50000,
+      zeroHitSampleLimit: 6,
+      zeroHitBytesBudget: 60000,
+    },
     defaultNoLlm: false,
     defaultFull: false,
     ...overrides,
