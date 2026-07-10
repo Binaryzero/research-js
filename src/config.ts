@@ -9,7 +9,6 @@ import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { load } from 'js-yaml';
 import type { ServerConfig, LlmConfig, AppConfig, ModelSlotConfig } from './types/index.js';
 import { AppConfigSchema } from './schemas/config.js';
-import { DEFAULT_SCORING, setScoringConfig } from './analyzer/scoring.js';
 import { getComponentLogger } from "./services/logger.js";
 
 
@@ -172,7 +171,6 @@ function defaultAppConfig(): AppConfig {
       consensusVotes: 3,
       evidenceMaxChars: { strategic: 600, triage: 1500, bulk: 800, individual: 1500 },
     },
-    scoring: DEFAULT_SCORING,
     defaultNoLlm: false,
     defaultFull: false,
   };
@@ -231,15 +229,6 @@ export function loadAppConfig(): AppConfig {
               ...(validated.data.llmTuning?.evidenceMaxChars ?? {}),
             },
           },
-          // Deep-merge scoring so a partial `scoring` in config.json keeps the
-          // other defaults.
-          scoring: {
-            ...appConfig.scoring,
-            ...validated.data.scoring,
-            riskWeights: { ...appConfig.scoring.riskWeights, ...(validated.data.scoring?.riskWeights ?? {}) },
-            verdictBoost: { ...appConfig.scoring.verdictBoost, ...(validated.data.scoring?.verdictBoost ?? {}) },
-            thresholds: { ...appConfig.scoring.thresholds, ...(validated.data.scoring?.thresholds ?? {}) },
-          },
         };
         if (Array.isArray(validated.data.judges)) {
           appConfig.judges = validated.data.judges;
@@ -271,9 +260,6 @@ export function loadAppConfig(): AppConfig {
   const votes = envPosInt(process.env.LLM_CONSENSUS_VOTES);
   if (votes !== undefined) appConfig.llmTuning.consensusVotes = votes;
 
-  // Sync the scoring engine's active weights with the loaded config.
-  setScoringConfig(appConfig.scoring);
-
   _appConfig = appConfig;
   return appConfig;
 }
@@ -283,7 +269,6 @@ export function loadAppConfig(): AppConfig {
  */
 export function saveAppConfig(appConfig: AppConfig): void {
   _appConfig = appConfig;
-  setScoringConfig(appConfig.scoring);
   writeFileSync(CONFIG_FILE, JSON.stringify(appConfig, null, 2), 'utf-8');
   getComponentLogger('Config').info(`Saved config.json (judges: ${appConfig.judges.length})`);
 }
