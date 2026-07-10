@@ -947,7 +947,7 @@ If there are too many findings to assess completely, prioritize assessing the fi
       try {
         response = await this.generate(user, system);
       } catch (err) {
-        getComponentLogger('LLM').warn(`Triage batch generate failed (${batch.indices.length} findings): ${err instanceof Error ? err.message : err}`);
+        getComponentLogger('LLM').warn(`Triage batch generate failed (${batch.indices.length} findings): ${err instanceof Error ? err.message : String(err)}`);
         return; // leave these indices unassessed → handled by the fallback phase
       }
 
@@ -1077,7 +1077,7 @@ If there are too many findings to assess completely, prioritize assessing the fi
           try {
             return await this.assessFinding(findings[idx], options.skipConsensus);
           } catch (err) {
-            getComponentLogger('LLM').warn(`Individual fallback failed for finding ${idx} (${findings[idx].category}/${findings[idx].title}): ${err instanceof Error ? err.message : err}`);
+            getComponentLogger('LLM').warn(`Individual fallback failed for finding ${idx} (${findings[idx].category}/${findings[idx].title}): ${err instanceof Error ? err.message : String(err)}`);
             return {
               riskLevel: findings[idx].riskLevel as LlmAssessment['riskLevel'],
               isFalsePositive: false,
