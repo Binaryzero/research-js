@@ -80,7 +80,7 @@ export async function loadConfig(): Promise<ServerConfig> {
     timeout: parseInt(process.env.LLM_TIMEOUT || '180000', 10),
     maxTokens: parseInt(process.env.LLM_MAX_TOKENS || '32000', 10),
     temperature: parseFloat(process.env.LLM_TEMPERATURE || '0.3'),
-    concurrency: parseInt(process.env.LLM_CONCURRENCY || '10', 10),
+    concurrency: parseInt(process.env.LLM_CONCURRENCY || '20', 10),
     assessmentMode: (process.env.LLM_ASSESSMENT_MODE as LlmConfig['assessmentMode']) || 'strategic',
     stream: process.env.LLM_STREAM === 'true' || process.env.LLM_STREAM === '1',
     apiKey: process.env.LLM_API_KEY,
@@ -163,7 +163,9 @@ function defaultAppConfig(): AppConfig {
     consensus: { judgesValidateAllFindings: false },
     assessmentMode: 'strategic',
     promptProfile: 'default',
-    concurrency: 10,
+    // Aggressive default for network-bound cloud/hosted backends (calls are not
+    // GPU-serialized). Override with LLM_CONCURRENCY. Lower it if you hit 429s.
+    concurrency: 20,
     defaultNoLlm: false,
     defaultFull: false,
   };

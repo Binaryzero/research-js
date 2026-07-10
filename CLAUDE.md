@@ -68,7 +68,7 @@ Environment variables (all optional):
 - `HOST` - Bind address (default: 127.0.0.1)
 - `LLM_MODEL` - Model name (default: llama3.2)
 - `LLM_URL` - OpenAI-compatible API URL (default: http://localhost:11434)
-- `LLM_CONCURRENCY` - Parallel LLM requests (default: 10)
+- `LLM_CONCURRENCY` - Parallel LLM requests (default: 20; lower if you hit 429s)
 - `REPORTS_DIR` - Report output directory
 
 Hot-reloadable config:
