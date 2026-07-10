@@ -256,6 +256,18 @@ export interface ConsensusConfig {
   judgesValidateAllFindings: boolean;  // false = HIGH/CRITICAL only (default)
 }
 
+// Tunable scoring weights (previously hardcoded in scoring.ts). Risk-label
+// text/colors stay fixed; only the numeric knobs are exposed.
+export interface ScoringConfig {
+  riskWeights: { critical: number; high: number; medium: number; low: number };
+  injectionBoost: number;   // added to a finding's weight when injection detected (default 5)
+  binaryBoost: number;      // added once when the extension ships binaries (default 5)
+  verdictBoost: { malicious: number; suspicious: number }; // LLM verdict score bumps (25 / 5)
+  // Score thresholds for the Very Suspicious / Suspicious / Moderate labels
+  // (below `moderate` is "Low Risk"). Defaults: 50 / 30 / 15.
+  thresholds: { verySuspicious: number; suspicious: number; moderate: number };
+}
+
 export interface AppConfig {
   version: string;
   main: ModelSlotConfig;
@@ -265,6 +277,7 @@ export interface AppConfig {
   promptProfile: string;    // Global prompt profile — applies to all models uniformly
   concurrency: number;
   llmTuning: LlmTuning;
+  scoring: ScoringConfig;
   defaultNoLlm: boolean;
   defaultFull: boolean;
 }
