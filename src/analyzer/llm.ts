@@ -499,7 +499,7 @@ export class LlmClient {
   }
 
   get concurrency(): number {
-    return this.config.concurrency || 10;
+    return this.config.concurrency || 20;
   }
 
   /**
