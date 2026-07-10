@@ -324,7 +324,7 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
       config: configWithProvider,
       prompts,
       extensionInfo,
-    }).catch(err => task.fail(err.message));
+    }).catch(err => task.fail(err instanceof Error ? err.message : String(err)));
     
     return { scan_id: task.id };
   });
@@ -712,7 +712,7 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
               breakdown: (info.breakdown as Record<string, unknown>) || {},
               static_score: info.suspicion_score as number | undefined,
               // Include true_positives for LLM-analyzed extensions (used by batch UI)
-              ...(info.true_positives !== undefined && { true_positives: info.true_positives as number }),
+              ...(typeof info.true_positives === 'number' && { true_positives: info.true_positives }),
               verdict: (info.verdict as string) || null,
             };
           }
@@ -1016,7 +1016,7 @@ ${indent(prompts.triage_batch?.user || '')}
       config: configWithMode,
       prompts,
       extensionInfo: { publisher, extension: extensionName },
-    }).catch(err => task.fail(err.message));
+    }).catch(err => task.fail(err instanceof Error ? err.message : String(err)));
 
     return { scan_id: task.id };
   });
@@ -1047,7 +1047,7 @@ ${indent(prompts.triage_batch?.user || '')}
       reportsDir: config.reportsDir,
       config,
       prompts: getPrompts(),
-    }).catch(err => task.fail(err.message));
+    }).catch(err => task.fail(err instanceof Error ? err.message : String(err)));
 
     return { scan_id: task.id };
   });
@@ -1102,7 +1102,7 @@ ${indent(prompts.triage_batch?.user || '')}
       reportsDir: config.reportsDir,
       config: configWithMode,
       prompts,
-    }).catch(err => task.fail(err.message));
+    }).catch(err => task.fail(err instanceof Error ? err.message : String(err)));
 
     return { scan_id: task.id };
   });
