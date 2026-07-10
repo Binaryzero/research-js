@@ -105,6 +105,18 @@ export async function downloadExtension(
     }
     downloadUrl = await getMarketplaceDownloadUrl(parsed.publisher, parsed.extension);
     filename = `${parsed.publisher}.${parsed.extension}.vsix`;
+    // SSRF guard: the publisher slug is interpolated into the download host, so a
+    // crafted itemName (e.g. containing '/' or a decimal-encoded IP) could point
+    // the fetch at an internal host. Validate the resulting host against the allowlist.
+    let marketplaceHost: string;
+    try {
+      marketplaceHost = new URL(downloadUrl).hostname;
+    } catch {
+      throw new Error('Failed to build a valid marketplace download URL');
+    }
+    if (!ALLOWED_DOWNLOAD_HOSTS.test(marketplaceHost)) {
+      throw new Error(`Refusing marketplace download from disallowed host '${marketplaceHost}'`);
+    }
   } else if (isDirectVsixUrl(url)) {
     // Allowlist applies to direct VSIX URLs — marketplace paths are already
     // constrained by isMarketplaceUrl above and produce a deterministic download URL.

@@ -63,8 +63,12 @@ export function calculateSuspicionScore(
   const riskCounts: Record<string, number> = { critical: 0, high: 0, medium: 0, low: 0 };
   
   for (const finding of result.findings) {
-    // Skip false positives if adjusting for LLM
-    if (options.adjustForLlm && finding.isFalsePositive) continue;
+    // Skip false positives if adjusting for LLM — EXCEPT when injection was
+    // detected. A prompt-injection payload in the evidence can coerce the model
+    // into marking findings false-positive to zero the score; injection-flagged
+    // findings stay scored (and keep the injection boost below) so the attack
+    // can't drive a finding-heavy extension to CLEAN / Low Risk.
+    if (options.adjustForLlm && finding.isFalsePositive && !finding.injectionDetected) continue;
 
     const risk = (finding.riskLevel || '').toLowerCase();
     let weight = (activeScoring.riskWeights as Record<string, number>)[risk] || 0;
