@@ -105,7 +105,15 @@
 // interpolate it server-side: with Nunjucks autoescape on, a dumped value's
 // quotes get HTML-escaped, producing invalid JS that throws a SyntaxError and
 // breaks every report page. Reading from the URL also removes the injection surface.
-const reportName = decodeURIComponent((window.location.pathname.split('/').pop() || ''));
+// Guard decodeURIComponent: a malformed %-sequence (e.g. /report/foo%) throws a
+// URIError at top level, which would abort the whole script and leave the page
+// stuck on the loading skeleton. Fall back to the raw segment on failure.
+let reportName = '';
+try {
+    reportName = decodeURIComponent(window.location.pathname.split('/').pop() || '');
+} catch (e) {
+    reportName = window.location.pathname.split('/').pop() || '';
+}
 
 function initReportPage() {
     // Set up back button based on referrer

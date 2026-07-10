@@ -127,10 +127,13 @@ describe('Template Rendering', () => {
   // "Unexpected token '&'" and breaks every report page. Render for real and
   // assert the inline script is still valid JavaScript.
   it('report.html inline script stays valid JS after autoescape render', () => {
-    const env = nunjucks.configure(TEMPLATES_DIR, { autoescape: true });
+    // Isolated env (not nunjucks.configure, which mutates global state) mirroring
+    // the production autoescape: true.
+    const env = new nunjucks.Environment(new nunjucks.FileSystemLoader(TEMPLATES_DIR), { autoescape: true });
     const html = env.render('report.html', { report_name: 'pub.ext.md' });
 
-    const scriptBodies = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(m => m[1]);
+    // Attribute-tolerant so an added defer/type on the tag won't break extraction.
+    const scriptBodies = [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)].map(m => m[1]);
     const reportScript = scriptBodies.find(s => s.includes('reportName')) ?? '';
 
     expect(reportScript).not.toBe('');
