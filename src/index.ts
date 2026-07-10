@@ -98,7 +98,7 @@ const MAX_SCANS_IN_MEMORY = parseInt(process.env.MAX_SCANS_IN_MEMORY || '10', 10
  */
 function cleanupOldScans() {
   const completedScans = Array.from(scans.entries())
-    .filter(([, task]) => task.status === 'complete' || task.status === 'failed')
+    .filter(([, task]) => task.status === 'complete' || task.status === 'failed' || task.status === 'cancelled')
     .sort((a, b) => (a[1].result?.analysisDate || '').localeCompare(b[1].result?.analysisDate || ''));
   
   // Remove oldest scans if we have too many
@@ -1311,6 +1311,10 @@ async function runExtensionScan(
           }
         }
       }
+
+      // A cancel during the (long) batch assessment should skip the equally
+      // expensive executive-summary step rather than run it anyway.
+      if (options.isCancelled()) return null;
 
       options.onProgress(0.88, 'Generating executive summary...');
       const summary = await orchestrator.generateExecutiveSummary(result, extensionPath);
