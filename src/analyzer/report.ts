@@ -165,6 +165,20 @@ ${this.result.executiveSummary}
 ---`;
   }
   
+  /**
+   * Escape a value drawn from attacker-controlled VSIX metadata before it goes
+   * into the Markdown report. The report is later rendered with marked() and
+   * injected via innerHTML, so neutralize HTML (stored XSS) and table-breaking
+   * pipes here at the source.
+   */
+  private escapeCell(value: string): string {
+    return String(value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/\|/g, '\\|');
+  }
+
   private metadata(): string {
     const description = this.result.description || '';
     const desc = this.options.fullOutput
@@ -179,12 +193,12 @@ ${this.result.executiveSummary}
 
 | Field | Value |
 |-------|-------|
-| Publisher | ${this.result.publisher || 'Not specified'} |
-| Description | ${desc || 'Not specified'} |
-| Repository | ${this.result.repository || 'Not specified'} |
-| Categories | ${categories.join(', ') || 'None'} |
+| Publisher | ${this.escapeCell(this.result.publisher || 'Not specified')} |
+| Description | ${this.escapeCell(desc || 'Not specified')} |
+| Repository | ${this.escapeCell(this.result.repository || 'Not specified')} |
+| Categories | ${this.escapeCell(categories.join(', ') || 'None')} |
 | Activation Events | ${activationEventsDisplay} |
-${this.result.bundledDependencies?.length ? `| Bundled Dependencies | ${this.result.bundledDependencies.join(', ')} |` : ''}
+${this.result.bundledDependencies?.length ? `| Bundled Dependencies | ${this.escapeCell(this.result.bundledDependencies.join(', '))} |` : ''}
 ---`;
   }
 

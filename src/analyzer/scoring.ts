@@ -19,7 +19,35 @@ let activeScoring: ScoringConfig = DEFAULT_SCORING;
 
 /** Set the scoring weights used by all scoring functions (called from config load/save). */
 export function setScoringConfig(config: ScoringConfig): void {
-  activeScoring = config;
+  // Sanitize every value at this boundary: a NaN/negative/invalid input would make
+  // calculateSuspicionScore produce NaN and break all downstream risk labeling.
+  // Belt-and-suspenders with the Zod schema — this also guards direct/programmatic callers.
+  const posInt = (val: number | undefined, dflt: number, minVal = 0): number =>
+    typeof val === 'number' && Number.isFinite(val) && val >= minVal ? Math.floor(val) : dflt;
+
+  // Enforce the descending-order invariant (verySuspicious >= suspicious >= moderate)
+  // programmatically, not just via the Zod .refine (which only guards the config-file
+  // path). This setter also serves direct/programmatic callers, and out-of-order
+  // thresholds would make thresholdRows() walk high→low incorrectly and mislabel risk.
+  const moderate = posInt(config?.thresholds?.moderate, DEFAULT_SCORING.thresholds.moderate, 1);
+  const suspicious = Math.max(posInt(config?.thresholds?.suspicious, DEFAULT_SCORING.thresholds.suspicious, 1), moderate);
+  const verySuspicious = Math.max(posInt(config?.thresholds?.verySuspicious, DEFAULT_SCORING.thresholds.verySuspicious, 1), suspicious);
+
+  activeScoring = {
+    riskWeights: {
+      critical: posInt(config?.riskWeights?.critical, DEFAULT_SCORING.riskWeights.critical),
+      high: posInt(config?.riskWeights?.high, DEFAULT_SCORING.riskWeights.high),
+      medium: posInt(config?.riskWeights?.medium, DEFAULT_SCORING.riskWeights.medium),
+      low: posInt(config?.riskWeights?.low, DEFAULT_SCORING.riskWeights.low),
+    },
+    injectionBoost: posInt(config?.injectionBoost, DEFAULT_SCORING.injectionBoost),
+    binaryBoost: posInt(config?.binaryBoost, DEFAULT_SCORING.binaryBoost),
+    verdictBoost: {
+      malicious: posInt(config?.verdictBoost?.malicious, DEFAULT_SCORING.verdictBoost.malicious),
+      suspicious: posInt(config?.verdictBoost?.suspicious, DEFAULT_SCORING.verdictBoost.suspicious),
+    },
+    thresholds: { verySuspicious, suspicious, moderate },
+  };
 }
 
 /** Label/color rows derived from the configured thresholds (text/colors are fixed). */
@@ -63,8 +91,12 @@ export function calculateSuspicionScore(
   const riskCounts: Record<string, number> = { critical: 0, high: 0, medium: 0, low: 0 };
   
   for (const finding of result.findings) {
-    // Skip false positives if adjusting for LLM
-    if (options.adjustForLlm && finding.isFalsePositive) continue;
+    // Skip false positives if adjusting for LLM — EXCEPT when injection was
+    // detected. A prompt-injection payload in the evidence can coerce the model
+    // into marking findings false-positive to zero the score; injection-flagged
+    // findings stay scored (and keep the injection boost below) so the attack
+    // can't drive a finding-heavy extension to CLEAN / Low Risk.
+    if (options.adjustForLlm && finding.isFalsePositive && !finding.injectionDetected) continue;
 
     const risk = (finding.riskLevel || '').toLowerCase();
     let weight = (activeScoring.riskWeights as Record<string, number>)[risk] || 0;

@@ -19,6 +19,7 @@ import type {
   PatternsConfig,
 } from '../types/index.js';
 import { loadPatterns, getAllPatterns } from './patterns.js';
+import { getAnalysisLimits } from './analysis-limits.js';
 import { getComponentLogger } from "../services/logger.js";
 
 
@@ -570,7 +571,7 @@ export class StaticAnalyzer {
     const SCRIPT_EXTS = new Set(['.sh', '.bash', '.zsh', '.ps1', '.bat', '.cmd']);
     const NATIVE_EXTS = new Set(['.node', '.wasm']);
     const WEBVIEW_EXTS = new Set(['.html', '.htm', '.svg']);
-    const MAX_EVIDENCE = 4000;
+    const MAX_EVIDENCE = getAnalysisLimits().maxEvidenceChars;
 
     // 1. package.json scripts/activationEvents/contributes — the manifest
     //    keys most often abused for delivery. The .json file is already
@@ -1026,12 +1027,46 @@ export class StaticAnalyzer {
     const isMinified = this.isMinified(content);
     const probableOrigin = this.getProbableOrigin(relativePath);
 
+    // ReDoS guard: patterns.yaml is user-managed and some regexes backtrack
+    // catastrophically. A hostile extension shipping a multi-MB minified line
+    // could hang the (synchronous) scan and wedge the event loop, so bound the
+    // input each regex sees. Longer lines are matched against a prefix only.
+    const MAX_SCAN_LINE_LENGTH = 10_000;
+    let truncationReported = false;
+
     for (let lineNum = 0; lineNum < lines.length; lineNum++) {
       const line = lines[lineNum];
+      const isTruncated = line.length > MAX_SCAN_LINE_LENGTH;
+      const scanLine = isTruncated ? line.slice(0, MAX_SCAN_LINE_LENGTH) : line;
+
+      // Surface the truncation so it isn't a silent evasion (a payload hidden
+      // past the scanned prefix). One finding per file is enough.
+      if (isTruncated && !truncationReported) {
+        truncationReported = true;
+        findings.push({
+          category: 'obfuscation',
+          title: 'Scan Line Truncated',
+          location: `${relativePath}:${lineNum + 1}`,
+          observation: `Line exceeds ${MAX_SCAN_LINE_LENGTH} chars and was truncated for pattern matching (ReDoS guard); content past the prefix was not scanned and may hide code.`,
+          evidence: line.slice(0, 200) + '… [truncated]',
+          lineStart: Math.max(1, lineNum),
+          lineEnd: lineNum + 1,
+          context: '',
+          isFalsePositive: false,
+          falsePositiveReason: '',
+          riskLevel: 'medium',
+          patternName: 'scan_line_truncated',
+          fileType,
+          isMinified,
+          probableOrigin,
+          matchHighlight: '',
+          neighboringImports: '',
+        });
+      }
 
       for (const { category, name, definition, regex } of this.compiledPatterns) {
         const re = new RegExp(regex.source, regex.flags);
-        if (re.test(line)) {
+        if (re.test(scanLine)) {
           findings.push({
             category,
             title: name.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
@@ -1253,16 +1288,37 @@ export function extractVsix(vsixPath: string, outputDir?: string): string {
   const targetDir = outputDir || join(tmpdir(), `vsix_${randomBytes(8).toString('hex')}`);
   const safeRoot = resolve(targetDir) + sep;
 
+  // Decompression-bomb caps — a hostile VSIX is the tool's primary input.
+  const MAX_ENTRIES = 20_000;
+  const MAX_ENTRY_BYTES = 200 * 1024 * 1024;   // 200 MB per file
+  const MAX_TOTAL_BYTES = 1024 * 1024 * 1024;  // 1 GB total uncompressed
+
   try {
     const zip = new AdmZip(vsixPath);
     const entries = zip.getEntries();
 
+    if (entries.length > MAX_ENTRIES) {
+      throw new Error(`Refusing to extract VSIX: ${entries.length} entries exceeds the ${MAX_ENTRIES} limit (possible zip bomb)`);
+    }
+
+    let totalBytes = 0;
     for (const entry of entries) {
       const destPath = resolve(targetDir, entry.entryName);
       const isSafe = destPath === resolve(targetDir) || destPath.startsWith(safeRoot);
 
       if (!isSafe) {
         throw new Error(`Refusing to extract VSIX: entry "${entry.entryName}" escapes target directory (zip-slip)`);
+      }
+
+      // entry.header.size is the uncompressed size — check before extracting so a
+      // high-ratio deflate entry can't exhaust disk/memory.
+      const entrySize = entry.header?.size ?? 0;
+      if (entrySize > MAX_ENTRY_BYTES) {
+        throw new Error(`Refusing to extract VSIX: entry "${entry.entryName}" is ${entrySize} bytes uncompressed (exceeds per-file cap)`);
+      }
+      totalBytes += entrySize;
+      if (totalBytes > MAX_TOTAL_BYTES) {
+        throw new Error(`Refusing to extract VSIX: total uncompressed size exceeds ${MAX_TOTAL_BYTES} bytes (possible zip bomb)`);
       }
 
       zip.extractEntryTo(entry, targetDir, true, true);

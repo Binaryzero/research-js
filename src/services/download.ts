@@ -105,6 +105,18 @@ export async function downloadExtension(
     }
     downloadUrl = await getMarketplaceDownloadUrl(parsed.publisher, parsed.extension);
     filename = `${parsed.publisher}.${parsed.extension}.vsix`;
+    // SSRF guard: the publisher slug is interpolated into the download host, so a
+    // crafted itemName (e.g. containing '/' or a decimal-encoded IP) could point
+    // the fetch at an internal host. Validate the resulting host against the allowlist.
+    let marketplaceHost: string;
+    try {
+      marketplaceHost = new URL(downloadUrl).hostname;
+    } catch {
+      throw new Error('Failed to build a valid marketplace download URL');
+    }
+    if (!ALLOWED_DOWNLOAD_HOSTS.test(marketplaceHost)) {
+      throw new Error(`Refusing marketplace download from disallowed host '${marketplaceHost}'`);
+    }
   } else if (isDirectVsixUrl(url)) {
     // Allowlist applies to direct VSIX URLs — marketplace paths are already
     // constrained by isMarketplaceUrl above and produce a deterministic download URL.
@@ -128,14 +140,46 @@ export async function downloadExtension(
   const destPath = join(destDir, filename);
 
   // Download using native fetch
+  // Follow redirects manually so each hop is re-validated — an allowed host
+  // (gallery.vsassets.io) may 302 to a CDN, but must never be redirected to an
+  // internal/private address (SSRF via open redirect).
+  const isSafeRedirectTarget = (u: string): boolean => {
+    try {
+      const parsed = new URL(u);
+      if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return false;
+      const h = parsed.hostname.toLowerCase();
+      if (h === 'localhost') return false;
+      if (/^127\.|^169\.254\.|^10\.|^172\.(1[6-9]|2\d|3[01])\.|^192\.168\./.test(h)) return false;
+      if (h === '::1' || h.startsWith('fe80:') || h.startsWith('fc') || h.startsWith('fd')) return false;
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
   try {
-    const response = await fetch(downloadUrl, {
-      method: 'GET',
-      headers: {
-        'user-agent': 'extension-security-analyzer/1.0',
-      },
-      redirect: 'follow',
-    });
+    const MAX_REDIRECTS = 5;
+    const fetchOpts = {
+      method: 'GET' as const,
+      headers: { 'user-agent': 'extension-security-analyzer/1.0' },
+      redirect: 'manual' as const,
+    };
+    let currentUrl = downloadUrl;
+    let response = await fetch(currentUrl, fetchOpts);
+
+    for (let hops = 0; response.status >= 300 && response.status < 400; hops++) {
+      const location = response.headers.get('location');
+      if (!location) break;
+      if (hops >= MAX_REDIRECTS) {
+        throw new Error('Too many redirects while downloading');
+      }
+      const next = new URL(location, currentUrl).toString();
+      if (!isSafeRedirectTarget(next)) {
+        throw new Error('Refusing to follow a download redirect to a disallowed target');
+      }
+      currentUrl = next;
+      response = await fetch(currentUrl, fetchOpts);
+    }
 
     if (!response.ok) {
       throw new Error(`Download failed: ${response.status}`);

@@ -47,4 +47,23 @@ describe('scoring config', () => {
   it('ScoringConfigSchema fills every field from {} to the defaults', () => {
     expect(ScoringConfigSchema.parse({})).toEqual(DEFAULT_SCORING);
   });
+
+  it('enforces descending threshold order for out-of-order programmatic input', () => {
+    // verySuspicious below suspicious would break the high→low label walk; the setter
+    // clamps upward: moderate=20, suspicious=max(30,20)=30, verySuspicious=max(10,30)=30.
+    setScoringConfig({ ...DEFAULT_SCORING, thresholds: { verySuspicious: 10, suspicious: 30, moderate: 20 } });
+    expect(getRiskLabel(30)).toBe('Very Suspicious'); // top band reached at 30, not the bogus 10
+    expect(getRiskLabel(25)).toBe('Moderate');        // between moderate(20) and suspicious(30)
+    expect(getRiskLabel(19)).toBe('Low Risk');
+  });
+
+  it('sanitizes NaN/negative scoring values to defaults (no NaN scores)', () => {
+    setScoringConfig({
+      ...DEFAULT_SCORING,
+      riskWeights: { ...DEFAULT_SCORING.riskWeights, critical: NaN as unknown as number },
+    });
+    const result = resultWith({ findings: [{ riskLevel: 'critical', isFalsePositive: false }] as never });
+    const [score] = calculateSuspicionScore(result);
+    expect(score).toBe(DEFAULT_SCORING.riskWeights.critical); // NaN weight → default 10, never NaN
+  });
 });

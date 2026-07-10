@@ -831,6 +831,7 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
         verdictBoost: { ...current.scoring.verdictBoost, ...(body.scoring?.verdictBoost ?? {}) },
         thresholds: { ...current.scoring.thresholds, ...(body.scoring?.thresholds ?? {}) },
       },
+      analysisLimits: { ...current.analysisLimits, ...body.analysisLimits },
       defaultNoLlm: body.defaultNoLlm ?? current.defaultNoLlm,
       defaultFull: body.defaultFull ?? current.defaultFull,
     };

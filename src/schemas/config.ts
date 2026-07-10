@@ -70,7 +70,25 @@ export const ScoringConfigSchema = z.object({
     verySuspicious: z.number().min(1).max(10000).default(50),
     suspicious: z.number().min(1).max(10000).default(30),
     moderate: z.number().min(1).max(10000).default(15),
-  }).default({}),
+  }).default({})
+    // Risk labeling (getRiskLabel/getRiskColor) walks thresholds high→low, so they
+    // must be descending or a band becomes unreachable and labels come out wrong.
+    .refine(
+      (t) => t.verySuspicious >= t.suspicious && t.suspicious >= t.moderate,
+      { message: 'Thresholds must be in descending order (verySuspicious >= suspicious >= moderate)' }
+    ),
+});
+
+/**
+ * Analysis-pipeline size limits (previously hardcoded in llm.ts / static.ts).
+ * Each field defaults to its historical value.
+ */
+export const AnalysisLimitsSchema = z.object({
+  maxFindingsForSummary: z.number().min(1).max(100000).default(100),
+  maxEvidenceChars: z.number().min(100).max(1000000).default(4000),
+  execSummaryChunkChars: z.number().min(1000).max(10000000).default(50000),
+  zeroHitSampleLimit: z.number().min(0).max(1000).default(6),
+  zeroHitBytesBudget: z.number().min(0).max(100000000).default(60000),
 });
 
 /**
@@ -86,6 +104,7 @@ export const AppConfigSchema = z.object({
   concurrency: z.number().min(1).max(50),
   llmTuning: LlmTuningSchema.default({}),
   scoring: ScoringConfigSchema.default({}),
+  analysisLimits: AnalysisLimitsSchema.default({}),
   defaultNoLlm: z.boolean(),
   defaultFull: z.boolean(),
 });
