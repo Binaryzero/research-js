@@ -80,6 +80,18 @@ export const ScoringConfigSchema = z.object({
 });
 
 /**
+ * Analysis-pipeline size limits (previously hardcoded in llm.ts / static.ts).
+ * Each field defaults to its historical value.
+ */
+export const AnalysisLimitsSchema = z.object({
+  maxFindingsForSummary: z.number().min(1).max(100000).default(100),
+  maxEvidenceChars: z.number().min(100).max(1000000).default(4000),
+  execSummaryChunkChars: z.number().min(1000).max(10000000).default(50000),
+  zeroHitSampleLimit: z.number().min(0).max(1000).default(6),
+  zeroHitBytesBudget: z.number().min(0).max(100000000).default(60000),
+});
+
+/**
  * Full application configuration schema
  */
 export const AppConfigSchema = z.object({
@@ -92,6 +104,7 @@ export const AppConfigSchema = z.object({
   concurrency: z.number().min(1).max(50),
   llmTuning: LlmTuningSchema.default({}),
   scoring: ScoringConfigSchema.default({}),
+  analysisLimits: AnalysisLimitsSchema.default({}),
   defaultNoLlm: z.boolean(),
   defaultFull: z.boolean(),
 });

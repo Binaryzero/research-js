@@ -10,6 +10,7 @@ import { load } from 'js-yaml';
 import type { ServerConfig, LlmConfig, AppConfig, ModelSlotConfig } from './types/index.js';
 import { AppConfigSchema } from './schemas/config.js';
 import { DEFAULT_SCORING, setScoringConfig } from './analyzer/scoring.js';
+import { DEFAULT_ANALYSIS_LIMITS, setAnalysisLimits } from './analyzer/analysis-limits.js';
 import { getComponentLogger } from "./services/logger.js";
 
 
@@ -173,6 +174,7 @@ function defaultAppConfig(): AppConfig {
       evidenceMaxChars: { strategic: 600, triage: 1500, bulk: 800, individual: 1500 },
     },
     scoring: DEFAULT_SCORING,
+    analysisLimits: DEFAULT_ANALYSIS_LIMITS,
     defaultNoLlm: false,
     defaultFull: false,
   };
@@ -240,6 +242,8 @@ export function loadAppConfig(): AppConfig {
             verdictBoost: { ...appConfig.scoring.verdictBoost, ...(validated.data.scoring?.verdictBoost ?? {}) },
             thresholds: { ...appConfig.scoring.thresholds, ...(validated.data.scoring?.thresholds ?? {}) },
           },
+          // analysisLimits is flat — a shallow merge keeps the other defaults.
+          analysisLimits: { ...appConfig.analysisLimits, ...validated.data.analysisLimits },
         };
         if (Array.isArray(validated.data.judges)) {
           appConfig.judges = validated.data.judges;
@@ -271,8 +275,9 @@ export function loadAppConfig(): AppConfig {
   const votes = envPosInt(process.env.LLM_CONSENSUS_VOTES);
   if (votes !== undefined) appConfig.llmTuning.consensusVotes = votes;
 
-  // Sync the scoring engine's active weights with the loaded config.
+  // Sync the analyzer singletons with the loaded config.
   setScoringConfig(appConfig.scoring);
+  setAnalysisLimits(appConfig.analysisLimits);
 
   _appConfig = appConfig;
   return appConfig;
@@ -288,6 +293,7 @@ export function saveAppConfig(appConfig: AppConfig): void {
   const validated = AppConfigSchema.parse(appConfig) as AppConfig;
   _appConfig = validated;
   setScoringConfig(validated.scoring);
+  setAnalysisLimits(validated.analysisLimits);
   writeFileSync(CONFIG_FILE, JSON.stringify(validated, null, 2), 'utf-8');
   getComponentLogger('Config').info(`Saved config.json (judges: ${validated.judges.length})`);
 }
