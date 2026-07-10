@@ -1681,16 +1681,16 @@ export class ConsensusOrchestrator {
 
     options.onProgress?.(0, `${totalModels} model(s) assessing ${findings.length} findings in parallel...`);
     
-    // Limit concurrent LLM calls across ALL models to prevent 429 errors
-    // Total concurrency = sum of all model concurrency, but cap at reasonable limit
-    const totalConcurrency = Math.min(15, this.mainClient.concurrency + this.judges.reduce((sum, j) => sum + j.concurrency, 0));
-    
+    // Each model (main + every judge) dispatches at its own configured
+    // concurrency — no shared division. On a cloud backend (calls are not
+    // GPU-serialized) this maximizes throughput; total in-flight is the sum
+    // across models. Lower LLM_CONCURRENCY if the provider rate-limits (429s).
     const allResults = await Promise.all([
       // Main model — skip internal consensus since orchestrator merges across models
       this.mainClient.batchAssessFindings(findings, {
         onProgress: (p, m) => reportOverallProgress(0, p, `[Main] ${m}`),
         extensionName: options.extensionName,
-        concurrencyLimit: Math.max(1, Math.floor(totalConcurrency / totalModels)),
+        concurrencyLimit: this.mainClient.concurrency,
         skipConsensus: true,
       }),
       // Judges — each wrapped with catch for graceful degradation
@@ -1698,7 +1698,7 @@ export class ConsensusOrchestrator {
         judge.batchAssessFindings(findings, {
           onProgress: (p, m) => reportOverallProgress(1 + jIdx, p, `[Judge ${jIdx + 1}] ${m}`),
           extensionName: options.extensionName,
-          concurrencyLimit: Math.max(1, Math.floor(totalConcurrency / totalModels)),
+          concurrencyLimit: judge.concurrency,
           skipConsensus: true,
         }).catch((err): null => {
           const judgeLabel = `Judge ${jIdx + 1}`;
