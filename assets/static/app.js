@@ -97,6 +97,7 @@ class ScanTracker {
         this.options = options;
         this.eventSource = null;
         this._cancelled = false;
+        this._done = false;
     }
 
     start() {
@@ -118,6 +119,7 @@ class ScanTracker {
         });
 
         this.eventSource.addEventListener('done', (e) => {
+            this._done = true;
             this.eventSource.close();
             this.eventSource = null;
             const info = JSON.parse(e.data);
@@ -139,6 +141,16 @@ class ScanTracker {
 
         this.eventSource.addEventListener('error', () => {
             if (this.eventSource) { this.eventSource.close(); this.eventSource = null; }
+            // Ignore the error the browser fires when the server closes the
+            // stream after a normal 'done', and anything after an explicit cancel.
+            if (this._done || this._cancelled) return;
+            // Otherwise the SSE connection dropped mid-scan: surface it instead of
+            // leaving the progress card frozen on "Analyzing..." forever.
+            const { titleEl, progressArea, onError } = this.options;
+            if (titleEl) titleEl.textContent = 'Connection lost';
+            const cancelBtn = progressArea?.querySelector('#cancel-btn');
+            if (cancelBtn) cancelBtn.style.display = 'none';
+            if (onError) onError({ status: 'error', error: 'Lost connection to the scan progress stream' });
         });
 
         return this;
