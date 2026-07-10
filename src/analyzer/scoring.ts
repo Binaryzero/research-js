@@ -19,7 +19,31 @@ let activeScoring: ScoringConfig = DEFAULT_SCORING;
 
 /** Set the scoring weights used by all scoring functions (called from config load/save). */
 export function setScoringConfig(config: ScoringConfig): void {
-  activeScoring = config;
+  // Sanitize every value at this boundary: a NaN/negative/invalid input would make
+  // calculateSuspicionScore produce NaN and break all downstream risk labeling.
+  // Belt-and-suspenders with the Zod schema — this also guards direct/programmatic callers.
+  const posInt = (val: number | undefined, dflt: number, minVal = 0): number =>
+    typeof val === 'number' && Number.isFinite(val) && val >= minVal ? Math.floor(val) : dflt;
+
+  activeScoring = {
+    riskWeights: {
+      critical: posInt(config?.riskWeights?.critical, DEFAULT_SCORING.riskWeights.critical),
+      high: posInt(config?.riskWeights?.high, DEFAULT_SCORING.riskWeights.high),
+      medium: posInt(config?.riskWeights?.medium, DEFAULT_SCORING.riskWeights.medium),
+      low: posInt(config?.riskWeights?.low, DEFAULT_SCORING.riskWeights.low),
+    },
+    injectionBoost: posInt(config?.injectionBoost, DEFAULT_SCORING.injectionBoost),
+    binaryBoost: posInt(config?.binaryBoost, DEFAULT_SCORING.binaryBoost),
+    verdictBoost: {
+      malicious: posInt(config?.verdictBoost?.malicious, DEFAULT_SCORING.verdictBoost.malicious),
+      suspicious: posInt(config?.verdictBoost?.suspicious, DEFAULT_SCORING.verdictBoost.suspicious),
+    },
+    thresholds: {
+      verySuspicious: posInt(config?.thresholds?.verySuspicious, DEFAULT_SCORING.thresholds.verySuspicious, 1),
+      suspicious: posInt(config?.thresholds?.suspicious, DEFAULT_SCORING.thresholds.suspicious, 1),
+      moderate: posInt(config?.thresholds?.moderate, DEFAULT_SCORING.thresholds.moderate, 1),
+    },
+  };
 }
 
 /** Label/color rows derived from the configured thresholds (text/colors are fixed). */

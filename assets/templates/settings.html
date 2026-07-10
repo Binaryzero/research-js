@@ -885,7 +885,16 @@ async function saveAllSettings(e) {
     }
 
     // Preserve an explicit 0 (valid for scoring weights) instead of falling back.
-    const numVal = (id, dflt) => { const n = parseInt(document.getElementById(id).value, 10); return Number.isFinite(n) ? n : dflt; };
+    const numVal = (id, dflt) => {
+        const el = document.getElementById(id);
+        const n = parseInt(el.value, 10);
+        if (!Number.isFinite(n)) return dflt;
+        // Clamp to the input's declared min/max so out-of-range values can't be
+        // submitted (a config that fails server validation reverts to defaults).
+        const min = el.hasAttribute('min') ? parseInt(el.getAttribute('min'), 10) : -Infinity;
+        const max = el.hasAttribute('max') ? parseInt(el.getAttribute('max'), 10) : Infinity;
+        return Math.max(min, Math.min(max, n));
+    };
     const configPayload = {
         version: appConfig?.version || '1',
         main: main,

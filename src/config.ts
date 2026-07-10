@@ -282,10 +282,14 @@ export function loadAppConfig(): AppConfig {
  * Save AppConfig to config.json and update in-memory cache.
  */
 export function saveAppConfig(appConfig: AppConfig): void {
-  _appConfig = appConfig;
-  setScoringConfig(appConfig.scoring);
-  writeFileSync(CONFIG_FILE, JSON.stringify(appConfig, null, 2), 'utf-8');
-  getComponentLogger('Config').info(`Saved config.json (judges: ${appConfig.judges.length})`);
+  // Validate before persisting/activating. Otherwise an out-of-range value would
+  // be saved and then rejected by loadAppConfig on the next restart, silently
+  // reverting the entire config to defaults.
+  const validated = AppConfigSchema.parse(appConfig) as AppConfig;
+  _appConfig = validated;
+  setScoringConfig(validated.scoring);
+  writeFileSync(CONFIG_FILE, JSON.stringify(validated, null, 2), 'utf-8');
+  getComponentLogger('Config').info(`Saved config.json (judges: ${validated.judges.length})`);
 }
 
 /**

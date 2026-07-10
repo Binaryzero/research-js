@@ -70,7 +70,13 @@ export const ScoringConfigSchema = z.object({
     verySuspicious: z.number().min(1).max(10000).default(50),
     suspicious: z.number().min(1).max(10000).default(30),
     moderate: z.number().min(1).max(10000).default(15),
-  }).default({}),
+  }).default({})
+    // Risk labeling (getRiskLabel/getRiskColor) walks thresholds high→low, so they
+    // must be descending or a band becomes unreachable and labels come out wrong.
+    .refine(
+      (t) => t.verySuspicious >= t.suspicious && t.suspicious >= t.moderate,
+      { message: 'Thresholds must be in descending order (verySuspicious >= suspicious >= moderate)' }
+    ),
 });
 
 /**
