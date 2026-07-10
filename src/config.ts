@@ -248,8 +248,17 @@ export function loadAppConfig(): AppConfig {
   if (process.env.LLM_TEMPERATURE) appConfig.main.temperature = parseFloat(process.env.LLM_TEMPERATURE);
   if (process.env.LLM_CONCURRENCY) appConfig.concurrency = parseInt(process.env.LLM_CONCURRENCY, 10);
   if (process.env.LLM_ASSESSMENT_MODE) appConfig.assessmentMode = process.env.LLM_ASSESSMENT_MODE as AppConfig['assessmentMode'];
-  if (process.env.LLM_TIER_A_BATCH_SIZE) appConfig.llmTuning.tierABatchSize = parseInt(process.env.LLM_TIER_A_BATCH_SIZE, 10);
-  if (process.env.LLM_CONSENSUS_VOTES) appConfig.llmTuning.consensusVotes = parseInt(process.env.LLM_CONSENSUS_VOTES, 10);
+  // Only apply env overrides that parse to a valid positive integer, so a
+  // typo'd value can't store NaN/0 into the config.
+  const envPosInt = (raw: string | undefined): number | undefined => {
+    if (!raw) return undefined;
+    const v = parseInt(raw, 10);
+    return Number.isFinite(v) && v >= 1 ? v : undefined;
+  };
+  const tierA = envPosInt(process.env.LLM_TIER_A_BATCH_SIZE);
+  if (tierA !== undefined) appConfig.llmTuning.tierABatchSize = tierA;
+  const votes = envPosInt(process.env.LLM_CONSENSUS_VOTES);
+  if (votes !== undefined) appConfig.llmTuning.consensusVotes = votes;
 
   _appConfig = appConfig;
   return appConfig;

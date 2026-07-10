@@ -219,6 +219,15 @@ const ZERO_HIT_JS_SAMPLE_LIMIT = 6;
 const ZERO_HIT_JS_BYTES_BUDGET = 60_000;
 const JS_EXTS = new Set(['.js', '.mjs', '.cjs', '.ts', '.tsx', '.jsx']);
 
+/**
+ * Coerce a (possibly env/config-sourced) tuning value to a positive integer,
+ * falling back to `dflt` for 0, NaN, negative, or undefined. Prevents a bad
+ * batch size from causing an infinite loop or an empty vote count.
+ */
+export function positiveInt(value: number | undefined, dflt: number): number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 1 ? Math.floor(value) : dflt;
+}
+
 function walkExtensionFiles(extensionPath: string): string[] {
   const out: string[] = [];
   const walk = (dir: string) => {
@@ -879,7 +888,7 @@ If there are too many findings to assess completely, prioritize assessing the fi
     if (pendingIndices.length === 0) return results;
 
     const TIER_A_CATEGORIES = new Set(['prompt_injection', 'malicious_agent_instructions', 'obfuscation', 'credentials']);
-    const TIER_A_MAX = this.config.llmTuning?.tierABatchSize ?? 5;
+    const TIER_A_MAX = positiveInt(this.config.llmTuning?.tierABatchSize, 5);
     const TIER_B_MAX = this.config.batchSize ?? 20;
 
     // Split into tier A and tier B
@@ -1130,7 +1139,7 @@ If there are too many findings to assess completely, prioritize assessing the fi
               const { system, user } = this.buildFindingPrompt(finding);
 
               // firstVote is already in hand; gather (consensusVotes - 1) more.
-              const consensusVotes = this.config.llmTuning?.consensusVotes ?? 3;
+              const consensusVotes = positiveInt(this.config.llmTuning?.consensusVotes, 3);
               const extraResponses = await Promise.all(
                 Array.from({ length: Math.max(0, consensusVotes - 1) }, () => this.generate(user, system))
               );
@@ -1306,7 +1315,7 @@ If there are too many findings to assess completely, prioritize assessing the fi
 
     if (useConsensus) {
       // Consensus mode: N calls, merge per-finding via majority vote
-      const consensusVotes = this.config.llmTuning?.consensusVotes ?? 3;
+      const consensusVotes = positiveInt(this.config.llmTuning?.consensusVotes, 3);
       getComponentLogger('Consensus').info(`Quorum for ${pattern.category}/${pattern.patternName} (${pattern.risk} risk, ${samples.length} findings)`);
       const runs = await Promise.all(Array.from({ length: consensusVotes }, () => this.generate(user, system)));
       llmCalls = consensusVotes;
@@ -1343,7 +1352,7 @@ If there are too many findings to assess completely, prioritize assessing the fi
     if (useConsensus) {
       getComponentLogger('Consensus').info(`Individual quorum for "${finding.title}" at ${finding.location} (${finding.riskLevel} risk)`);
       // Submit all consensus votes simultaneously (bounded by the caller's limiter).
-      const consensusVotes = this.config.llmTuning?.consensusVotes ?? 3;
+      const consensusVotes = positiveInt(this.config.llmTuning?.consensusVotes, 3);
       const responses = await Promise.all(Array.from({ length: consensusVotes }, () => this.generate(user, system)));
       const candidates = responses.map(r => parseSingleAssessment(r)).filter((a): a is LlmAssessment => !!a);
       if (candidates.length >= 2) return mergeConsensusAssessments(candidates);
