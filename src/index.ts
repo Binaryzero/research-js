@@ -1366,7 +1366,15 @@ export function loadPersistedResult(reportsDir: string, extensionId: string): An
   const dataPath = join(reportsDir, `${safeName}.json`);
   if (!existsSync(dataPath)) return null;
   try {
-    return JSON.parse(readFileSync(dataPath, 'utf-8')) as AnalysisResult;
+    const parsed = JSON.parse(readFileSync(dataPath, 'utf-8')) as unknown;
+    // Minimal shape check: a reusable result must at least carry a findings array.
+    // A malformed file falls back to a full re-scan rather than feeding garbage
+    // into the LLM/report pipeline.
+    if (!parsed || typeof parsed !== 'object' || !Array.isArray((parsed as AnalysisResult).findings)) {
+      logger.warn({ extensionId }, 'Persisted findings JSON has unexpected shape; will re-scan');
+      return null;
+    }
+    return parsed as AnalysisResult;
   } catch (err) {
     logger.warn({ err, extensionId }, 'Failed to read persisted findings JSON; will re-scan');
     return null;

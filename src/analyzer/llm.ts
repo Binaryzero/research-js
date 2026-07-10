@@ -255,6 +255,11 @@ function walkExtensionFiles(extensionPath: string): string[] {
  *      identifiers, reflection, or otherwise-uncatalogued primitives).
  */
 function readFindingSourceFiles(findings: Finding[], extensionPath: string): Array<{ path: string; section: string }> {
+  // No extraction dir (e.g. LLM re-analysis reusing stored findings): skip all
+  // filesystem access. Guards against resolving relative finding paths against
+  // the cwd when extensionPath is empty.
+  if (!extensionPath) return [];
+
   const pathsToRead = new Set<string>();
 
   for (const f of findings) {

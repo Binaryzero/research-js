@@ -41,4 +41,9 @@ describe('loadPersistedResult', () => {
     writeFileSync(join(dir, `${safeName}.json`), '{ not valid json');
     expect(loadPersistedResult(dir, 'pub.corrupt')).toBeNull();
   });
+
+  it('returns null when the JSON has no findings array', () => {
+    writeFileSync(join(dir, 'pub.noshape.json'), JSON.stringify({ extensionId: 'pub.noshape' }));
+    expect(loadPersistedResult(dir, 'pub.noshape')).toBeNull();
+  });
 });
