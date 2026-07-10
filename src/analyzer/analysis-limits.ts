@@ -22,7 +22,21 @@ let active: AnalysisLimits = DEFAULT_ANALYSIS_LIMITS;
 
 /** Set the active analysis limits (called from config load/save). */
 export function setAnalysisLimits(limits: AnalysisLimits): void {
-  active = limits;
+  // Sanitize at the boundary: a NaN/negative limit would silently disable the
+  // guard it controls. e.g. a NaN zeroHitSampleLimit makes `added >= limit`
+  // always false, so the zero-hit sampler processes every file and can blow the
+  // LLM context budget. Belt-and-suspenders with the Zod schema; also guards
+  // direct callers. Per-field minimums mirror AnalysisLimitsSchema.
+  const posInt = (val: number | undefined, dflt: number, minVal: number): number =>
+    typeof val === 'number' && Number.isFinite(val) && val >= minVal ? Math.floor(val) : dflt;
+
+  active = {
+    maxFindingsForSummary: posInt(limits?.maxFindingsForSummary, DEFAULT_ANALYSIS_LIMITS.maxFindingsForSummary, 1),
+    maxEvidenceChars: posInt(limits?.maxEvidenceChars, DEFAULT_ANALYSIS_LIMITS.maxEvidenceChars, 100),
+    execSummaryChunkChars: posInt(limits?.execSummaryChunkChars, DEFAULT_ANALYSIS_LIMITS.execSummaryChunkChars, 1000),
+    zeroHitSampleLimit: posInt(limits?.zeroHitSampleLimit, DEFAULT_ANALYSIS_LIMITS.zeroHitSampleLimit, 0),
+    zeroHitBytesBudget: posInt(limits?.zeroHitBytesBudget, DEFAULT_ANALYSIS_LIMITS.zeroHitBytesBudget, 0),
+  };
 }
 
 /** Read the active analysis limits. */
