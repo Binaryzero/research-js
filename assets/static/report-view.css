@@ -122,11 +122,17 @@ body.rv-page .report-view { padding: 20px 26px 80px; max-width: 1560px; margin: 
 .report-view .rv-verdict-pill.NONE { background: var(--rv-bg-elevated); color: var(--rv-fg-secondary); }
 .report-view .rv-verdict-desc { font-size: 13px; color: var(--rv-fg-secondary); }
 
-/* ── Stat cards ── */
-.report-view .rv-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(125px, 1fr)); gap: 10px; margin-bottom: 20px; }
-.report-view .rv-stat { background: var(--rv-bg-surface); border: 1px solid var(--rv-border-subtle); border-radius: var(--rv-radius); padding: 11px 14px; }
-.report-view .rv-stat .v { font-family: var(--rv-font-display); font-size: 22px; font-weight: 800; line-height: 1.1; color: var(--rv-fg); }
-.report-view .rv-stat .l { font-size: 10.5px; color: var(--rv-fg-muted); text-transform: uppercase; letter-spacing: .07em; margin-top: 3px; }
+/* ── Stat cards (clickable filter shortcuts) ── */
+.report-view .rv-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(102px, 1fr)); gap: 8px; margin-bottom: 20px; }
+.report-view .rv-stat {
+  background: var(--rv-bg-surface); border: 1px solid var(--rv-border-subtle); border-radius: var(--rv-radius);
+  padding: 9px 12px; text-align: left; cursor: pointer; font-family: inherit;
+  transition: border-color .15s ease, background .15s ease;
+}
+.report-view .rv-stat:hover { border-color: var(--rv-accent); background: var(--rv-bg-elevated); }
+.report-view .rv-stat:focus-visible { outline: 2px solid var(--rv-accent); outline-offset: 1px; }
+.report-view .rv-stat .v { font-family: var(--rv-font-display); font-size: 20px; font-weight: 800; line-height: 1.1; color: var(--rv-fg); }
+.report-view .rv-stat .l { font-size: 10px; color: var(--rv-fg-muted); text-transform: uppercase; letter-spacing: .06em; margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .report-view .rv-stat.critical .v { color: var(--rv-sev-critical); }
 .report-view .rv-stat.high .v { color: var(--rv-sev-high); }
 .report-view .rv-stat.fp .v { color: var(--rv-success); }
@@ -213,6 +219,7 @@ body.rv-page .report-view { padding: 20px 26px 80px; max-width: 1560px; margin: 
 .report-view .rv-cat-badge.m { background: rgba(234, 179, 8, .1); color: var(--rv-sev-medium); }
 .report-view .rv-cat-badge.l { background: rgba(100, 116, 139, .15); color: #94a3b8; }
 .report-view .rv-cat-badge.fp { background: var(--rv-success-muted); color: var(--rv-success); }
+.report-view .rv-cat-badge.hidden-count { background: var(--rv-warning-muted); color: var(--rv-warning); }
 .report-view .rv-chevron { color: var(--rv-fg-muted); transition: transform .15s ease; }
 .report-view .rv-category[open] .rv-chevron { transform: rotate(90deg); }
 .report-view .rv-cat-body { border: 1px solid var(--rv-border-subtle); border-top: 0; border-radius: 0 0 var(--rv-radius) var(--rv-radius); padding: 10px; background: rgba(21, 27, 35, .5); }

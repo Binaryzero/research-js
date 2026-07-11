@@ -120,11 +120,17 @@
     var sevCounts = { critical: 0, high: 0, medium: 0, low: 0 };
     findings.forEach(function (f) { sevCounts[sevOf(f)]++; });
 
+    // Severity filtering is OPT-IN: an empty selection shows everything;
+    // selecting chips narrows the view to just those severities.
     var state = {
       search: '',
-      sev: { critical: true, high: true, medium: true, low: true },
+      sev: {}, // e.g. { critical: true } — empty means "no severity filter"
       fpMode: fpCount > 0 ? 'hide' : 'all', // hide | dim | all | only
     };
+    function anySevSelected() {
+      for (var k in state.sev) { if (state.sev[k]) return true; }
+      return false;
+    }
 
     // ═══ Sidebar ═══
     var sidebar = el('nav', { class: 'rv-sidebar', 'aria-label': 'Report sections' });
@@ -159,18 +165,42 @@
         el('span', { class: 'rv-verdict-desc' }, verdictDesc)
       ),
       el('div', { class: 'rv-stats' },
-        stat(String(findings.length), 'Findings', ''),
-        stat(String(findings.length - fpCount), 'True positives', ''),
-        stat(String(fpCount), 'False positives', 'fp'),
-        stat(String(sevCounts.critical), 'Critical', 'critical'),
-        stat(String(sevCounts.high), 'High', 'high'),
-        stat(String(endpoints.length), 'Endpoints', '')
+        stat(String(findings.length), 'Findings', '', 'Show all findings', function () {
+          setFilters({ search: '', sev: [], fpMode: 'all' });
+        }),
+        stat(String(findings.length - fpCount), 'True positives', '', 'Show only true positives', function () {
+          setFilters({ sev: [], fpMode: 'hide' });
+        }),
+        stat(String(fpCount), 'False positives', 'fp', 'Show only false positives', function () {
+          setFilters({ sev: [], fpMode: 'only' });
+        }),
+        stat(String(sevCounts.critical), 'Critical', 'critical', 'Show only critical findings', function () {
+          setFilters({ sev: ['critical'], fpMode: 'all' });
+        }),
+        stat(String(sevCounts.high), 'High', 'high', 'Show only high findings', function () {
+          setFilters({ sev: ['high'], fpMode: 'all' });
+        }),
+        stat(String(endpoints.length), 'Endpoints', '', 'Jump to endpoints', function () {
+          var t = root.querySelector('#rv-endpoints');
+          if (t) t.scrollIntoView({ behavior: scrollBehavior(), block: 'start' });
+        })
       )
     );
     main.append(overview);
 
-    function stat(value, label, cls) {
-      return el('div', { class: 'rv-stat ' + cls }, el('div', { class: 'v' }, value), el('div', { class: 'l' }, label));
+    // Stat cards double as filter shortcuts: clicking one applies the matching
+    // filter and jumps to the findings list.
+    function stat(value, label, cls, hint, onActivate) {
+      return el('button', {
+        class: 'rv-stat ' + cls, type: 'button', title: hint,
+        onclick: function () {
+          onActivate();
+          if (label !== 'Endpoints') {
+            var t = root.querySelector('#rv-findings');
+            if (t) t.scrollIntoView({ behavior: scrollBehavior(), block: 'start' });
+          }
+        },
+      }, el('div', { class: 'v' }, value), el('div', { class: 'l' }, label));
     }
 
     // ═══ Executive summary ═══
@@ -272,19 +302,41 @@
       placeholder: 'Search findings…  ( / )',
       oninput: function (e) { state.search = e.target.value.toLowerCase(); applyFilters(); },
     });
+    // Opt-in severity chips: none selected = show all; a selected chip narrows
+    // the view to that severity (multi-select adds more).
+    var chipEls = {};
     var sevChips = SEVERITIES.map(function (sev) {
       var chip = el('button', {
-        class: 'rv-chip ' + sev + ' on', 'aria-pressed': 'true', type: 'button',
+        class: 'rv-chip ' + sev, 'aria-pressed': 'false', type: 'button',
+        title: 'Show only ' + sev + ' findings',
         onclick: function () {
           state.sev[sev] = !state.sev[sev];
-          chip.classList.toggle('on', state.sev[sev]);
-          chip.classList.toggle('off', !state.sev[sev]);
-          chip.setAttribute('aria-pressed', String(state.sev[sev]));
+          syncControls();
           applyFilters();
         },
       }, el('span', { class: 'rv-dot', style: 'background:' + SEV_COLORS[sev] }), sev + ' ' + sevCounts[sev]);
+      chipEls[sev] = chip;
       return chip;
     });
+    function syncControls() {
+      SEVERITIES.forEach(function (sev) {
+        var on = !!state.sev[sev];
+        chipEls[sev].classList.toggle('on', on);
+        chipEls[sev].setAttribute('aria-pressed', String(on));
+      });
+      fpSelect.value = state.fpMode;
+      if (searchInput.value.toLowerCase() !== state.search) searchInput.value = state.search;
+    }
+    function setFilters(opts) {
+      if (opts.search !== undefined) state.search = opts.search.toLowerCase();
+      if (opts.sev !== undefined) {
+        state.sev = {};
+        opts.sev.forEach(function (s) { state.sev[s] = true; });
+      }
+      if (opts.fpMode !== undefined) state.fpMode = opts.fpMode;
+      syncControls();
+      applyFilters();
+    }
     var fpSelect = el('select', {
       class: 'rv-fp-mode', 'aria-label': 'False positive display mode',
       onchange: function (e) { state.fpMode = e.target.value; applyFilters(); },
@@ -308,7 +360,24 @@
 
     order.forEach(function (category) {
       var items = groups[category];
-      var countsBar = el('div', { class: 'rv-cat-counts' });
+
+      // Static totals: what the category CONTAINS never changes with filters;
+      // a dynamic "N hidden" badge signals when filters are suppressing items.
+      var totals = { c: 0, h: 0, m: 0, l: 0, fp: 0 };
+      items.forEach(function (f) {
+        totals[sevOf(f)[0]]++;
+        if (f.isFalsePositive) totals.fp++;
+      });
+      var hiddenBadge = el('span', { class: 'rv-cat-badge hidden-count rv-hidden' });
+      var countsBar = el('div', { class: 'rv-cat-counts' },
+        el('span', { class: 'rv-cat-badge total' }, items.length + (items.length === 1 ? ' finding' : ' findings')),
+        totals.c ? el('span', { class: 'rv-cat-badge c' }, totals.c + ' crit') : null,
+        totals.h ? el('span', { class: 'rv-cat-badge h' }, totals.h + ' high') : null,
+        totals.m ? el('span', { class: 'rv-cat-badge m' }, totals.m + ' med') : null,
+        totals.l ? el('span', { class: 'rv-cat-badge l' }, totals.l + ' low') : null,
+        totals.fp ? el('span', { class: 'rv-cat-badge fp' }, totals.fp + ' fp') : null,
+        hiddenBadge);
+
       var summary = el('summary', null,
         el('span', { class: 'rv-chevron', 'aria-hidden': 'true' }, '▸'),
         el('h2', null, catLabel(category)),
@@ -323,7 +392,7 @@
       });
 
       main.append(details);
-      categoryEls[category] = { details: details, countsBar: countsBar };
+      categoryEls[category] = { details: details, hiddenBadge: hiddenBadge, total: items.length };
     });
 
     if (findings.length === 0) {
@@ -390,9 +459,12 @@
           : null,
         ev ? pre : null);
 
+      // Findings start expanded — the report should read top to bottom without
+      // per-item clicking; collapsing is the opt-in action.
       var elDetails = el('details', {
         class: 'rv-finding' + (f.isFalsePositive ? ' is-fp' : ''),
         dataset: { sev: sev },
+        open: '',
       });
       elDetails.append(summary, fBody);
       body.append(elDetails);
@@ -445,8 +517,8 @@
     }
 
     // ═══ Filtering ═══
-    function findingVisible(rec) {
-      if (!state.sev[rec.sev]) return false;
+    function findingVisible(rec, sevFilterActive) {
+      if (sevFilterActive && !state.sev[rec.sev]) return false;
       var isFp = !!rec.finding.isFalsePositive;
       if (state.fpMode === 'hide' && isFp) return false;
       if (state.fpMode === 'only' && !isFp) return false;
@@ -455,41 +527,31 @@
     }
 
     function applyFilters() {
-      var perCat = {};
+      var sevFilterActive = anySevSelected();
+      var visiblePerCat = {};
       var visible = 0;
       findingEls.forEach(function (rec) {
-        var show = findingVisible(rec);
+        var show = findingVisible(rec, sevFilterActive);
         rec.elem.classList.toggle('rv-hidden', !show);
         rec.elem.classList.toggle('dimmed', state.fpMode === 'dim' && !!rec.finding.isFalsePositive);
         if (!show) return;
         visible++;
-        if (!perCat[rec.category]) perCat[rec.category] = { total: 0, c: 0, h: 0, m: 0, l: 0, fp: 0 };
-        var pc = perCat[rec.category];
-        pc.total++;
-        pc[rec.sev[0]]++;
-        if (rec.finding.isFalsePositive) pc.fp++;
+        visiblePerCat[rec.category] = (visiblePerCat[rec.category] || 0) + 1;
       });
       for (var category in categoryEls) {
         var entry = categoryEls[category];
-        var pc = perCat[category];
-        entry.details.classList.toggle('rv-hidden', !pc);
+        var shown = visiblePerCat[category] || 0;
+        var hidden = entry.total - shown;
+        entry.details.classList.toggle('rv-hidden', shown === 0);
+        entry.hiddenBadge.textContent = hidden + ' hidden';
+        entry.hiddenBadge.classList.toggle('rv-hidden', hidden === 0);
         var nav = catNavItems[category];
-        if (nav) {
-          nav.item.classList.toggle('rv-hidden', !pc);
-          if (pc) nav.count.textContent = String(pc.total);
-        }
-        if (!pc) continue;
-        var badges = [
-          el('span', { class: 'rv-cat-badge total' }, pc.total + ' shown'),
-          pc.c ? el('span', { class: 'rv-cat-badge c' }, pc.c + ' crit') : null,
-          pc.h ? el('span', { class: 'rv-cat-badge h' }, pc.h + ' high') : null,
-          pc.m ? el('span', { class: 'rv-cat-badge m' }, pc.m + ' med') : null,
-          pc.l ? el('span', { class: 'rv-cat-badge l' }, pc.l + ' low') : null,
-          pc.fp ? el('span', { class: 'rv-cat-badge fp' }, pc.fp + ' fp') : null,
-        ].filter(Boolean);
-        entry.countsBar.replaceChildren.apply(entry.countsBar, badges);
+        if (nav) nav.item.classList.toggle('rv-hidden', shown === 0);
       }
-      resultCount.textContent = visible + ' / ' + findings.length + ' findings';
+      var totalHidden = findings.length - visible;
+      resultCount.textContent = totalHidden > 0
+        ? findings.length + ' findings · ' + totalHidden + ' hidden by filters'
+        : findings.length + ' findings';
     }
 
     function toggleAll(open) {
