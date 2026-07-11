@@ -1318,6 +1318,12 @@ async function runExtensionScan(
     options.onProgress(0.05, 'Extracting VSIX...');
     extensionPath = extractVsix(inputSource);
     options.tempDirs.push(extensionPath);
+  } else if (!existsSync(inputSource)) {
+    // Fail loudly: analyzing a nonexistent path would produce an empty result
+    // that looks like a clean scan and silently overwrites prior artifacts.
+    throw new Error(
+      `Input not found: "${inputSource}" is not a marketplace/VSIX URL, an uploaded .vsix, or an existing directory`,
+    );
   }
 
   if (options.isCancelled()) return null;
@@ -1328,6 +1334,14 @@ async function runExtensionScan(
     patternsFile: options.config.patternsFile,
   });
   result = await analyzer.analyze();
+
+  // A real VSIX always contains at least a manifest; zero inventoried files
+  // means the input was empty or extraction failed. Fail instead of writing a
+  // clean-looking empty report over any previous scan of this extension.
+  if (result.fileTypes.length === 0 && result.totalSize === 0) {
+    throw new Error(`No analyzable files found in "${inputSource}"; refusing to persist an empty result`);
+  }
+
   options.onProgress(0.4, `Static analysis complete: ${result.findings.length} findings`);
   }
 

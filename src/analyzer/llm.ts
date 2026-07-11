@@ -14,6 +14,7 @@ import type { Finding, LlmAssessment, LlmConfig, EndpointInfo, ConsensusConfig, 
 import type { PromptConfig } from '../config.js';
 import { getEndpointFiltering } from './patterns.js';
 import { filterEndpoints } from './endpoint-filter.js';
+import { sliceEvidenceForPrompt } from './evidence.js';
 import type { LlmProvider } from '../providers/llm-provider.js';
 import { createProvider } from '../providers/index.js';
 import { LlmAssessmentSchema, IndexedLlmAssessmentSchema } from './schemas.js';
@@ -748,7 +749,7 @@ If there are too many findings to assess completely, prioritize assessing the fi
       for (const finding of catFindings) {
         parts.push(`\n[${findingNum + 1}] ${finding.title}\n`);
         parts.push(`File: ${finding.location}\n`);
-        parts.push(`Code:\n\`\`\`\n${finding.evidence.slice(0, this.config.llmTuning?.evidenceMaxChars?.bulk ?? 800)}\n\`\`\`\n`);
+        parts.push(`Code:\n\`\`\`\n${sliceEvidenceForPrompt(finding.evidence, finding.matchHighlight, this.config.llmTuning?.evidenceMaxChars?.bulk ?? 800)}\n\`\`\`\n`);
         findingNum++;
       }
     }
@@ -937,7 +938,7 @@ If there are too many findings to assess completely, prioritize assessing the fi
           category: f.category,
           title: f.title,
           location: f.location,
-          evidence: f.evidence.slice(0, this.config.llmTuning?.evidenceMaxChars?.triage ?? 1500),
+          evidence: sliceEvidenceForPrompt(f.evidence, f.matchHighlight, this.config.llmTuning?.evidenceMaxChars?.triage ?? 1500),
           file_type: f.fileType || 'unknown',
           is_minified: f.isMinified || false,
           probable_origin: f.probableOrigin || 'unknown',
@@ -1285,7 +1286,7 @@ If there are too many findings to assess completely, prioritize assessing the fi
       .replace('{title}', finding.title)
       .replace('{location}', finding.location)
       .replace('{pattern_risk}', finding.riskLevel)
-      .replace('{evidence}', finding.evidence.slice(0, this.config.llmTuning?.evidenceMaxChars?.individual ?? 1500))
+      .replace('{evidence}', sliceEvidenceForPrompt(finding.evidence, finding.matchHighlight, this.config.llmTuning?.evidenceMaxChars?.individual ?? 1500))
       .replace('{file_type}', finding.fileType || 'unknown')
       .replace('{is_minified}', String(finding.isMinified || false))
       .replace('{probable_origin}', finding.probableOrigin || 'unknown')

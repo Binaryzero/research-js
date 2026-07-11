@@ -18,6 +18,9 @@
 import type { AnalysisResult, BinaryInfo, FileStats, Finding } from '../types/index.js';
 import type { EndpointFilteringConfig } from './patterns.js';
 import { filterEndpoints } from './endpoint-filter.js';
+import { truncateEvidence } from './evidence.js';
+
+export { truncateEvidence };
 
 /** Max evidence characters embedded per finding in the HTML render model. */
 export const EVIDENCE_RENDER_LIMIT = 4000;
@@ -80,49 +83,6 @@ export interface ReportPayload {
 export interface RenderModelOptions {
   score: number | null;
   filterConfig: EndpointFilteringConfig;
-}
-
-/**
- * Bound evidence for display, keeping it useful.
- *
- * A plain head-slice would drop the pattern match whenever it sits past the
- * limit — exactly on the long-evidence findings where the viewer's match
- * highlighting matters most. So when the first match would be cut off, the
- * window recenters around it: 40% of the budget as leading context (the setup
- * feeding the pattern), 60% trailing (what is done with the result). Ellipsis
- * markers signal the cuts and are budgeted so the result never exceeds
- * `limit`.
- */
-export function truncateEvidence(
-  evidence: string,
-  matchHighlight: string | undefined,
-  limit: number,
-): { text: string; truncated: boolean } {
-  if (evidence.length <= limit) {
-    return { text: evidence, truncated: false };
-  }
-
-  const ELLIPSIS = '…';
-  const matchIndex = matchHighlight ? evidence.indexOf(matchHighlight) : -1;
-  const matchEnd = matchIndex >= 0 ? matchIndex + (matchHighlight as string).length : -1;
-
-  // No match, or the match survives a head-slice: cut the tail.
-  if (matchIndex < 0 || matchEnd <= limit - 1) {
-    return { text: evidence.slice(0, limit - 1) + ELLIPSIS, truncated: true };
-  }
-
-  // Window around the first match, both cut edges marked with an ellipsis.
-  const budget = limit - 2 * ELLIPSIS.length;
-  const lead = Math.floor(budget * 0.4);
-  let start = Math.max(0, matchIndex - lead);
-  let end = start + budget;
-  if (end > evidence.length) {
-    end = evidence.length;
-    start = Math.max(0, end - budget);
-  }
-  const prefix = start > 0 ? ELLIPSIS : '';
-  const suffix = end < evidence.length ? ELLIPSIS : '';
-  return { text: prefix + evidence.slice(start, end) + suffix, truncated: true };
 }
 
 function toRenderFinding(f: Finding): RenderFinding {
