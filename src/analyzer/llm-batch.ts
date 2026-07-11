@@ -6,6 +6,7 @@
 import type { Finding, LlmAssessment } from '../types/index.js';
 import type { PromptConfig } from '../config.js';
 import { LlmAssessmentSchema } from './schemas.js';
+import { sliceEvidenceForPrompt } from './evidence.js';
 import { getComponentLogger } from "../services/logger.js";
 
 
@@ -248,7 +249,7 @@ Format:
     findingsList += `\n=== File: ${filePath} ===\n`;
     for (const sample of fileSamples) {
       findingsList += `\n[${idx++}] Location: ${sample.finding.location} (${sample.reason})\n`;
-      findingsList += `Code:\n${sample.finding.evidence.slice(0, evidenceMaxChars)}\n`;
+      findingsList += `Code:\n${sliceEvidenceForPrompt(sample.finding.evidence, sample.finding.matchHighlight, evidenceMaxChars)}\n`;
     }
   }
 

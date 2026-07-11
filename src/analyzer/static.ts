@@ -946,18 +946,23 @@ export class StaticAnalyzer {
 
   /**
    * Extract evidence centered on the match position within a line/chunk.
-   * For long lines (minified bundles), centers a 500-char window on the match
-   * and trims to semicolons for readability. For short lines, uses surrounding
-   * context lines.
+   * The window is budgeted by analysisLimits.maxEvidenceChars so reviewers see
+   * the code that actually surrounds the match — the setup feeding it and what
+   * is done with the result — not just the matched statement.
+   * For long lines (minified bundles), centers a char window on the match and
+   * trims to semicolons for readability. For short lines, walks outward over
+   * surrounding lines, biased toward trailing code.
    */
   private extractEvidence(text: string, lines: string[] | null, lineNum: number, regex: RegExp): string {
+    const maxChars = getAnalysisLimits().maxEvidenceChars;
     const re = new RegExp(regex.source, regex.flags);
     const match = re.exec(text);
     const matchIndex = match ? match.index : 0;
 
     if (text.length > 1000) {
-      // Long line / minified: center 500-char window on match
-      const halfWindow = 250;
+      // Long line / minified: center a window on the match. Half the
+      // configured budget — beyond that, minified context is noise.
+      const halfWindow = Math.max(250, Math.floor(maxChars / 4));
       let start = Math.max(0, matchIndex - halfWindow);
       let end = Math.min(text.length, matchIndex + halfWindow);
 
@@ -976,10 +981,45 @@ export class StaticAnalyzer {
 
     // Short lines: use surrounding context lines if available
     if (lines) {
-      return lines.slice(Math.max(0, lineNum - 2), lineNum + 3).join('\n').slice(0, 500);
+      return this.extractLineWindow(lines, lineNum, maxChars);
     }
 
-    return text.slice(0, 500);
+    return text.slice(0, maxChars);
+  }
+
+  /**
+   * Walk outward from the match line collecting context, biased toward
+   * trailing code (40% of the budget before / 60% after — what is done with a
+   * matched call usually answers the triage question). Neighboring minified
+   * lines can be huge, so each direction stops when its char budget or the
+   * line cap is reached.
+   */
+  private extractLineWindow(lines: string[], lineNum: number, maxChars: number): string {
+    const LINES_BEFORE = 10;
+    const LINES_AFTER = 15;
+    const matchLine = lines[lineNum] ?? '';
+
+    const before: string[] = [];
+    let usedBefore = 0;
+    const leadBudget = Math.floor(Math.max(0, maxChars - matchLine.length) * 0.4);
+    for (let i = lineNum - 1; i >= Math.max(0, lineNum - LINES_BEFORE); i--) {
+      const cost = lines[i].length + 1;
+      if (usedBefore + cost > leadBudget) break;
+      before.unshift(lines[i]);
+      usedBefore += cost;
+    }
+
+    const after: string[] = [];
+    let usedAfter = 0;
+    const trailBudget = Math.max(0, maxChars - matchLine.length - usedBefore);
+    for (let i = lineNum + 1; i <= Math.min(lines.length - 1, lineNum + LINES_AFTER); i++) {
+      const cost = lines[i].length + 1;
+      if (usedAfter + cost > trailBudget) break;
+      after.push(lines[i]);
+      usedAfter += cost;
+    }
+
+    return [...before, matchLine, ...after].join('\n').slice(0, maxChars);
   }
 
   /**

@@ -23,6 +23,9 @@ import { StaticAnalyzer, extractVsix } from './analyzer/static.js';
 import { LlmClient, ConsensusOrchestrator, parseVerdictFromSummary } from './analyzer/llm.js';
 import { createProvider } from './providers/index.js';
 import { ReportGenerator } from './analyzer/report.js';
+import { toRenderModel } from './analyzer/render-model.js';
+import { generateHtmlReport } from './analyzer/report-html.js';
+import { getEndpointFiltering } from './analyzer/patterns.js';
 import { calculateSuspicionScore, getRiskLabel, getRiskColor, type ScoreBreakdown } from './analyzer/scoring.js';
 import { downloadExtension, parseMarketplaceUrl, isMarketplaceUrl } from './services/download.js';
 import { searchExtensions } from './services/marketplace.js';
@@ -434,6 +437,15 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
     return { cancelled: true };
   });
   
+  /**
+   * Validate a client-supplied report name before joining it onto reportsDir.
+   * Rejects traversal on both POSIX and Windows separators (backslash is a
+   * path separator on Windows, so "..\\" would escape reportsDir there).
+   */
+  function isValidReportName(name: string): boolean {
+    return !name.includes('..') && !name.includes('/') && !name.includes('\\') && name.endsWith('.md');
+  }
+
   // ---------------------------------------------------------------
   // API: List reports
   // ---------------------------------------------------------------
@@ -472,7 +484,7 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
     const { name } = request.params as { name: string };
     
     // Security: prevent path traversal
-    if (name.includes('..') || name.includes('/') || !name.endsWith('.md')) {
+    if (!isValidReportName(name)) {
       return reply.status(400).send({ error: 'Invalid report name' });
     }
     
@@ -486,24 +498,98 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
     const html = await marked(content, { gfm: true, breaks: false });
     return { name, content, html };
   });
-  
+
+  // ---------------------------------------------------------------
+  // API: Get structured report data (render model for the interactive viewer)
+  // ---------------------------------------------------------------
+  fastify.get('/api/reports/:name/data', async (request, reply) => {
+    const { name } = request.params as { name: string };
+
+    if (!isValidReportName(name)) {
+      return reply.status(400).send({ error: 'Invalid report name' });
+    }
+
+    const extensionId = name.slice(0, -'.md'.length);
+    const persisted = loadPersistedResult(reportsDir, extensionId);
+    if (!persisted) {
+      // Older scans have no persisted JSON — the client falls back to markdown.
+      return reply.status(404).send({ error: 'No structured data for this report' });
+    }
+
+    let score: number | null = null;
+    try {
+      const scans = loadHistory(config.historyFile);
+      const entry = findScanByExtensionId(scans, persisted.extensionId || extensionId);
+      if (entry) {
+        const data = entry.data as Record<string, unknown>;
+        score = (data.llm_adjusted_score as number) ?? (data.suspicion_score as number) ?? null;
+      }
+    } catch (err) {
+      logger.warn({ err }, 'Failed to look up score from history');
+    }
+
+    const filterConfig = getEndpointFiltering(join(__dirname, '..', 'docs', 'patterns.yaml'));
+    return toRenderModel(persisted, { score, filterConfig });
+  });
+
+  // ---------------------------------------------------------------
+  // API: Download standalone HTML report
+  // ---------------------------------------------------------------
+  fastify.get('/api/reports/:name/html', async (request, reply) => {
+    const { name } = request.params as { name: string };
+
+    if (!isValidReportName(name)) {
+      return reply.status(400).send({ error: 'Invalid report name' });
+    }
+
+    const htmlPath = join(reportsDir, name.slice(0, -'.md'.length) + '.html');
+    if (!existsSync(htmlPath)) {
+      return reply.status(404).send({ error: 'No HTML report for this scan' });
+    }
+
+    // Served as an attachment: the file is a self-contained report (with its
+    // own meta CSP) meant to be saved and shared, not rendered on this origin.
+    // The filename derives from attacker-controlled extension metadata: keep
+    // the header value printable-ASCII-only so it can never carry control
+    // characters or quotes into a response-header sink (scans persisted
+    // before scan-time sanitization may still have hostile names on disk).
+    const headerSafeName = basename(htmlPath).replace(/[^\x20-\x7e]|"/g, '_');
+    return reply
+      .header('Content-Type', 'text/html; charset=utf-8')
+      .header('X-Content-Type-Options', 'nosniff')
+      .header('Content-Disposition', `attachment; filename="${headerSafeName}"`)
+      .send(readFileSync(htmlPath, 'utf-8'));
+  });
+
   // ---------------------------------------------------------------
   // API: Delete report
   // ---------------------------------------------------------------
   fastify.delete('/api/reports/:name', async (request, reply) => {
     const { name } = request.params as { name: string };
-    
-    if (name.includes('..') || name.includes('/') || !name.endsWith('.md')) {
+
+    if (!isValidReportName(name)) {
       return reply.status(400).send({ error: 'Invalid report name' });
     }
-    
+
     const reportPath = join(reportsDir, name);
-    
+
     if (!existsSync(reportPath)) {
       return reply.status(404).send({ error: 'Report not found' });
     }
-    
+
     unlinkSync(reportPath);
+
+    // Remove the structured-data and HTML siblings so a delete removes the
+    // whole scan artifact set, not just the markdown.
+    const base = reportPath.slice(0, -'.md'.length);
+    for (const ext of ['.json', '.html']) {
+      try {
+        if (existsSync(base + ext)) unlinkSync(base + ext);
+      } catch (err) {
+        logger.warn({ err, path: base + ext }, 'Failed to delete report sibling');
+      }
+    }
+
     return { deleted: true };
   });
   
@@ -1241,6 +1327,12 @@ async function runExtensionScan(
     options.onProgress(0.05, 'Extracting VSIX...');
     extensionPath = extractVsix(inputSource);
     options.tempDirs.push(extensionPath);
+  } else if (!existsSync(inputSource)) {
+    // Fail loudly: analyzing a nonexistent path would produce an empty result
+    // that looks like a clean scan and silently overwrites prior artifacts.
+    throw new Error(
+      `Input not found: "${inputSource}" is not a marketplace/VSIX URL, an uploaded .vsix, or an existing directory`,
+    );
   }
 
   if (options.isCancelled()) return null;
@@ -1251,6 +1343,14 @@ async function runExtensionScan(
     patternsFile: options.config.patternsFile,
   });
   result = await analyzer.analyze();
+
+  // A real VSIX always contains at least a manifest; zero inventoried files
+  // means the input was empty or extraction failed. Fail instead of writing a
+  // clean-looking empty report over any previous scan of this extension.
+  if (result.fileTypes.length === 0 && result.totalSize === 0) {
+    throw new Error(`No analyzable files found in "${inputSource}"; refusing to persist an empty result`);
+  }
+
   options.onProgress(0.4, `Static analysis complete: ${result.findings.length} findings`);
   }
 
@@ -1359,7 +1459,7 @@ async function runExtensionScan(
   const generator = new ReportGenerator(result, { fullOutput: true });
   const markdown = generator.generate();
 
-  const safeName = result.extensionId.replace(/[<>:"/\\|?*]/g, '_');
+  const safeName = result.extensionId.replace(/[\x00-\x1f\x7f<>:"/\\|?*]/g, '_');
   const reportName = `${safeName}.md`;
   const reportPath = join(options.reportsDir, reportName);
   await writeFile(reportPath, markdown);
@@ -1370,6 +1470,16 @@ async function runExtensionScan(
     await writeFile(join(options.reportsDir, `${safeName}.json`), JSON.stringify(result, null, 2));
   } catch (err) {
     logger.warn({ err }, 'Failed to persist findings JSON');
+  }
+
+  // Standalone interactive HTML report next to the markdown one. Failure is
+  // non-fatal: the .md and .json remain the durable outputs.
+  try {
+    const filterConfig = getEndpointFiltering(join(__dirname, '..', 'docs', 'patterns.yaml'));
+    const payload = toRenderModel(result, { score, filterConfig });
+    await writeFile(join(options.reportsDir, `${safeName}.html`), generateHtmlReport(payload));
+  } catch (err) {
+    logger.warn({ err }, 'Failed to write HTML report');
   }
 
   await saveScanToHistory(options.historyPath, result.extensionId, {
@@ -1394,7 +1504,7 @@ async function runExtensionScan(
  * prior scan saved one. Lets LLM re-analysis reuse findings instead of re-scanning.
  */
 export function loadPersistedResult(reportsDir: string, extensionId: string): AnalysisResult | null {
-  const safeName = extensionId.replace(/[<>:"/\\|?*]/g, '_');
+  const safeName = extensionId.replace(/[\x00-\x1f\x7f<>:"/\\|?*]/g, '_');
   const dataPath = join(reportsDir, `${safeName}.json`);
   if (!existsSync(dataPath)) return null;
   try {

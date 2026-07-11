@@ -11,7 +11,9 @@ Learn to read and act on scan results, including risk scores, findings, and reco
 
 ## Report Structure
 
-Each scan generates a Markdown report with these sections:
+Each scan generates three artifacts side by side in the reports directory: a Markdown report (`.md`, portable), the structured analysis result (`.json`), and a standalone interactive HTML report (`.html`, self-contained — filter findings by severity, hide false positives, search, and jump between sections; shareable as a single file). The web UI renders the interactive view by default and falls back to markdown for older scans.
+
+Reports contain these sections:
 
 1. **Executive Summary** — High-level risk assessment
 2. **Findings** — Detailed security issues
