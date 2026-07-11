@@ -39,9 +39,17 @@ export function filterEndpoints(
   config: EndpointFilteringConfig,
 ): EndpointFilterOutcome {
   const excludedDomains = config.excluded_domains || [];
-  const excludedUrlPatterns = (config.excluded_url_patterns || []).map(
-    (p: string) => new RegExp(p, 'i'),
-  );
+  // patterns.yaml is operator-managed: skip patterns that fail to compile
+  // rather than letting one typo crash every report/scan that filters URLs.
+  const excludedUrlPatterns = (config.excluded_url_patterns || [])
+    .map((p: string) => {
+      try {
+        return new RegExp(p, 'i');
+      } catch {
+        return null;
+      }
+    })
+    .filter((r): r is RegExp => r !== null);
 
   const isExcludedDomain = (hostname: string): boolean => {
     const normalized = hostname.toLowerCase();

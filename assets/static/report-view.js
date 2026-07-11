@@ -105,10 +105,18 @@
       if (!groups[cat]) { groups[cat] = []; order.push(cat); }
       groups[cat].push(f);
     });
+    // Worst (lowest-rank) severity per category, computed once. reduce instead
+    // of Math.min.apply: spreading a huge findings array as arguments can
+    // overflow the call stack.
+    var worstRank = {};
+    order.forEach(function (cat) {
+      worstRank[cat] = groups[cat].reduce(function (min, f) {
+        var r = SEV_RANK[sevOf(f)];
+        return r < min ? r : min;
+      }, SEV_RANK.low);
+    });
     order.sort(function (a, b) {
-      var ra = Math.min.apply(null, groups[a].map(function (f) { return SEV_RANK[sevOf(f)]; }));
-      var rb = Math.min.apply(null, groups[b].map(function (f) { return SEV_RANK[sevOf(f)]; }));
-      return (ra - rb) || (groups[b].length - groups[a].length);
+      return (worstRank[a] - worstRank[b]) || (groups[b].length - groups[a].length);
     });
     order.forEach(function (cat) {
       groups[cat].sort(function (a, b) {
@@ -506,7 +514,7 @@
       var catGroup = el('div', null, el('div', { class: 'rv-nav-label' }, 'Findings'));
       order.forEach(function (category) {
         var items = groups[category];
-        var worst = SEVERITIES[Math.min.apply(null, items.map(function (f) { return SEV_RANK[sevOf(f)]; }))];
+        var worst = SEVERITIES[worstRank[category]];
         var count = el('span', { class: 'rv-count' }, String(items.length));
         var item = navItem(catLabel(category), catId(category),
           [el('span', { class: 'rv-sev-dot', 'aria-hidden': 'true', style: 'background:' + SEV_COLORS[worst] }), count]);

@@ -27,6 +27,13 @@ export function truncateEvidence(
   }
 
   const ELLIPSIS = '…';
+
+  // Degenerate limits (smaller than the window's two ellipsis markers plus
+  // one char of content) would produce a negative budget below; hard-slice so
+  // the never-exceeds-limit invariant holds for any caller-supplied limit.
+  if (limit <= 2 * ELLIPSIS.length + 1) {
+    return { text: evidence.slice(0, Math.max(0, limit)), truncated: true };
+  }
   const matchIndex = matchHighlight ? evidence.indexOf(matchHighlight) : -1;
   const matchEnd = matchIndex >= 0 ? matchIndex + (matchHighlight as string).length : -1;
 

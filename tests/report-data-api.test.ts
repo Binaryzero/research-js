@@ -73,6 +73,17 @@ describe('report data + html API', () => {
     }
   });
 
+  it('report routes reject backslash traversal (Windows path separators)', async () => {
+    // %5C is an URL-encoded backslash: "..\..\secrets.md"
+    const bad = '..%5C..%5Csecrets.md';
+    for (const url of [`/api/reports/${bad}`, `/api/reports/${bad}/data`, `/api/reports/${bad}/html`]) {
+      const response = await server.inject({ method: 'GET', url });
+      expect(response.statusCode).toBe(400);
+    }
+    const del = await server.inject({ method: 'DELETE', url: `/api/reports/${bad}` });
+    expect(del.statusCode).toBe(400);
+  });
+
   it('GET /api/reports/:name/html serves the standalone file as attachment', async () => {
     const response = await server.inject({ method: 'GET', url: `/api/reports/${EXT_ID}.md/html` });
 

@@ -111,6 +111,18 @@ describe('filterEndpoints', () => {
     expect(filtered).toHaveLength(1);
   });
 
+  it('skips invalid excluded_url_patterns instead of throwing', () => {
+    const endpoints = [
+      makeEndpoint({ url: 'https://cdn.example.com/fonts/x.woff2' }),
+      makeEndpoint({ url: 'https://api.example.com/v1/data' }),
+    ];
+    const config = makeConfig({ excluded_url_patterns: ['[invalid(regex', 'fonts'] });
+    const { filtered } = filterEndpoints(endpoints, {}, config);
+
+    // The broken pattern is dropped; the valid one still applies.
+    expect(filtered.map(e => e.url)).toEqual(['https://api.example.com/v1/data']);
+  });
+
   it('does not mutate the input array', () => {
     const endpoints = [makeEndpoint({ url: 'https://w3.org/x' }), makeEndpoint()];
     const snapshot = JSON.parse(JSON.stringify(endpoints));

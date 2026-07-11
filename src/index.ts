@@ -437,6 +437,15 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
     return { cancelled: true };
   });
   
+  /**
+   * Validate a client-supplied report name before joining it onto reportsDir.
+   * Rejects traversal on both POSIX and Windows separators (backslash is a
+   * path separator on Windows, so "..\\" would escape reportsDir there).
+   */
+  function isValidReportName(name: string): boolean {
+    return !name.includes('..') && !name.includes('/') && !name.includes('\\') && name.endsWith('.md');
+  }
+
   // ---------------------------------------------------------------
   // API: List reports
   // ---------------------------------------------------------------
@@ -475,7 +484,7 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
     const { name } = request.params as { name: string };
     
     // Security: prevent path traversal
-    if (name.includes('..') || name.includes('/') || !name.endsWith('.md')) {
+    if (!isValidReportName(name)) {
       return reply.status(400).send({ error: 'Invalid report name' });
     }
     
@@ -496,7 +505,7 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
   fastify.get('/api/reports/:name/data', async (request, reply) => {
     const { name } = request.params as { name: string };
 
-    if (name.includes('..') || name.includes('/') || !name.endsWith('.md')) {
+    if (!isValidReportName(name)) {
       return reply.status(400).send({ error: 'Invalid report name' });
     }
 
@@ -529,7 +538,7 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
   fastify.get('/api/reports/:name/html', async (request, reply) => {
     const { name } = request.params as { name: string };
 
-    if (name.includes('..') || name.includes('/') || !name.endsWith('.md')) {
+    if (!isValidReportName(name)) {
       return reply.status(400).send({ error: 'Invalid report name' });
     }
 
@@ -558,7 +567,7 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
   fastify.delete('/api/reports/:name', async (request, reply) => {
     const { name } = request.params as { name: string };
 
-    if (name.includes('..') || name.includes('/') || !name.endsWith('.md')) {
+    if (!isValidReportName(name)) {
       return reply.status(400).send({ error: 'Invalid report name' });
     }
 

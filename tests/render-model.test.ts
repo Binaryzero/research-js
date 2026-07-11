@@ -122,4 +122,13 @@ describe('truncateEvidence', () => {
     expect(text).toContain('EVIL_MARKER');
     expect(text.length).toBeLessThanOrEqual(200);
   });
+
+  it('never exceeds degenerate tiny limits', () => {
+    const evidence = 'a'.repeat(50) + 'MATCH' + 'b'.repeat(50);
+    for (const limit of [0, 1, 2, 3]) {
+      const { text, truncated } = truncateEvidence(evidence, 'MATCH', limit);
+      expect(text.length).toBeLessThanOrEqual(limit);
+      expect(truncated).toBe(true);
+    }
+  });
 });
