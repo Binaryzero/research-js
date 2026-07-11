@@ -2,6 +2,8 @@
 {% block title %}Report — {{ report_name }}{% endblock %}
 
 {% block content %}
+<link rel="stylesheet" href="/static/report-view.css">
+
 <!-- Loading skeleton -->
 <div id="report-loading" class="animate-in">
     <div role="status" aria-live="polite" aria-busy="true" class="report-skeleton">
@@ -31,25 +33,38 @@
 </div>
 
 <!-- Report content -->
-<div id="report-area" class="report-card" style="display:none" role="main" aria-label="Report content">
-    <div class="report-header">
-        <span id="report-title" role="heading" aria-level="1"></span>
-        <div class="report-actions">
-            <a href="#" id="marketplace-link" class="btn btn-outline btn-sm" target="_blank" rel="noopener" style="display:none" aria-label="View on Marketplace">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
-                Marketplace
-            </a>
-            <button id="download-link" class="btn btn-outline btn-sm" style="display:none" aria-label="Download VSIX">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                VSIX
-            </button>
-            <a href="#" id="back-btn" class="btn btn-outline btn-sm" role="button" aria-label="Back">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></svg>
-                Back
-            </a>
+<div id="report-area" style="display:none" role="main" aria-label="Report content">
+    <div class="report-card" style="margin-bottom: var(--space-4)">
+        <div class="report-header" style="border-bottom: none">
+            <span id="report-title" role="heading" aria-level="1"></span>
+            <div class="report-actions">
+                <a href="#" id="html-report-link" class="btn btn-outline btn-sm" style="display:none" aria-label="Download standalone HTML report" download>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><polyline points="9 15 12 18 15 15"/></svg>
+                    Report File
+                </a>
+                <a href="#" id="marketplace-link" class="btn btn-outline btn-sm" target="_blank" rel="noopener" style="display:none" aria-label="View on Marketplace">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                    Marketplace
+                </a>
+                <button id="download-link" class="btn btn-outline btn-sm" style="display:none" aria-label="Download VSIX">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                    VSIX
+                </button>
+                <a href="#" id="back-btn" class="btn btn-outline btn-sm" role="button" aria-label="Back">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></svg>
+                    Back
+                </a>
+            </div>
         </div>
     </div>
-    <div id="report-content" class="markdown-body" role="article"></div>
+
+    <!-- Interactive viewer (default when structured data exists) -->
+    <div id="report-interactive" style="display:none; --rv-sticky-top: calc(var(--nav-height) + 6px)"></div>
+
+    <!-- Markdown fallback (legacy scans without persisted JSON) -->
+    <div class="report-card" id="report-md-card" style="display:none">
+        <div id="report-content" class="markdown-body" role="article"></div>
+    </div>
 </div>
 
 <!-- LLM Re-scan Modal -->
@@ -100,6 +115,7 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="/static/report-view.js" defer></script>
 <script>
 // Derive the report name from the URL (route is /report/:name). Do NOT
 // interpolate it server-side: with Nunjucks autoescape on, a dumped value's
@@ -114,6 +130,8 @@ try {
 } catch (e) {
     reportName = window.location.pathname.split('/').pop() || '';
 }
+
+let _reportView = null; // handle returned by ReportView.render, for cleanup
 
 function initReportPage() {
     // Set up back button based on referrer
@@ -143,6 +161,17 @@ if (document.readyState === 'loading') {
 }
 
 async function loadSavedReport(name) {
+    // Prefer the interactive viewer: structured render data exists for every
+    // scan since HTML reports shipped. Legacy scans 404 here and fall back to
+    // the rendered-markdown view.
+    try {
+        const dataResp = await fetch(`/api/reports/${encodeURIComponent(name)}/data`);
+        if (dataResp.ok) {
+            showInteractiveReport(name, await dataResp.json());
+            return;
+        }
+    } catch (e) { /* fall through to markdown */ }
+
     try {
         const resp = await fetch(`/api/reports/${encodeURIComponent(name)}`);
         if (!resp.ok) throw new Error('Not found');
@@ -165,7 +194,10 @@ function trackLiveScan(scanId) {
         titleEl: document.getElementById('progress-title'),
         progressArea: document.getElementById('progress-area'),
         onComplete: (result) => {
-            if (result && result.markdown) {
+            if (result && result.report_name) {
+                // The scan persisted structured data — load the interactive view.
+                loadSavedReport(result.report_name);
+            } else if (result && result.markdown) {
                 showReport(result.report_name || 'report', result.markdown, result.html);
             }
         },
@@ -178,26 +210,10 @@ function trackLiveScan(scanId) {
     }).start();
 }
 
-function showReport(name, markdown, html) {
+function showReportChrome(name) {
     document.getElementById('report-loading').style.display = 'none';
     document.getElementById('report-area').style.display = '';
     document.getElementById('report-title').textContent = name;
-
-    const container = document.getElementById('report-content');
-    while (container.firstChild) container.removeChild(container.firstChild);
-    // Sanitize server-rendered HTML before insertion to prevent XSS from
-    // malicious evidence strings embedded in scanned extension code.
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(html || '', 'text/html');
-    doc.querySelectorAll('script, style, iframe, object, embed, form, base').forEach(el => el.remove());
-    doc.querySelectorAll('*').forEach(el => {
-        [...el.attributes].forEach(attr => {
-            if (attr.name.startsWith('on') || (attr.name === 'href' && /^\s*(javascript|data):/i.test(attr.value)) || (attr.name === 'src' && /^\s*(javascript|data):/i.test(attr.value))) {
-                el.removeAttribute(attr.name);
-            }
-        });
-    });
-    while (doc.body.firstChild) container.appendChild(doc.body.firstChild);
 
     // Populate marketplace and download links from extension ID
     const extId = extractExtensionId(name);
@@ -216,6 +232,43 @@ function showReport(name, markdown, html) {
             dlLink.style.display = '';
         }
     }
+}
+
+function showInteractiveReport(name, payload) {
+    showReportChrome(name);
+    document.getElementById('report-md-card').style.display = 'none';
+
+    const htmlLink = document.getElementById('html-report-link');
+    htmlLink.href = `/api/reports/${encodeURIComponent(name)}/html`;
+    htmlLink.style.display = '';
+
+    const root = document.getElementById('report-interactive');
+    root.style.display = '';
+    if (_reportView) _reportView.destroy();
+    _reportView = ReportView.render(root, payload, { mode: 'embedded' });
+}
+
+function showReport(name, markdown, html) {
+    showReportChrome(name);
+    document.getElementById('report-interactive').style.display = 'none';
+    document.getElementById('html-report-link').style.display = 'none';
+    document.getElementById('report-md-card').style.display = '';
+
+    const container = document.getElementById('report-content');
+    while (container.firstChild) container.removeChild(container.firstChild);
+    // Sanitize server-rendered HTML before insertion to prevent XSS from
+    // malicious evidence strings embedded in scanned extension code.
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html || '', 'text/html');
+    doc.querySelectorAll('script, style, iframe, object, embed, form, base').forEach(el => el.remove());
+    doc.querySelectorAll('*').forEach(el => {
+        [...el.attributes].forEach(attr => {
+            if (attr.name.startsWith('on') || (attr.name === 'href' && /^\s*(javascript|data):/i.test(attr.value)) || (attr.name === 'src' && /^\s*(javascript|data):/i.test(attr.value))) {
+                el.removeAttribute(attr.name);
+            }
+        });
+    });
+    while (doc.body.firstChild) container.appendChild(doc.body.firstChild);
 }
 
 async function downloadVsix(publisher, extension, extId) {

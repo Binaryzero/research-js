@@ -7,3 +7,4 @@ dist/
 .github/
 .remember/
 .temp-test/
+.claude/launch.json

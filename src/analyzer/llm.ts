@@ -13,6 +13,7 @@ import pLimit from 'p-limit';
 import type { Finding, LlmAssessment, LlmConfig, EndpointInfo, ConsensusConfig, AnalysisResult } from '../types/index.js';
 import type { PromptConfig } from '../config.js';
 import { getEndpointFiltering } from './patterns.js';
+import { filterEndpoints } from './endpoint-filter.js';
 import type { LlmProvider } from '../providers/llm-provider.js';
 import { createProvider } from '../providers/index.js';
 import { LlmAssessmentSchema, IndexedLlmAssessmentSchema } from './schemas.js';
@@ -1481,63 +1482,13 @@ If there are too many findings to assess completely, prioritize assessing the fi
     // Build endpointsList using endpoint_filtering rules from patterns.yaml
     const patternsPath = join(__dirname, '..', '..', 'docs', 'patterns.yaml');
     const filteringConfig = getEndpointFiltering(patternsPath);
-    const excludedDomains = filteringConfig.excluded_domains || [];
-    const excludedUrlPatterns = (filteringConfig.excluded_url_patterns || []).map(
-      (p: string) => new RegExp(p, 'i')
-    );
     const classificationRules = filteringConfig.endpoint_classification || [];
 
-    // Helper: check if hostname matches or is subdomain of excluded domain
-    const isExcludedDomain = (hostname: string): boolean => {
-      const normalized = hostname.toLowerCase();
-      return excludedDomains.some(domain => {
-        const d = domain.toLowerCase();
-        return normalized === d || normalized.endsWith('.' + d);
-      });
-    };
-
-    // Filter endpoints: 1) exclude pkg.json metadata, 2) domain filter, 3) URL pattern filter
-    const pkgUrls = new Set<string>();
-    if (result.repository) {
-      try {
-        const repoUrl = new URL(result.repository);
-        pkgUrls.add(repoUrl.hostname + repoUrl.pathname);
-      } catch { /* ignore invalid URLs */ }
-    }
-    if (result.homepage) {
-      try {
-        const hpUrl = new URL(result.homepage);
-        pkgUrls.add(hpUrl.hostname + hpUrl.pathname);
-      } catch { /* ignore invalid URLs */ }
-    }
-
-    const filteredEndpoints = (result.endpoints as EndpointInfo[] || []).filter((ep) => {
-      try {
-        const epUrl = new URL(ep.url);
-        const epPath = epUrl.hostname + epUrl.pathname;
-
-        // Filter 1: Skip package.json metadata URLs
-        if (pkgUrls.has(epPath) || pkgUrls.has(epUrl.hostname)) {
-          return false;
-        }
-
-        // Filter 2: Domain filter (operational endpoints bypass this)
-        if (!ep.operational && isExcludedDomain(epUrl.hostname)) {
-          return false;
-        }
-
-        // Filter 3: URL pattern filter
-        for (const pattern of excludedUrlPatterns) {
-          if (pattern.test(ep.url)) {
-            return false;
-          }
-        }
-
-        return true;
-      } catch {
-        return false; // drop if URL parsing fails
-      }
-    });
+    const { filtered: filteredEndpoints } = filterEndpoints(
+      (result.endpoints as EndpointInfo[]) || [],
+      { repository: result.repository, homepage: result.homepage },
+      filteringConfig,
+    );
 
     // Classify survivors using endpoint_classification rules
     const classifyEndpoint = (url: string): string => {

@@ -75,8 +75,8 @@ Concepts and design discussions.
 1. Downloads and extracts VSIX packages from the VS Code Marketplace
 2. Runs static analysis against configurable security patterns (regex-based)
 3. Optionally enhances findings with LLM-based false positive detection (multi-model consensus)
-4. Generates markdown reports with risk scoring and executive summaries
-5. Provides a web UI for search, scan, batch operations, and report viewing
+4. Generates reports with risk scoring and executive summaries — markdown for portability, plus a structured JSON result and a standalone interactive HTML report per scan
+5. Provides a web UI for search, scan, batch operations, and interactive report viewing (filter by severity, hide false positives, jump between sections)
 
 **Tech stack:** TypeScript 5.9, Fastify 5.8, Nunjucks templates, Vitest, Node.js >=18
 

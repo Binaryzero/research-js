@@ -40,7 +40,7 @@ This is a VS Code extension security analyzer with a Fastify web server, static 
 2. **Pattern Matching** (`src/analyzer/patterns.ts`) - Loads regex patterns from YAML, compiles with flags, matches against file content
 3. **Scoring** (`src/analyzer/scoring.ts`) - Calculates suspicion score (0-100) based on finding risk levels (critical=10, high=5, medium=2, low=1)
 4. **LLM Enhancement** (`src/analyzer/llm.ts`) - Optional OpenAI-compatible API analysis for false positive detection using prompts from `prompts.yaml`
-5. **Report Generation** (`src/analyzer/report.ts`) - Markdown report output with findings grouped by category
+5. **Report Generation** - Each scan writes three artifacts: a markdown report (`src/analyzer/report.ts`), the persisted structured result (`.json`), and a standalone interactive HTML report (`src/analyzer/report-html.ts`, embedding the slim payload from `src/analyzer/render-model.ts` plus the shared client renderer `assets/static/report-view.js` with a hash-based CSP). The web UI report page renders interactively from `GET /api/reports/:name/data` and falls back to markdown for legacy scans. Endpoint filtering is shared across generators via `src/analyzer/endpoint-filter.ts`.
 
 ### Server Architecture
 

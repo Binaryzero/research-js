@@ -50,8 +50,10 @@ SSE stream emitting events:
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/reports` | List all saved reports |
-| GET | `/api/reports/:name` | Get report content (markdown) |
-| DELETE | `/api/reports/:name` | Delete a report |
+| GET | `/api/reports/:name` | Get report content (markdown + rendered HTML) |
+| GET | `/api/reports/:name/data` | Structured render model for the interactive viewer (404 for legacy scans without persisted JSON) |
+| GET | `/api/reports/:name/html` | Download the standalone self-contained HTML report (attachment) |
+| DELETE | `/api/reports/:name` | Delete a report and its `.json`/`.html` siblings |
 
 ## History Endpoints
 

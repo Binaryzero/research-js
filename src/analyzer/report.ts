@@ -6,6 +6,7 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import type { AnalysisResult, Finding } from '../types/index.js';
 import { getEndpointFiltering } from './patterns.js';
+import { filterEndpoints } from './endpoint-filter.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -48,13 +49,6 @@ function groupByCategory(findings: Finding[]): Record<string, { counts: Category
     else g.counts.low++;
   }
   return groups;
-}
-
-function tryParseHostPath(url: string): string | null {
-  try {
-    const parsed = new URL(url);
-    return parsed.hostname + parsed.pathname;
-  } catch { return null; }
 }
 
 export interface ReportOptions {
@@ -284,59 +278,13 @@ ${rows.join('\n')}
   }
   
   private endpoints(): string {
-    // Apply endpoint filtering
     const patternsPath = join(__dirname, '..', '..', 'docs', 'patterns.yaml');
     const filteringConfig = getEndpointFiltering(patternsPath);
-    const excludedDomains = filteringConfig.excluded_domains || [];
-    const excludedUrlPatterns = (filteringConfig.excluded_url_patterns || []).map(
-      (p: string) => new RegExp(p, 'i')
+    const { filtered: filteredEndpoints } = filterEndpoints(
+      this.result.endpoints,
+      { repository: this.result.repository, homepage: this.result.homepage },
+      filteringConfig,
     );
-
-    // Helper: check if hostname matches or is subdomain of excluded domain
-    const isExcludedDomain = (hostname: string): boolean => {
-      const normalized = hostname.toLowerCase();
-      return excludedDomains.some(domain => {
-        const d = domain.toLowerCase();
-        return normalized === d || normalized.endsWith('.' + d);
-      });
-    };
-
-    // Build package.json metadata URLs to exclude
-    const pkgUrls = new Set<string>();
-    for (const url of [this.result.repository, this.result.homepage]) {
-      if (!url) continue;
-      const hostPath = tryParseHostPath(url);
-      if (hostPath) pkgUrls.add(hostPath);
-    }
-
-    // Filter endpoints
-    const filteredEndpoints = this.result.endpoints.filter(ep => {
-      try {
-        const epUrl = new URL(ep.url);
-        const epPath = epUrl.hostname + epUrl.pathname;
-
-        // Filter 1: Skip package.json metadata URLs
-        if (pkgUrls.has(epPath) || pkgUrls.has(epUrl.hostname)) {
-          return false;
-        }
-
-        // Filter 2: Domain filter (operational endpoints bypass this)
-        if (!ep.operational && isExcludedDomain(epUrl.hostname)) {
-          return false;
-        }
-
-        // Filter 3: URL pattern filter
-        for (const pattern of excludedUrlPatterns) {
-          if (pattern.test(ep.url)) {
-            return false;
-          }
-        }
-
-        return true;
-      } catch {
-        return false;
-      }
-    });
 
     if (filteredEndpoints.length === 0) {
       const totalRaw = this.result.endpoints.length;
