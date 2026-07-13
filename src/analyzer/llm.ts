@@ -102,6 +102,33 @@ export const RISK_ORDER: Record<string, number> = { critical: 4, high: 3, medium
 export const RECOMMEND_ORDER: Record<string, number> = { investigate: 2, likely_benign: 1, dismiss: 0 };
 
 /**
+ * Extension identity passed into assessment prompts so models can judge
+ * congruence between a finding's behavior and the extension's declared
+ * purpose. Sourced from package.json metadata — the developer's own claim,
+ * labeled as such in the prompts.
+ */
+export interface ExtensionPromptContext {
+  name: string;
+  description: string;
+  categories: string;
+}
+
+/** Cap the self-description so hostile metadata can't bloat every prompt. */
+const EXTENSION_DESCRIPTION_PROMPT_LIMIT = 300;
+
+export function buildExtensionPromptContext(options: {
+  extensionName?: string;
+  extensionDescription?: string;
+  extensionCategories?: string[];
+}): ExtensionPromptContext {
+  return {
+    name: options.extensionName || 'Unknown',
+    description: (options.extensionDescription || 'Not provided').slice(0, EXTENSION_DESCRIPTION_PROMPT_LIMIT),
+    categories: options.extensionCategories?.length ? options.extensionCategories.join(', ') : 'None listed',
+  };
+}
+
+/**
  * Parse a single LLM response into an LlmAssessment, or null on failure.
  */
 function parseSingleAssessment(response: string): LlmAssessment | null {
@@ -494,6 +521,9 @@ export class LlmClient {
   private fastAssessor: FastRiskAssessor;
   private prompts: PromptConfig;
   private useSharedCache: boolean;
+  // Set at batchAssessFindings entry; individual/triage/bulk/strategic prompt
+  // builders read it so every assessment knows what the extension claims to be.
+  private extensionContext: ExtensionPromptContext = buildExtensionPromptContext({});
 
   constructor(config: LlmConfig, prompts?: PromptConfig, provider?: LlmProvider, useSharedCache: boolean = true) {
     this.config = config;
@@ -583,10 +613,13 @@ Respond with JSON only.`,
     options: {
       onProgress?: (progress: number, message: string) => void;
       extensionName?: string;
+      extensionDescription?: string;
+      extensionCategories?: string[];
       concurrencyLimit?: number;
       skipConsensus?: boolean; // When true, skip internal same-model consensus (orchestrator provides cross-model consensus)
     } = {}
   ): Promise<LlmAssessment[]> {
+    this.extensionContext = buildExtensionPromptContext(options);
     // Route to appropriate mode based on config
     getComponentLogger('LLM').info(`Assessment mode: ${this.config.assessmentMode}, findings: ${findings.length}`);
     if (this.config.assessmentMode === 'bulk') {
@@ -741,7 +774,13 @@ If there are too many findings to assess completely, prioritize assessing the fi
     }
 
     // Use array join for efficient string building
-    const parts: string[] = [`Assess ${findings.length} security findings for false positive likelihood:\n\n`];
+    const parts: string[] = [
+      `Assess ${findings.length} security findings for false positive likelihood:\n\n`,
+      `Extension under review (self-described metadata from its package.json — the developer's own claim, use for congruence only):\n`,
+      `Name: ${this.extensionContext.name}\n`,
+      `Description: ${this.extensionContext.description}\n`,
+      `Marketplace categories: ${this.extensionContext.categories}\n\n`,
+    ];
 
     let findingNum = 0;
     for (const [category, catFindings] of Object.entries(byCategory)) {
@@ -952,7 +991,9 @@ If there are too many findings to assess completely, prioritize assessing the fi
       const system = triagePrompt.system;
       const user = triagePrompt.user
         .replace('{findingsJson}', JSON.stringify(findingsJson, null, 2))
-        .replace('{extensionName}', options.extensionName || 'Unknown');
+        .replace('{extensionName}', this.extensionContext.name)
+        .replace('{extensionDescription}', this.extensionContext.description)
+        .replace('{extensionCategories}', this.extensionContext.categories);
 
       let response: string;
       try {
@@ -1282,6 +1323,9 @@ If there are too many findings to assess completely, prioritize assessing the fi
     }
 
     const user = promptConfig.user
+      .replace('{extension_name}', this.extensionContext.name)
+      .replace('{extension_description}', this.extensionContext.description)
+      .replace('{extension_categories}', this.extensionContext.categories)
       .replace('{category}', finding.category)
       .replace('{title}', finding.title)
       .replace('{location}', finding.location)
@@ -1309,7 +1353,7 @@ If there are too many findings to assess completely, prioritize assessing the fi
     const samples = selectDiverseSamples(fileGroup, sampleSize);
 
     // Build strategic prompt
-    const { system, user } = buildStrategicBulkPrompt(pattern, samples, this.prompts, this.config.llmTuning?.evidenceMaxChars?.strategic ?? 600);
+    const { system, user } = buildStrategicBulkPrompt(pattern, samples, this.prompts, this.config.llmTuning?.evidenceMaxChars?.strategic ?? 600, this.extensionContext);
 
     const useConsensus = !skipConsensus && (pattern.risk === 'high' || pattern.risk === 'critical');
     let assessments: Map<number, LlmAssessment>;
@@ -1624,7 +1668,12 @@ export class ConsensusOrchestrator {
    */
   async batchAssessFindings(
     findings: Finding[],
-    options: { onProgress?: (progress: number, message: string) => void; extensionName?: string } = {}
+    options: {
+      onProgress?: (progress: number, message: string) => void;
+      extensionName?: string;
+      extensionDescription?: string;
+      extensionCategories?: string[];
+    } = {}
   ): Promise<LlmAssessment[]> {
     // No judges → delegate entirely to main (preserves existing same-model 3x consensus)
     if (this.judges.length === 0) {
@@ -1652,6 +1701,8 @@ export class ConsensusOrchestrator {
       this.mainClient.batchAssessFindings(findings, {
         onProgress: (p, m) => reportOverallProgress(0, p, `[Main] ${m}`),
         extensionName: options.extensionName,
+        extensionDescription: options.extensionDescription,
+        extensionCategories: options.extensionCategories,
         concurrencyLimit: this.mainClient.concurrency,
         skipConsensus: true,
       }),
@@ -1660,6 +1711,8 @@ export class ConsensusOrchestrator {
         judge.batchAssessFindings(findings, {
           onProgress: (p, m) => reportOverallProgress(1 + jIdx, p, `[Judge ${jIdx + 1}] ${m}`),
           extensionName: options.extensionName,
+          extensionDescription: options.extensionDescription,
+          extensionCategories: options.extensionCategories,
           concurrencyLimit: judge.concurrency,
           skipConsensus: true,
         }).catch((err): null => {

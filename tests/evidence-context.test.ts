@@ -67,6 +67,44 @@ describe('evidence capture context window', () => {
   });
 });
 
+describe('extension context in prompts', () => {
+  it('strategic bulk prompt carries the extension self-description block', () => {
+    const finding = makeFinding();
+    const fileGroup = {
+      filePath: 'src/main.js', findings: [finding], indices: [0],
+      isExtensionCode: true, isBundledDependency: false, isConfig: false,
+    };
+    const prompt = buildStrategicBulkPrompt(
+      { patternName: 'x', category: 'network', risk: 'high', fileGroups: [fileGroup], totalCount: 1 },
+      [{ finding, originalIndex: 0, fileGroup, reason: 'test' }],
+      makePromptConfig(),
+      600,
+      { name: 'gitnav-workflows', description: 'Visual Git history and workflows.', categories: 'SCM Providers' },
+    );
+
+    expect(prompt.user).toContain('gitnav-workflows');
+    expect(prompt.user).toContain('Visual Git history and workflows.');
+    expect(prompt.user).toContain('SCM Providers');
+    expect(prompt.user).toContain('use for congruence only');
+  });
+
+  it('omits the block when no extension context is provided', () => {
+    const finding = makeFinding();
+    const fileGroup = {
+      filePath: 'src/main.js', findings: [finding], indices: [0],
+      isExtensionCode: true, isBundledDependency: false, isConfig: false,
+    };
+    const prompt = buildStrategicBulkPrompt(
+      { patternName: 'x', category: 'network', risk: 'high', fileGroups: [fileGroup], totalCount: 1 },
+      [{ finding, originalIndex: 0, fileGroup, reason: 'test' }],
+      makePromptConfig(),
+      600,
+    );
+
+    expect(prompt.user).not.toContain('self-described metadata');
+  });
+});
+
 describe('LLM prompt evidence slicing', () => {
   it('keeps the pattern match visible when evidence exceeds the prompt cap', () => {
     // Match sits past the cap: a head-slice would lose it entirely.
