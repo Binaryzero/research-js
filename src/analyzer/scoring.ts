@@ -8,6 +8,7 @@ import type { AnalysisResult, ScoringConfig } from '../types/index.js';
 export const DEFAULT_SCORING: ScoringConfig = {
   riskWeights: { critical: 10, high: 5, medium: 2, low: 1 },
   injectionBoost: 5,
+  likelyBenignFactor: 0.5,
   binaryBoost: 5,
   verdictBoost: { malicious: 25, suspicious: 5 },
   thresholds: { verySuspicious: 50, suspicious: 30, moderate: 15 },
@@ -41,6 +42,13 @@ export function setScoringConfig(config: ScoringConfig): void {
       low: posInt(config?.riskWeights?.low, DEFAULT_SCORING.riskWeights.low),
     },
     injectionBoost: posInt(config?.injectionBoost, DEFAULT_SCORING.injectionBoost),
+    likelyBenignFactor:
+      typeof config?.likelyBenignFactor === 'number'
+        && Number.isFinite(config.likelyBenignFactor)
+        && config.likelyBenignFactor >= 0
+        && config.likelyBenignFactor <= 1
+        ? config.likelyBenignFactor
+        : DEFAULT_SCORING.likelyBenignFactor,
     binaryBoost: posInt(config?.binaryBoost, DEFAULT_SCORING.binaryBoost),
     verdictBoost: {
       malicious: posInt(config?.verdictBoost?.malicious, DEFAULT_SCORING.verdictBoost.malicious),
@@ -104,6 +112,10 @@ export function calculateSuspicionScore(
     // Boost findings the LLM flagged for investigation
     if (options.adjustForLlm && finding.recommendation === 'investigate') {
       weight = Math.ceil(weight * 1.5);
+    } else if (options.adjustForLlm && finding.recommendation === 'likely_benign') {
+      // Triage said probably safe: discount so post-triage scores reflect
+      // triage belief, but keep a residual so sheer volume still registers.
+      weight = weight * activeScoring.likelyBenignFactor;
     }
     // Injection detection is a strong signal
     if (options.adjustForLlm && finding.injectionDetected) {
@@ -116,7 +128,11 @@ export function calculateSuspicionScore(
       riskCounts[risk]++;
     }
   }
-  
+
+  // likelyBenignFactor makes per-finding weights fractional; keep the exposed
+  // score an integer.
+  findingsScore = Math.round(findingsScore);
+
   Object.assign(details, riskCounts);
   
   // Structural score

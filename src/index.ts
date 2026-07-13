@@ -1407,6 +1407,8 @@ async function runExtensionScan(
         const assessments = await orchestrator.batchAssessFindings(result.findings, {
           onProgress: (p, m) => options.onProgress(0.45 + p * 0.4, m),
           extensionName: result.extensionName,
+          extensionDescription: result.description,
+          extensionCategories: result.categories,
         });
 
         for (let i = 0; i < assessments.length; i++) {

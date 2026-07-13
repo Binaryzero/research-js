@@ -253,7 +253,12 @@ export interface ModelSlotConfig {
 }
 
 export interface ConsensusConfig {
-  judgesValidateAllFindings: boolean;  // false = HIGH/CRITICAL only (default)
+  // Cross-model consensus votes are always recorded for every finding the
+  // judges assessed. This flag governs whether the judges' majority may
+  // OVERRIDE the main model's risk: false (default) = only on high/critical
+  // findings (main keeps the call on medium/low, but dissenting votes are still
+  // recorded); true = majority merge wins everywhere.
+  judgesValidateAllFindings: boolean;
 }
 
 // Tunable scoring weights (previously hardcoded in scoring.ts). Risk-label
@@ -261,6 +266,10 @@ export interface ConsensusConfig {
 export interface ScoringConfig {
   riskWeights: { critical: number; high: number; medium: number; low: number };
   injectionBoost: number;   // added to a finding's weight when injection detected (default 5)
+  // Weight multiplier (0..1) for LLM-adjusted scores on findings the triage
+  // recommended 'likely_benign' — the counterpart to the 1.5x 'investigate'
+  // boost, so post-triage scores reflect triage belief (default 0.5).
+  likelyBenignFactor: number;
   binaryBoost: number;      // added once when the extension ships binaries (default 5)
   verdictBoost: { malicious: number; suspicious: number }; // LLM verdict score bumps (25 / 5)
   // Score thresholds for the Very Suspicious / Suspicious / Moderate labels
