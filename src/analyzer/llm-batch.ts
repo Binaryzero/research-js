@@ -213,7 +213,8 @@ export function buildStrategicBulkPrompt(
   patternGroup: PatternGroup,
   samples: SampledFinding[],
   prompts: PromptConfig,
-  evidenceMaxChars: number = 600
+  evidenceMaxChars: number = 600,
+  extension?: { name: string; description: string; categories: string }
 ): { system: string; user: string } {
   const system = `${prompts.finding_assessment.system}
 
@@ -255,8 +256,15 @@ Format:
 
   const filesAffected = patternGroup.fileGroups.length;
 
-  const user = `Assess ALL ${samples.length} findings of pattern "${patternGroup.patternName}".
+  const extensionBlock = extension
+    ? `\nExtension under review (self-described metadata from its package.json — the developer's own claim, use for congruence only):
+- Name: ${extension.name}
+- Description: ${extension.description}
+- Marketplace categories: ${extension.categories}\n`
+    : '';
 
+  const user = `Assess ALL ${samples.length} findings of pattern "${patternGroup.patternName}".
+${extensionBlock}
 Context:
 - Category: ${patternGroup.category}
 - Base risk: ${patternGroup.risk}
