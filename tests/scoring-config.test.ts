@@ -67,3 +67,48 @@ describe('scoring config', () => {
     expect(score).toBe(DEFAULT_SCORING.riskWeights.critical); // NaN weight → default 10, never NaN
   });
 });
+
+describe('likely_benign discount (LLM-adjusted scoring)', () => {
+  afterEach(() => setScoringConfig(DEFAULT_SCORING));
+
+  function findings(recommendation?: 'investigate' | 'likely_benign' | 'dismiss') {
+    return [
+      { riskLevel: 'medium', isFalsePositive: false, recommendation },
+      { riskLevel: 'medium', isFalsePositive: false, recommendation },
+    ] as never;
+  }
+
+  it('halves likely_benign finding weights when adjusting for LLM', () => {
+    const neutral = resultWith({ findings: findings() });
+    const benign = resultWith({ findings: findings('likely_benign') });
+    const [neutralScore] = calculateSuspicionScore(neutral, { adjustForLlm: true });
+    const [benignScore] = calculateSuspicionScore(benign, { adjustForLlm: true });
+
+    expect(neutralScore).toBe(4);  // 2 medium x 2
+    expect(benignScore).toBe(2);   // discounted by default 0.5 factor
+  });
+
+  it('does not discount in raw (non-LLM) scoring', () => {
+    const benign = resultWith({ findings: findings('likely_benign') });
+    const [raw] = calculateSuspicionScore(benign);
+    expect(raw).toBe(4);
+  });
+
+  it('respects a configured factor and rounds the total', () => {
+    setScoringConfig({ ...DEFAULT_SCORING, likelyBenignFactor: 0.25 });
+    const benign = resultWith({
+      findings: [{ riskLevel: 'medium', isFalsePositive: false, recommendation: 'likely_benign' }] as never,
+    });
+    const [score] = calculateSuspicionScore(benign, { adjustForLlm: true });
+    expect(score).toBe(1); // round(2 * 0.25) = 1 (rounded from 0.5)
+  });
+
+  it('rejects out-of-range factors at the setter boundary', () => {
+    setScoringConfig({ ...DEFAULT_SCORING, likelyBenignFactor: 7 as never });
+    const benign = resultWith({
+      findings: [{ riskLevel: 'medium', isFalsePositive: false, recommendation: 'likely_benign' }] as never,
+    });
+    const [score] = calculateSuspicionScore(benign, { adjustForLlm: true });
+    expect(score).toBe(1); // falls back to default 0.5: round(2 * 0.5)
+  });
+});

@@ -61,6 +61,7 @@ export const ScoringConfigSchema = z.object({
     low: z.number().min(0).max(1000).default(1),
   }).default({}),
   injectionBoost: z.number().min(0).max(1000).default(5),
+  likelyBenignFactor: z.number().min(0).max(1).default(0.5),
   binaryBoost: z.number().min(0).max(1000).default(5),
   verdictBoost: z.object({
     malicious: z.number().min(0).max(1000).default(25),

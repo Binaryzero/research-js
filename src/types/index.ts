@@ -261,6 +261,10 @@ export interface ConsensusConfig {
 export interface ScoringConfig {
   riskWeights: { critical: number; high: number; medium: number; low: number };
   injectionBoost: number;   // added to a finding's weight when injection detected (default 5)
+  // Weight multiplier (0..1) for LLM-adjusted scores on findings the triage
+  // recommended 'likely_benign' — the counterpart to the 1.5x 'investigate'
+  // boost, so post-triage scores reflect triage belief (default 0.5).
+  likelyBenignFactor: number;
   binaryBoost: number;      // added once when the extension ships binaries (default 5)
   verdictBoost: { malicious: number; suspicious: number }; // LLM verdict score bumps (25 / 5)
   // Score thresholds for the Very Suspicious / Suspicious / Moderate labels

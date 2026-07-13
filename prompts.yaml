@@ -1,7 +1,7 @@
 # LLM Prompt Configuration
 # Customize prompts for security analysis
 
-version: "1.9"
+version: "1.10"
 
 # System prompt for assessing security findings
 # Available variables: {category}, {title}, {location}, {evidence},
@@ -229,7 +229,7 @@ finding_assessment:
 # Available variables: {extensionName}, {version}, {publisher}, {totalFiles},
 #   {findingsCount}, {findingsByCategory}, {notableDependencies},
 #   {telemetryServices}, {endpointsList}, {extensionDescription}, {activationEvents},
-#   {sourceFiles}
+#   {triageSummary}, {sourceFiles}
 executive_summary:
   system: |
     You are a security analyst writing the executive summary of a VS Code extension
@@ -320,7 +320,8 @@ executive_summary:
     Description: {extensionDescription}
     Activation events: {activationEvents}
     Total files scanned: {totalFiles}
-    Total findings after triage: {findingsCount}
+    Total pattern matches: {findingsCount}
+    Triage outcome: {triageSummary}
 
     Findings by category:
     {findingsByCategory}
@@ -341,11 +342,26 @@ executive_summary:
     First, on a line by itself, output a verdict in this exact format:
     VERDICT: CLEAN | SUSPICIOUS | MALICIOUS
 
-    CLEAN — routine behaviors consistent with the extension's purpose, no integrity
-    concerns, nothing the patterns or code review flagged as unexplainable.
-    SUSPICIOUS — elevated attack surface, missing validation, unusual patterns, or
-    behaviors that are harder to justify than the extension's description warrants,
-    but no proof of intentional harm.
+    Base the verdict on the TRIAGE OUTCOME and on specific behaviors, not on raw
+    pattern-match volume. A large attack surface that is inherent to the extension's
+    declared purpose (a Git client running git, an AI agent calling LLM APIs, a
+    deploy tool using SSH) is not, by itself, suspicious — power tools look powerful.
+
+    CLEAN — the triage outcome shows NO findings flagged for investigation
+    (all confirmed findings are likely_benign or dismissed), no confirmed
+    high/critical findings, no red-flag behaviors (exfiltration, download-then-
+    execute, credential access beyond the purpose, hidden or conditional
+    execution, AI-config writes, self-obfuscation), and no injection indicators.
+    A large number of purpose-consistent, likely_benign findings still means
+    CLEAN — volume alone is not a concern.
+    SUSPICIOUS — the triage flagged one or more findings for investigation, OR
+    there are behaviors hard to justify against the declared purpose (incongruent
+    capability use, unexplained data flows, red-flag-adjacent code without proof
+    of harm), confirmed high/critical findings after triage, or injection
+    indicators. This is the "worth a human look, but no proof of harm" verdict —
+    a powerful tool doing powerful, purpose-congruent things belongs here when
+    the triage still wants specific spots investigated. Name the specific
+    behaviors that drove the verdict in the prose.
     MALICIOUS — unambiguous evidence of intentional harm: reverse shells, C2
     communication, credential theft, obfuscated payloads that decode to malicious
     code, data exfiltration to attacker-controlled endpoints, prompt injection

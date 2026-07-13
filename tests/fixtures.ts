@@ -125,6 +125,7 @@ export function makeAppConfig(overrides?: Partial<AppConfig>): AppConfig {
     scoring: {
       riskWeights: { critical: 10, high: 5, medium: 2, low: 1 },
       injectionBoost: 5,
+      likelyBenignFactor: 0.5,
       binaryBoost: 5,
       verdictBoost: { malicious: 25, suspicious: 5 },
       thresholds: { verySuspicious: 50, suspicious: 30, moderate: 15 },
