@@ -1569,6 +1569,21 @@ If there are too many findings to assess completely, prioritize assessing the fi
         }).join('\n')
       : 'None detected';
 
+    // Post-triage outcome so the verdict reflects what survived assessment,
+    // not the raw pattern-match volume.
+    const confirmed = result.findings.filter(f => !f.isFalsePositive);
+    const confirmedByRisk: Record<string, number> = { critical: 0, high: 0, medium: 0, low: 0, none: 0 };
+    for (const f of confirmed) {
+      const risk = (f.riskLevel || '').toLowerCase();
+      if (risk in confirmedByRisk) confirmedByRisk[risk]++;
+    }
+    const triageSummary =
+      `${confirmed.length} confirmed (critical: ${confirmedByRisk.critical}, high: ${confirmedByRisk.high}, ` +
+      `medium: ${confirmedByRisk.medium}, low: ${confirmedByRisk.low}); ` +
+      `${result.findings.length - confirmed.length} dismissed as false positives; ` +
+      `${confirmed.filter(f => f.recommendation === 'investigate').length} flagged for investigation; ` +
+      `${result.findings.filter(f => f.injectionDetected).length} with prompt-injection indicators`;
+
     // Build the prompt template without sourceFiles — we'll substitute per-chunk
     const userTemplate = promptConfig.user
       .replace('{extensionName}', result.extensionName || 'Unknown')
@@ -1576,6 +1591,7 @@ If there are too many findings to assess completely, prioritize assessing the fi
       .replace('{publisher}', result.publisher || 'Unknown')
       .replace('{extensionDescription}', extensionDescription)
       .replace('{activationEvents}', activationEvents)
+      .replace('{triageSummary}', triageSummary)
       .replace('{findingsCount}', String(result.findings.length))
       .replace('{findingsByCategory}', findingsByCategory)
       .replace('{notableDependencies}', Object.keys(result.notableDependencies).join(', ') || 'None flagged')
