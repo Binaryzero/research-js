@@ -1742,57 +1742,61 @@ export class ConsensusOrchestrator {
     const mainAssessments = allResults[0] as LlmAssessment[];
     const judgeResults = allResults.slice(1) as (LlmAssessment[] | null)[];
 
-    // Step 2: Determine which findings need consensus merge
-    const judgeIndices: number[] = [];
-    for (let i = 0; i < mainAssessments.length; i++) {
-      if (this.consensusConfig.judgesValidateAllFindings) {
-        judgeIndices.push(i);
-      } else {
-        // Check if ANY model rated this finding HIGH/CRITICAL
-        const risks = [mainAssessments[i].riskLevel?.toLowerCase()];
-        for (const jr of judgeResults) {
-          if (jr?.[i]) risks.push(jr[i].riskLevel?.toLowerCase());
-        }
-        if (risks.some(r => r === 'high' || r === 'critical')) {
-          judgeIndices.push(i);
+    // Step 2/3: Every finding was assessed by main + all judges in Step 1, so
+    // the cross-model votes already exist for all of them. Record consensus
+    // (the vote trail) for EVERY finding that at least one judge also voted on —
+    // that transparency is the whole reason judges run, and gating it to
+    // high/critical discarded votes we already paid for (and hid consensus
+    // entirely whenever triage legitimately kept all findings below high).
+    //
+    // judgesValidateAllFindings still governs whether judges may OVERRIDE the
+    // main model's risk on non-high/critical findings: when false (default),
+    // main keeps the final call on medium/low findings but the dissenting judge
+    // votes are still recorded; when true, the majority merge wins everywhere.
+    const overridesRisk = (idx: number): boolean => {
+      if (this.consensusConfig.judgesValidateAllFindings) return true;
+      const risks = [mainAssessments[idx].riskLevel?.toLowerCase()];
+      for (const jr of judgeResults) {
+        if (jr?.[idx]) risks.push(jr[idx]!.riskLevel?.toLowerCase());
+      }
+      return risks.some(r => r === 'high' || r === 'critical');
+    };
+
+    let recorded = 0;
+    let overridden = 0;
+    for (let idx = 0; idx < mainAssessments.length; idx++) {
+      const allVotes: LlmAssessment[] = [mainAssessments[idx]];
+      const modelIds: string[] = ['main'];
+      for (let jIdx = 0; jIdx < judgeResults.length; jIdx++) {
+        if (judgeResults[jIdx]?.[idx]) {
+          allVotes.push(judgeResults[jIdx]![idx]);
+          modelIds.push(`judge${jIdx + 1}`);
         }
       }
+      if (allVotes.length < 2) continue; // no judge voted on this finding
+
+      // mergeConsensusAssessments builds both the majority decision and the
+      // vote metadata; stamp each vote with its model id.
+      const merged = mergeConsensusAssessments(allVotes);
+      const stampedVotes = (merged.consensus?.votes ?? []).map((v, vi) => ({
+        ...v,
+        modelId: modelIds[vi] || `model${vi}`,
+      }));
+      const consensus = merged.consensus
+        ? { ...merged.consensus, votes: stampedVotes }
+        : undefined;
+
+      if (overridesRisk(idx)) {
+        mainAssessments[idx] = { ...merged, consensus };
+        overridden++;
+      } else {
+        // Keep main's decision on this lower-risk finding; record votes only.
+        mainAssessments[idx] = { ...mainAssessments[idx], consensus };
+      }
+      recorded++;
     }
 
-    if (judgeIndices.length === 0) {
-      options.onProgress?.(1, 'No findings require consensus merge');
-      return mainAssessments;
-    }
-
-    // Step 3: Merge main + judge votes for each finding that needs consensus
-    // This is CPU-bound work (merging assessments), no need for concurrency limiting
-    
-    await Promise.all(
-      judgeIndices.map(async idx => {
-        const allVotes: LlmAssessment[] = [mainAssessments[idx]];
-        const modelIds: string[] = ['main'];
-
-        for (let jIdx = 0; jIdx < judgeResults.length; jIdx++) {
-          if (judgeResults[jIdx]?.[idx]) {
-            allVotes.push(judgeResults[jIdx]![idx]);
-            modelIds.push(`judge${jIdx + 1}`);
-          }
-        }
-
-        if (allVotes.length >= 2) {
-          mainAssessments[idx] = mergeConsensusAssessments(allVotes);
-          // Stamp modelId on votes
-          if (mainAssessments[idx].consensus) {
-            mainAssessments[idx].consensus!.votes = mainAssessments[idx].consensus!.votes.map((v, vi) => ({
-              ...v,
-              modelId: modelIds[vi] || `model${vi}`,
-            }));
-          }
-        }
-      })
-    );
-
-    options.onProgress?.(1, `Consensus complete: ${judgeIndices.length} findings reviewed by ${totalModels} models`);
+    options.onProgress?.(1, `Consensus recorded for ${recorded} findings (${overridden} risk-merged) across ${totalModels} models`);
     return mainAssessments;
   }
 

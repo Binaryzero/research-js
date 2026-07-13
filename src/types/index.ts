@@ -253,7 +253,12 @@ export interface ModelSlotConfig {
 }
 
 export interface ConsensusConfig {
-  judgesValidateAllFindings: boolean;  // false = HIGH/CRITICAL only (default)
+  // Cross-model consensus votes are always recorded for every finding the
+  // judges assessed. This flag governs whether the judges' majority may
+  // OVERRIDE the main model's risk: false (default) = only on high/critical
+  // findings (main keeps the call on medium/low, but dissenting votes are still
+  // recorded); true = majority merge wins everywhere.
+  judgesValidateAllFindings: boolean;
 }
 
 // Tunable scoring weights (previously hardcoded in scoring.ts). Risk-label
