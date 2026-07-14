@@ -60,6 +60,13 @@ export interface JobRecord {
   reportName?: string;
   score?: number;
   error?: string;
+  /**
+   * Monotonic creation sequence. startedAt has only millisecond resolution, so
+   * jobs created in the same tick would tie under a timestamp sort and make
+   * ordering (and therefore pruning) non-deterministic. seq is strictly
+   * increasing and fully determines newest-first order.
+   */
+  seq: number;
 }
 
 export interface CreateJobInput {
@@ -93,6 +100,7 @@ export class JobStore {
   private readonly maxTerminal: number;
   private readonly flushIntervalMs: number;
   private jobs = new Map<string, JobRecord>();
+  private seqCounter = 0;
   private dirty = false;
   private timer: NodeJS.Timeout | null = null;
   private readonly log = getComponentLogger('Jobs');
@@ -110,6 +118,7 @@ export class JobStore {
    */
   load(): void {
     this.jobs.clear();
+    this.seqCounter = 0;
     if (!existsSync(this.path)) return;
 
     let parsed: JobsFile | undefined;
@@ -126,6 +135,12 @@ export class JobStore {
     const now = new Date().toISOString();
     for (const job of parsed.jobs) {
       if (!job || typeof job.id !== 'string') continue;
+      // Restore the sequence high-water mark so new jobs sort after loaded ones.
+      if (typeof job.seq === 'number') {
+        this.seqCounter = Math.max(this.seqCounter, job.seq);
+      } else {
+        job.seq = ++this.seqCounter; // legacy records predate seq
+      }
       if (!isTerminal(job.status)) {
         this.jobs.set(job.id, {
           ...job,
@@ -153,6 +168,7 @@ export class JobStore {
       message: '',
       startedAt: now,
       updatedAt: now,
+      seq: ++this.seqCounter,
     };
     this.jobs.set(job.id, job);
     this.dirty = true;
@@ -166,6 +182,14 @@ export class JobStore {
     const existing = this.jobs.get(id);
     if (!existing) return undefined;
 
+    // A finished job is finished: the terminal state that landed first wins.
+    // Block any later status change (a stray progress tick resurrecting it to
+    // 'running', or a post-cancel failure flipping 'cancelled' → 'failed').
+    // Idempotent same-status writes and non-status patches still pass.
+    if (isTerminal(existing.status) && patch.status !== undefined && patch.status !== existing.status) {
+      return existing;
+    }
+
     const now = new Date().toISOString();
     const next: JobRecord = { ...existing, ...patch, updatedAt: now };
 
@@ -178,9 +202,12 @@ export class JobStore {
     this.jobs.set(id, next);
     this.dirty = true;
 
-    // Status transitions are the moments worth durably recording; plain progress
-    // ticks ride the throttled flush.
-    if (patch.status !== undefined) {
+    // Only an actual status CHANGE is worth an immediate synchronous flush.
+    // emitProgress passes status:'running' on every tick, so gating on
+    // "status present" would fsync the whole file many times a second and
+    // re-block the very event loop this system exists to keep free. Plain
+    // progress ticks just mark dirty and ride the throttled interval flush.
+    if (patch.status !== undefined && patch.status !== existing.status) {
       void this.flush();
       if (becameTerminal) this.prune();
     }
@@ -192,9 +219,9 @@ export class JobStore {
     return this.jobs.get(id);
   }
 
-  /** All jobs, newest first. */
+  /** All jobs, newest first (by monotonic creation sequence). */
   list(): JobRecord[] {
-    return [...this.jobs.values()].sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+    return [...this.jobs.values()].sort((a, b) => b.seq - a.seq);
   }
 
   /** Jobs that are still pending or running. */

@@ -3,7 +3,7 @@ import { mkdirSync, writeFileSync, rmSync, existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { StaticAnalyzer } from '../src/analyzer/static.js';
-import { runStaticAnalysis, ScanCancelledError } from '../src/analyzer/static-runner.js';
+import { runStaticAnalysis, ScanCancelledError, ScanTimeoutError } from '../src/analyzer/static-runner.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const testDir = join(__dirname, '..', '.temp-test', `static-worker-${process.pid}`);
@@ -87,6 +87,30 @@ describe('static analysis in a worker thread', () => {
     const result = await runStaticAnalysis(join(testDir, 'does-not-exist'));
     expect(result.findings).toEqual([]);
     expect(result.totalSize).toBe(0);
+  }, 30_000);
+
+  it('terminates a worker that exceeds the timeout (wedged-regex kill switch)', async () => {
+    // A patterns file with a catastrophically backtracking regex would pin the
+    // worker forever; a tiny timeout must terminate it and reject, not hang.
+    const evilPatterns = join(testDir, 'evil-patterns.yaml');
+    writeFileSync(evilPatterns, [
+      'version: "1.0"',
+      'code_execution:',
+      '  redos:',
+      '    pattern: "(a+)+$"',
+      '    flags: ""',
+      '    description: catastrophic backtracker',
+      '    risk: high',
+    ].join('\n'));
+    // Give the analyzer input that makes (a+)+$ blow up.
+    writeFileSync(join(testDir, 'redos-bait.js'), 'const x = "' + 'a'.repeat(50) + '!";');
+
+    const start = Date.now();
+    await expect(
+      runStaticAnalysis(testDir, { patternsFile: evilPatterns, timeoutMs: 1500 }),
+    ).rejects.toBeInstanceOf(ScanTimeoutError);
+    // It actually stopped near the timeout, not after finishing the ReDoS.
+    expect(Date.now() - start).toBeLessThan(8000);
   }, 30_000);
 
   it('does not block the event loop while analyzing', async () => {

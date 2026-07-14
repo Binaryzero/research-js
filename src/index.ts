@@ -108,6 +108,9 @@ class ScanTaskEmitter extends EventEmitter {
   }
 
   fail(error: string) {
+    // Once a task has reached a terminal state (e.g. cancelled), a later
+    // failure must not clobber it.
+    if (this.donePayload) return;
     this.status = 'failed';
     this.error = error;
     const payload = { status: 'failed', error };
@@ -150,6 +153,13 @@ function failTask(task: ScanTaskEmitter, err: unknown): void {
 
 // Maximum number of completed scans to keep in memory (configurable via env)
 const MAX_SCANS_IN_MEMORY = parseInt(process.env.MAX_SCANS_IN_MEMORY || '10', 10);
+
+// Hard ceiling on static analysis. patterns.yaml is operator-editable, so a
+// catastrophically backtracking regex can pin a worker at 100% CPU forever.
+// The ceiling terminates that worker so the scan fails cleanly instead of a
+// job stuck 'running' until a restart. Generous: real scans finish in seconds
+// to low minutes; set STATIC_ANALYSIS_TIMEOUT_MS=0 to disable.
+const STATIC_ANALYSIS_TIMEOUT_MS = parseInt(process.env.STATIC_ANALYSIS_TIMEOUT_MS || '300000', 10);
 
 /**
  * Clean up old completed scans from the registry
@@ -1479,6 +1489,7 @@ async function runExtensionScan(
     verbose: options.staticVerbose ?? true,
     patternsFile: options.config.patternsFile,
     signal: options.signal,
+    timeoutMs: STATIC_ANALYSIS_TIMEOUT_MS,
     // Static analysis owns 0.15 → 0.40 of the overall scan.
     onProgress: (fraction, message) => options.onProgress(0.15 + fraction * 0.25, message),
   });
@@ -1748,7 +1759,10 @@ async function runScan(
     task.complete(outcome.result, clientSummary);
     cleanupOldScans();
   } catch (error) {
-    task.fail(error instanceof Error ? error.message : 'Unknown error');
+    // failTask no-ops on cancel: a user cancel aborts the worker, which rejects
+    // with ScanCancelledError, and that must stay 'cancelled' — not be
+    // overwritten to 'failed' in the task, the SSE replay, and the job store.
+    failTask(task, error);
     cleanupOldScans();
   } finally {
     cleanupTempDirs(tempDirs);

@@ -100,6 +100,45 @@ describe('JobStore', () => {
     expect(store.get('t1')).toBeUndefined();
   });
 
+  it('does not flush on a status-less progress update (throttle intact)', async () => {
+    const store = new JobStore(path);
+    store.create({ id: 'j1', kind: 'scan', target: 't', label: 't' });
+    store.update('j1', { status: 'running', progress: 0.1 }); // transition → flush
+    await store.flush();
+    const mtimeAfterStart = readFileSync(path, 'utf-8');
+
+    // A pure progress tick marks dirty but must not synchronously rewrite disk.
+    store.update('j1', { progress: 0.2, message: 'more' });
+    expect(readFileSync(path, 'utf-8')).toBe(mtimeAfterStart); // unchanged on disk
+    expect(store.get('j1')?.progress).toBe(0.2); // but live state advanced
+  });
+
+  it('a repeated running status does not re-flush every tick', async () => {
+    const store = new JobStore(path);
+    store.create({ id: 'j1', kind: 'scan', target: 't', label: 't' });
+    store.update('j1', { status: 'running', progress: 0.1 });
+    await store.flush();
+    const snapshot = readFileSync(path, 'utf-8');
+
+    // emitProgress always passes status:'running'; a same-status write must not flush.
+    store.update('j1', { status: 'running', progress: 0.5, message: 'x' });
+    expect(readFileSync(path, 'utf-8')).toBe(snapshot);
+  });
+
+  it('a finished job cannot be resurrected or reclassified (first terminal wins)', () => {
+    const store = new JobStore(path);
+    store.create({ id: 'j1', kind: 'scan', target: 't', label: 't' });
+    store.update('j1', { status: 'cancelled', message: 'Cancelled' });
+
+    // A late failure (post-cancel worker rejection) must not flip it to failed.
+    store.update('j1', { status: 'failed', error: 'Scan cancelled' });
+    expect(store.get('j1')?.status).toBe('cancelled');
+
+    // A stray progress tick must not resurrect it to running.
+    store.update('j1', { status: 'running', progress: 0.5 });
+    expect(store.get('j1')?.status).toBe('cancelled');
+  });
+
   it('survives a corrupt jobs file instead of crashing the server', () => {
     writeFileSync(path, '{ not valid json');
     const store = new JobStore(path);
