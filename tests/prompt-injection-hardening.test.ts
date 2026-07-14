@@ -9,6 +9,28 @@
  */
 import { describe, it, expect } from 'vitest';
 import { fillTemplate, buildExtensionPromptContext } from '../src/analyzer/llm.js';
+import { buildStrategicBulkPrompt } from '../src/analyzer/llm-batch.js';
+import { makeFinding, makePromptConfig } from './fixtures.js';
+
+describe('every assessment path requests injection_detected', () => {
+  // prompts.yaml review Finding B: the strategic path's output schema dropped
+  // injection_detected, silently disabling injection detection on that path.
+  it('strategic bulk prompt asks the model for injection_detected', () => {
+    const finding = makeFinding();
+    const fileGroup = {
+      filePath: 'src/main.js', findings: [finding], indices: [0],
+      isExtensionCode: true, isBundledDependency: false, isConfig: false,
+    };
+    const prompt = buildStrategicBulkPrompt(
+      { patternName: 'x', category: 'network', risk: 'high', fileGroups: [fileGroup], totalCount: 1 },
+      [{ finding, originalIndex: 0, fileGroup, reason: 'test' }],
+      makePromptConfig(),
+      600,
+    );
+    expect(prompt.system).toContain('injection_detected');
+    expect(prompt.system).not.toContain('"confidence"');
+  });
+});
 
 describe('fillTemplate (single-pass, injection-safe substitution)', () => {
   it('does not let an injected {token} hijack a later slot', () => {
