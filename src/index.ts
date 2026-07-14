@@ -19,7 +19,9 @@ import nunjucks from 'nunjucks';
 
 import { getConfig, getPrompts, getAppConfig, saveAppConfig, slotToLlmConfig, getPromptsForProfile } from './config.js';
 import type { AppConfig } from './types/index.js';
-import { StaticAnalyzer, extractVsix } from './analyzer/static.js';
+import { extractVsix } from './analyzer/static.js';
+import { runStaticAnalysis, ScanCancelledError } from './analyzer/static-runner.js';
+import { JobStore, isTerminal, type JobKind } from './services/job-store.js';
 import { LlmClient, ConsensusOrchestrator, parseVerdictFromSummary } from './analyzer/llm.js';
 import { createProvider } from './providers/index.js';
 import { ReportGenerator } from './analyzer/report.js';
@@ -40,8 +42,14 @@ const TEMPLATES_DIR = join(__dirname, '..', 'assets', 'templates');
 // Nunjucks will be configured by @fastify/view
 // We just need to pass the nunjucks module itself
 
-// In-memory scan registry
+// In-memory scan registry (live event bus for SSE). Durable status lives in the
+// JobStore — the Map is evicted and dies with the process, so it can never be
+// the source of truth for "what is running / what ran".
 const scans = new Map<string, ScanTaskEmitter>();
+
+// Set in createServer. Every task registers here so any page (and any restart)
+// can discover it.
+let jobStore: JobStore | null = null;
 
 class ScanTaskEmitter extends EventEmitter {
   id: string;
@@ -52,34 +60,71 @@ class ScanTaskEmitter extends EventEmitter {
   result: AnalysisResult | null = null;
   error: string | null = null;
   cancelled = false;
-  
-  constructor() {
+  /** Aborts the analysis worker so cancel actually stops the CPU work. */
+  readonly abort = new AbortController();
+  /**
+   * The terminal event, retained so a client that attaches AFTER the task
+   * finished (i.e. navigated away and came back) can be told the outcome.
+   * Without this the 'done' event fires into an empty room and the reconnecting
+   * page waits on "Analyzing..." forever.
+   */
+  donePayload: Record<string, unknown> | null = null;
+
+  constructor(meta?: { kind: JobKind; target: string; label: string }) {
     super();
     this.id = randomUUID().slice(0, 12);
+    if (meta) {
+      jobStore?.create({ id: this.id, kind: meta.kind, target: meta.target, label: meta.label });
+    }
   }
-  
+
   emitProgress(progress: number, message: string) {
     this.progress = progress;
     this.message = message;
+    if (this.status === 'pending') this.status = 'running';
     // Limit log size to prevent memory issues (keep last 100 entries)
     if (this.log.length >= 100) {
       this.log.shift();
     }
     this.log.push(message);
+    jobStore?.update(this.id, { status: 'running', progress, message });
     this.emit('progress', { progress, message, status: this.status });
   }
-  
+
   complete(result: AnalysisResult, summary?: Record<string, unknown>) {
     this.status = 'complete';
     this.result = result;
     this.progress = 1;
-    this.emit('done', { status: 'complete', result: summary || result });
+    const payload = { status: 'complete', result: summary || result };
+    this.donePayload = payload;
+    jobStore?.update(this.id, {
+      status: 'complete',
+      progress: 1,
+      message: 'Complete',
+      reportName: typeof summary?.report_name === 'string' ? summary.report_name : undefined,
+      score: typeof summary?.score === 'number' ? summary.score : undefined,
+    });
+    this.emit('done', payload);
   }
-  
+
   fail(error: string) {
     this.status = 'failed';
     this.error = error;
-    this.emit('done', { status: 'failed', error });
+    const payload = { status: 'failed', error };
+    this.donePayload = payload;
+    jobStore?.update(this.id, { status: 'failed', message: 'Failed', error });
+    this.emit('done', payload);
+  }
+
+  /** User-initiated cancel: stops the worker instead of orphaning it. */
+  cancel() {
+    this.cancelled = true;
+    this.status = 'cancelled';
+    this.abort.abort();
+    const payload = { status: 'cancelled' };
+    this.donePayload = payload;
+    jobStore?.update(this.id, { status: 'cancelled', message: 'Cancelled' });
+    this.emit('done', payload);
   }
   
   /**
@@ -91,6 +136,16 @@ class ScanTaskEmitter extends EventEmitter {
     this.result = null;
     this.log = []; // Clear log to free memory
   }
+}
+
+/**
+ * Terminate a task after a thrown error. A cancel aborts the analysis worker,
+ * which rejects with ScanCancelledError — that is an expected outcome, not a
+ * failure, and must not overwrite the 'cancelled' status with 'failed'.
+ */
+function failTask(task: ScanTaskEmitter, err: unknown): void {
+  if (task.cancelled || err instanceof ScanCancelledError) return;
+  task.fail(err instanceof Error ? err.message : String(err));
 }
 
 // Maximum number of completed scans to keep in memory (configurable via env)
@@ -214,6 +269,17 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
   if (!existsSync(reportsDir)) {
     mkdirSync(reportsDir, { recursive: true });
   }
+
+  // Durable job registry. Loading it reclassifies anything that was mid-flight
+  // when the process died as 'interrupted', so the UI never shows a phantom
+  // "running" task that nothing is actually running.
+  jobStore = new JobStore(join(reportsDir, 'jobs.json'));
+  jobStore.load();
+  jobStore.start();
+  fastify.addHook('onClose', async () => {
+    await jobStore?.flush();
+    jobStore?.stop();
+  });
   
   // ---------------------------------------------------------------
   // Page routes - render HTML templates with Nunjucks
@@ -316,7 +382,10 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
       return reply.status(400).send({ error: 'input_source, url, or vsix file required' });
     }
 
-    const task = new ScanTaskEmitter();
+    const scanLabel = extensionInfo
+      ? `${extensionInfo.publisher}.${extensionInfo.extension}`
+      : basename(inputSource);
+    const task = new ScanTaskEmitter({ kind: 'scan', target: inputSource, label: scanLabel });
     scans.set(task.id, task);
 
     // Inject provider from AppConfig so the correct LLM provider class is used
@@ -337,7 +406,7 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
       config: configWithProvider,
       prompts,
       extensionInfo,
-    }).catch(err => task.fail(err instanceof Error ? err.message : String(err)));
+    }).catch(err => failTask(task, err));
     
     return { scan_id: task.id };
   });
@@ -348,33 +417,60 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
   fastify.get('/api/scan/:scanId/progress', async (request, reply) => {
     const { scanId } = request.params as { scanId: string };
     const task = scans.get(scanId);
-    
+
+    // The task may be gone from the live registry (evicted, or the server
+    // restarted) but still recorded in the durable job store. A client that
+    // navigated away and came back must still learn the outcome.
     if (!task) {
-      return reply.status(404).send({ error: 'Scan not found' });
+      const job = jobStore?.get(scanId);
+      if (!job) {
+        return reply.status(404).send({ error: 'Scan not found' });
+      }
+      reply.raw.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+      });
+      reply.raw.write(`event: done\ndata: ${JSON.stringify({
+        status: isTerminal(job.status) ? job.status : 'interrupted',
+        result: job.reportName ? { report_name: job.reportName, score: job.score } : undefined,
+        error: job.error ?? undefined,
+      })}\n\n`);
+      reply.raw.end();
+      return reply;
     }
-    
+
     reply.raw.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
       'Connection': 'keep-alive',
     });
-    
+
     const sendEvent = (event: string, data: object) => {
       reply.raw.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
     };
-    
+
+    // Late attach: the task already finished, so 'done' will never fire again.
+    // Replay the terminal event immediately instead of leaving the client
+    // waiting on an event that already happened.
+    if (task.donePayload) {
+      sendEvent('done', task.donePayload);
+      reply.raw.end();
+      return reply;
+    }
+
     // Send current state
     sendEvent('progress', { progress: task.progress, message: task.message, status: task.status });
-    
+
     const onProgress = (data: object) => sendEvent('progress', data);
     const onDone = (data: object) => {
       sendEvent('done', data);
       reply.raw.end();
     };
-    
+
     task.on('progress', onProgress);
     task.on('done', onDone);
-    
+
     // Keepalive
     const keepalive = setInterval(() => {
       if (task.status === 'complete' || task.status === 'failed') {
@@ -391,6 +487,30 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
     });
   });
   
+  // ---------------------------------------------------------------
+  // API: Jobs — durable, cross-page task status.
+  //
+  // The SSE stream only serves the page that opened it. These endpoints let ANY
+  // page (and a page loaded after a restart) discover what is running and what
+  // ran, so navigating away never loses a task.
+  // ---------------------------------------------------------------
+  fastify.get('/api/jobs', async (request) => {
+    const { active } = request.query as { active?: string };
+    const all = active === '1' || active === 'true'
+      ? jobStore?.listActive() ?? []
+      : jobStore?.list() ?? [];
+    return { jobs: all, activeCount: jobStore?.listActive().length ?? 0 };
+  });
+
+  fastify.get('/api/jobs/:id', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const job = jobStore?.get(id);
+    if (!job) {
+      return reply.status(404).send({ error: 'Job not found' });
+    }
+    return job;
+  });
+
   // ---------------------------------------------------------------
   // API: Get scan result
   // ---------------------------------------------------------------
@@ -430,10 +550,10 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
       return reply.status(404).send({ error: 'Scan not found' });
     }
     
-    task.cancelled = true;
-    task.status = 'cancelled';
-    task.emit('done', { status: 'cancelled' });
-    
+    // Aborts the analysis worker too — cancel now actually stops the CPU work
+    // instead of leaving it running unobserved.
+    task.cancel();
+
     return { cancelled: true };
   });
   
@@ -1106,7 +1226,11 @@ ${indent(prompts.triage_batch?.user || '')}
 
     const downloadUrl = `https://marketplace.visualstudio.com/items?itemName=${publisher}.${extensionName}`;
 
-    const task = new ScanTaskEmitter();
+    const task = new ScanTaskEmitter({
+      kind: 'llm-analyze',
+      target: `${publisher}.${extensionName}`,
+      label: `LLM re-analysis: ${publisher}.${extensionName}`,
+    });
     scans.set(task.id, task);
 
     // Config from server-side AppConfig
@@ -1135,7 +1259,7 @@ ${indent(prompts.triage_batch?.user || '')}
       prompts,
       extensionInfo: { publisher, extension: extensionName },
       precomputedResult: persisted ?? undefined,
-    }).catch(err => task.fail(err instanceof Error ? err.message : String(err)));
+    }).catch(err => failTask(task, err));
 
     return { scan_id: task.id };
   });
@@ -1158,7 +1282,11 @@ ${indent(prompts.triage_batch?.user || '')}
       return reply.status(400).send({ error: 'extensions array is required' });
     }
 
-    const task = new ScanTaskEmitter();
+    const task = new ScanTaskEmitter({
+      kind: 'batch',
+      target: `${extensions.length} extensions`,
+      label: `Batch scan (${extensions.length})`,
+    });
     scans.set(task.id, task);
 
     // Run batch static scan in background
@@ -1166,7 +1294,7 @@ ${indent(prompts.triage_batch?.user || '')}
       reportsDir: config.reportsDir,
       config,
       prompts: getPrompts(),
-    }).catch(err => task.fail(err instanceof Error ? err.message : String(err)));
+    }).catch(err => failTask(task, err));
 
     return { scan_id: task.id };
   });
@@ -1199,7 +1327,11 @@ ${indent(prompts.triage_batch?.user || '')}
       return reply.status(400).send({ error: 'No model configured. Please configure a model in Settings.' });
     }
 
-    const task = new ScanTaskEmitter();
+    const task = new ScanTaskEmitter({
+      kind: 'batch',
+      target: `${extensions.length} extensions`,
+      label: `Batch LLM re-analysis (${extensions.length})`,
+    });
     scans.set(task.id, task);
 
     // Config from server-side AppConfig
@@ -1221,7 +1353,7 @@ ${indent(prompts.triage_batch?.user || '')}
       reportsDir: config.reportsDir,
       config: configWithMode,
       prompts,
-    }).catch(err => task.fail(err instanceof Error ? err.message : String(err)));
+    }).catch(err => failTask(task, err));
 
     return { scan_id: task.id };
   });
@@ -1267,6 +1399,8 @@ interface ExtensionScanOptions {
   staticVerbose?: boolean;
   onProgress: (fraction: number, message: string) => void;
   isCancelled: () => boolean;
+  /** Aborts the static-analysis worker so cancel stops the CPU work. */
+  signal?: AbortSignal;
   /** Caller-owned cleanup list; core appends download/extract dirs to it */
   tempDirs: string[];
 }
@@ -1338,11 +1472,16 @@ async function runExtensionScan(
   if (options.isCancelled()) return null;
 
   options.onProgress(0.15, 'Running static analysis...');
-  const analyzer = new StaticAnalyzer(extensionPath, {
+  // Off the main thread: static analysis is synchronous and CPU-bound, so
+  // running it inline froze the event loop for the whole scan (stalling SSE and
+  // every other request). The worker also makes the work cancellable.
+  result = await runStaticAnalysis(extensionPath, {
     verbose: options.staticVerbose ?? true,
     patternsFile: options.config.patternsFile,
+    signal: options.signal,
+    // Static analysis owns 0.15 → 0.40 of the overall scan.
+    onProgress: (fraction, message) => options.onProgress(0.15 + fraction * 0.25, message),
   });
-  result = await analyzer.analyze();
 
   // A real VSIX always contains at least a manifest; zero inventoried files
   // means the input was empty or extraction failed. Fail instead of writing a
@@ -1574,6 +1713,7 @@ async function runScan(
       staticVerbose: true,
       onProgress: (p, m) => task.emitProgress(p, m),
       isCancelled: () => task.cancelled,
+      signal: task.abort.signal,
       tempDirs,
     });
 
@@ -1663,6 +1803,7 @@ async function runBatchLlmAnalysis(
         staticVerbose: options.verbose,
         onProgress: (p, m) => task.emitProgress(i / total + p / total, `[${i + 1}/${total}] ${m}`),
         isCancelled: () => task.cancelled,
+      signal: task.abort.signal,
         tempDirs,
       });
 
@@ -1767,6 +1908,7 @@ async function runBatchScan(
         staticVerbose: true,
         onProgress: (p, m) => task.emitProgress(i / total + p / total, `[${i + 1}/${total}] ${m}`),
         isCancelled: () => task.cancelled,
+      signal: task.abort.signal,
         tempDirs,
       });
 

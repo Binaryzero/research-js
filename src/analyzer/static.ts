@@ -287,6 +287,12 @@ function categorizeFile(filePath: string, ext: string): string {
 export interface StaticAnalyzerOptions {
   verbose?: boolean;
   patternsFile?: string;
+  /**
+   * Phase-level progress (0..1). Static analysis is the long, opaque part of a
+   * scan; without this the UI sees one jump from "starting" to "done". Called
+   * synchronously at phase boundaries.
+   */
+  onProgress?: (fraction: number, message: string) => void;
 }
 
 /**
@@ -300,9 +306,12 @@ export class StaticAnalyzer {
   // Maps "file:lineRange" → dependency name for bundled code regions
   private bundleRegions: Map<string, string> = new Map();
   
+  private onProgress: (fraction: number, message: string) => void;
+
   constructor(extensionPath: string, options: StaticAnalyzerOptions = {}) {
     this.extensionPath = extensionPath;
     this.verbose = options.verbose ?? false;
+    this.onProgress = options.onProgress ?? (() => {});
     // Use default patterns path if none provided (matches config.ts default)
     const defaultPatternsPath = join(__dirname, '..', '..', 'docs', 'patterns.yaml');
     this.patterns = loadPatterns(options.patternsFile || defaultPatternsPath);
@@ -314,21 +323,27 @@ export class StaticAnalyzer {
    */
   async analyze(): Promise<AnalysisResult> {
     const startTime = Date.now();
-    
+
     // Collect all files
     const files = this.collectFiles();
-    
+    this.onProgress(0.05, `Collected ${files.length} files`);
+
     // Parse package.json for metadata
     const packageJson = this.parsePackageJson(files);
-    
+    this.onProgress(0.1, 'Parsed manifest');
+
     // Categorize files
     const fileTypes = files.map(f => this.analyzeFile(f));
-    
+    this.onProgress(0.2, `Categorized ${fileTypes.length} files`);
+
     // Detect bundled dependencies (populates this.bundleRegions)
     const bundledDependencies = this.detectBundledDependencies(files);
+    this.onProgress(0.3, `Detected ${bundledDependencies.length} bundled dependencies`);
 
     // Run pattern matching
+    this.onProgress(0.35, 'Scanning for security patterns...');
     const findings = this.runPatternMatching(files);
+    this.onProgress(0.7, `Pattern matching complete: ${findings.length} matches`);
 
     // Synthesize virtual findings for non-JS/TS file classes the regex layer
     // never opens. Without this step, manifest install hooks, shell scripts,
@@ -348,8 +363,10 @@ export class StaticAnalyzer {
     }
 
     // Extract endpoints
+    this.onProgress(0.8, 'Extracting endpoints...');
     const endpoints = this.extractAllEndpoints(files);
-    
+    this.onProgress(0.9, `Found ${endpoints.length} endpoints`);
+
     // Generate binary hashes
     const binaries = fileTypes
       .filter(f => f.category === 'binary')
