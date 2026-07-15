@@ -5,11 +5,12 @@
     "label": "Main Model",
     "enabled": true,
     "provider": "ollama",
-    "model": "qwen3-coder:480b-cloud",
+    "model": "nemotron-3-ultra:cloud",
     "baseUrl": "http://localhost:11434",
     "timeout": 1800000,
     "maxTokens": 65000,
-    "temperature": 0
+    "temperature": 0,
+    "batchSize": 20
   },
   "judges": [
     {
@@ -17,22 +18,24 @@
       "label": "Judge 1",
       "enabled": true,
       "provider": "ollama",
-      "model": "nemotron-3-nano:30b-cloud",
+      "model": "minimax-m3:cloud",
       "baseUrl": "http://localhost:11434",
       "timeout": 1800000,
-      "maxTokens": 35000,
-      "temperature": 0
+      "maxTokens": 3500000,
+      "temperature": 0,
+      "batchSize": 20
     },
     {
       "id": "judge2",
       "label": "Judge 2",
       "enabled": true,
       "provider": "ollama",
-      "model": "gpt-oss:20b-cloud",
+      "model": "glm-5.2:cloud",
       "baseUrl": "http://localhost:11434",
       "timeout": 1800000,
-      "maxTokens": 35000,
-      "temperature": 0
+      "maxTokens": 3500000,
+      "temperature": 0,
+      "batchSize": 20
     }
   ],
   "consensus": {
@@ -40,7 +43,44 @@
   },
   "assessmentMode": "strategic",
   "promptProfile": "default",
-  "concurrency": 10,
+  "concurrency": 15,
+  "llmTuning": {
+    "tierABatchSize": 5,
+    "consensusVotes": 3,
+    "evidenceMaxChars": {
+      "strategic": 60000,
+      "triage": 150000,
+      "bulk": 80000,
+      "individual": 150000
+    }
+  },
+  "scoring": {
+    "riskWeights": {
+      "critical": 10,
+      "high": 5,
+      "medium": 2,
+      "low": 1
+    },
+    "injectionBoost": 5,
+    "likelyBenignFactor": 0.5,
+    "binaryBoost": 5,
+    "verdictBoost": {
+      "malicious": 25,
+      "suspicious": 5
+    },
+    "thresholds": {
+      "verySuspicious": 50,
+      "suspicious": 30,
+      "moderate": 15
+    }
+  },
+  "analysisLimits": {
+    "maxFindingsForSummary": 10000,
+    "maxEvidenceChars": 400000,
+    "execSummaryChunkChars": 5000000,
+    "zeroHitSampleLimit": 60,
+    "zeroHitBytesBudget": 6000000
+  },
   "defaultNoLlm": false,
   "defaultFull": true
 }
