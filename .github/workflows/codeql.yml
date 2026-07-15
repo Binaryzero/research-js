@@ -9,13 +9,11 @@ name: "CodeQL"
 # workflow replaces default setup and analyzes only javascript-typescript,
 # dropping the actions language entirely.
 #
-# REQUIRED one-time step (an advanced workflow is IGNORED, and errors on upload,
-# while default setup is still enabled):
-#   repo Settings -> Code security -> Code scanning -> CodeQL analysis ->
-#   disable "Default" setup.
-# After that, this workflow is the single source of CodeQL analysis: its
-# "Analyze (javascript-typescript)" check uploads cleanly and the failing
-# "Analyze (actions)" check disappears with default setup.
+# CodeQL default setup has been DISABLED for this repo, so this workflow is the
+# single source of CodeQL analysis. Do not re-enable default setup: an advanced
+# workflow and default setup cannot coexist — advanced runs error on upload
+# ("advanced configurations cannot be processed when the default setup is
+# enabled") whenever default setup is on.
 
 on:
   push:
@@ -43,11 +41,11 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
+        uses: github/codeql-action/init@v4
         with:
           languages: ${{ matrix.language }}
 
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v3
+        uses: github/codeql-action/analyze@v4
         with:
           category: "/language:${{ matrix.language }}"
