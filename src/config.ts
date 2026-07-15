@@ -88,6 +88,12 @@ export async function loadConfig(): Promise<ServerConfig> {
     apiKey: process.env.LLM_API_KEY,
   };
   
+  // Generous default so normal single-user traffic (tray polling every 2s, SSE
+  // reconnects, multi-asset page loads) never trips it, while still bounding
+  // abuse — important because HOST can be set to 0.0.0.0 to expose the server.
+  const rateLimitMax = parseInt(process.env.RATE_LIMIT_MAX || '1000', 10);
+  const rateLimitWindowMs = parseInt(process.env.RATE_LIMIT_WINDOW_MS || '60000', 10);
+
   return {
     port,
     host: process.env.HOST || '127.0.0.1',
@@ -95,6 +101,10 @@ export async function loadConfig(): Promise<ServerConfig> {
     patternsFile: process.env.PATTERNS_FILE || join(__dirname, '..', 'docs', 'patterns.yaml'),
     historyFile: process.env.HISTORY_FILE || join(__dirname, '..', 'assets', 'reports', 'scan_history.json'),
     llm: llmConfig,
+    rateLimit: {
+      max: Number.isFinite(rateLimitMax) && rateLimitMax >= 1 ? rateLimitMax : 1000,
+      timeWindowMs: Number.isFinite(rateLimitWindowMs) && rateLimitWindowMs >= 1 ? rateLimitWindowMs : 60000,
+    },
   };
 }
 

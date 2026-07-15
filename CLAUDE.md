@@ -70,6 +70,8 @@ Environment variables (all optional):
 - `LLM_URL` - OpenAI-compatible API URL (default: http://localhost:11434)
 - `LLM_CONCURRENCY` - Parallel LLM requests (default: 20; lower if you hit 429s)
 - `REPORTS_DIR` - Report output directory
+- `RATE_LIMIT_MAX` - Max HTTP requests per client IP per window (default: 1000)
+- `RATE_LIMIT_WINDOW_MS` - Rate-limit window in milliseconds (default: 60000)
 
 Hot-reloadable config:
 - `prompts.yaml` - LLM prompts reloadable via `/api/prompts` endpoint

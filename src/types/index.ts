@@ -309,6 +309,15 @@ export interface ServerConfig {
   patternsFile: string;
   historyFile: string;
   llm: LlmConfig;
+  /** Global HTTP rate limit applied to every route (per client IP). */
+  rateLimit: RateLimitConfig;
   defaultNoLlm?: boolean;
   defaultFull?: boolean;
+}
+
+export interface RateLimitConfig {
+  /** Max requests allowed per client within `timeWindowMs`. */
+  max: number;
+  /** Rolling window length in milliseconds. */
+  timeWindowMs: number;
 }
