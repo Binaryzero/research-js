@@ -789,6 +789,13 @@ async function loadModelsForSlot(slotId) {
     const select = document.getElementById(`${slotId}-model-select`);
     const manual = document.getElementById(`${slotId}-model-manual`);
 
+    // Capture the model currently in effect BEFORE the list is rebuilt, so
+    // reloading options (e.g. after Test) never resets the user's choice.
+    // Prefer the live dropdown value; fall back to the manual/saved value.
+    const currentModel = (select.style.display !== 'none' && select.value)
+        ? select.value
+        : (manual.value || '').trim();
+
     try {
         const provider = document.getElementById(`${slotId}-provider`)?.value || 'ollama';
         const resp = await fetch(`/api/models?ollama_url=${encodeURIComponent(url)}&provider=${encodeURIComponent(provider)}`);
@@ -805,15 +812,23 @@ async function loadModelsForSlot(slotId) {
             select.style.display = '';
             manual.style.display = 'none';
 
-            // Restore saved model selection
-            const savedModel = manual.value;
-            if (savedModel) {
+            // Restore the model that was in effect before the list reloaded.
+            if (currentModel) {
+                let matched = false;
                 for (const opt of select.options) {
-                    if (opt.value === savedModel) {
-                        opt.selected = true;
-                        break;
-                    }
+                    if (opt.value === currentModel) { opt.selected = true; matched = true; break; }
                 }
+                // If this endpoint doesn't advertise the chosen model, keep it as an
+                // option rather than silently switching to the first entry.
+                if (!matched) {
+                    const opt = document.createElement('option');
+                    opt.value = currentModel;
+                    opt.textContent = `${currentModel} (not listed)`;
+                    select.insertBefore(opt, select.firstChild);
+                    opt.selected = true;
+                }
+                // Keep the manual mirror in sync so a later reload restores the same value.
+                manual.value = currentModel;
             }
         } else {
             select.style.display = 'none';
