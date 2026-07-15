@@ -1,0 +1,36 @@
+# Configuration for actions/labeler@v4 (referenced by .github/workflows/label.yml).
+# The Labeler workflow was committed without this file, so every PR failed with
+# "config file was not found at .github/labeler.yml". Path globs below apply an
+# area label based on which files a PR touches. v4 uses the flat glob-list schema.
+
+documentation:
+  - 'docs/**'
+  - '**/*.md'
+
+tests:
+  - 'tests/**'
+
+dependencies:
+  - 'package.json'
+  - 'package-lock.json'
+
+ci:
+  - '.github/**'
+
+analyzer:
+  - 'src/analyzer/**'
+  - 'prompts.yaml'
+  - 'docs/patterns.yaml'
+
+server:
+  - 'src/index.ts'
+  - 'src/config.ts'
+  - 'src/history.ts'
+  - 'src/services/**'
+  - 'src/schemas/**'
+
+frontend:
+  - 'assets/**'
+
+javascript:
+  - 'src/**/*.ts'
