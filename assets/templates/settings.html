@@ -734,7 +734,7 @@ function readModelCard(slotId, label) {
     const model = select.style.display !== 'none' ? select.value : manual.value.trim();
     const provider = document.getElementById(`${slotId}-provider`).value;
 
-    return {
+    const slot = {
         id: slotId,
         label: label,
         enabled: slotId === 'main' ? true : document.getElementById(`${slotId}-enabled`).checked,
@@ -746,6 +746,11 @@ function readModelCard(slotId, label) {
         batchSize: Number(document.getElementById(`${slotId}-batch-size`).value) || 20,
         temperature: (() => { const v = parseFloat(document.getElementById(`${slotId}-temperature`).value); return isNaN(v) ? 0.3 : v; })(),
     };
+    // Preserve a context-window override set outside the UI (config.json). The UI
+    // auto-detects the window on "Test connection" and has no dedicated input for it.
+    const prior = slotId === 'main' ? appConfig?.main : (appConfig?.judges || []).find(j => j.id === slotId);
+    if (prior && typeof prior.contextWindow === 'number') slot.contextWindow = prior.contextWindow;
+    return slot;
 }
 
 // ── Toggle judge card visibility ───────────────────────────────
@@ -830,19 +835,26 @@ async function testSlotConnection(slotId) {
 
     const baseUrl = getSlotUrl(slotId);
     const provider = document.getElementById(`${slotId}-provider`).value;
+    const select = document.getElementById(`${slotId}-model-select`);
+    const manual = document.getElementById(`${slotId}-model-manual`);
+    const model = select && select.style.display !== 'none' ? select.value : (manual ? manual.value.trim() : '');
 
     try {
         const resp = await fetch('/api/test-connection', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ baseUrl, provider }),
+            body: JSON.stringify({ baseUrl, provider, model }),
         });
         const data = await resp.json();
 
         if (data.ok) {
             statusEl.classList.add('connected');
-            textEl.textContent = 'Connected';
-            toastSuccess(`${slotId}: Connection successful`);
+            // Show the detected context window inline; note the source when it's not a live probe.
+            const ctx = typeof data.contextWindow === 'number'
+                ? ` · ${data.contextWindow.toLocaleString()} ctx${data.contextWindowSource && data.contextWindowSource !== 'probe' ? ` (${data.contextWindowSource})` : ''}`
+                : '';
+            textEl.textContent = `Connected${ctx}`;
+            toastSuccess(`${slotId}: Connected${typeof data.contextWindow === 'number' ? ` — context window ${data.contextWindow.toLocaleString()}` : ''}`);
             loadModelsForSlot(slotId);
         } else {
             statusEl.classList.add('error');

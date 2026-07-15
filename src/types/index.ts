@@ -249,6 +249,7 @@ export interface ModelSlotConfig {
   maxTokens: number;
   temperature: number;
   batchSize?: number;       // Max findings per triage batch (default: 20)
+  contextWindow?: number;   // Operator override for the model's context window; auto-detected when unset
   promptProfile?: string;   // Deprecated — use AppConfig.promptProfile instead
 }
 

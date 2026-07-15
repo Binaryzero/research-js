@@ -29,6 +29,7 @@ import { ReportGenerator } from './analyzer/report.js';
 import { toRenderModel } from './analyzer/render-model.js';
 import { generateHtmlReport } from './analyzer/report-html.js';
 import { getEndpointFiltering } from './analyzer/patterns.js';
+import { resolveContextWindow } from './analyzer/model-context.js';
 import { calculateSuspicionScore, getRiskLabel, getRiskColor, type ScoreBreakdown } from './analyzer/scoring.js';
 import { downloadExtension, parseMarketplaceUrl, isMarketplaceUrl } from './services/download.js';
 import { searchExtensions } from './services/marketplace.js';
@@ -1100,32 +1101,61 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
   // API: Test connection to an LLM endpoint
   // ---------------------------------------------------------------
   fastify.post('/api/test-connection', async (request) => {
-    const { baseUrl, model, provider } = request.body as { baseUrl?: string; model?: string; provider?: string };
+    const { baseUrl, model, provider, apiKey } = request.body as {
+      baseUrl?: string; model?: string; provider?: string; apiKey?: string;
+    };
     if (!baseUrl) return { ok: false, error: 'baseUrl required' };
     if (!validateLlmBaseUrl(baseUrl)) return { ok: false, error: 'Invalid or disallowed base URL' };
 
+    const normalizedBase = baseUrl.replace(/\/$/, '');
+    const kind: 'ollama' | 'openai' = provider === 'openai' ? 'openai' : 'ollama';
+
     try {
-      // Test based on provider type
-      if (provider === 'openai') {
-        // Test OpenAI-compatible endpoint
-        const res = await fetch(`${baseUrl.replace(/\/$/, '')}/v1/models`, { 
-          method: 'GET', 
-          signal: AbortSignal.timeout(5000) 
-        });
-        if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
-        return { ok: true, model: model || 'unknown', provider: provider || 'ollama' };
-      } else {
-        // Test Ollama endpoint
-        const res = await fetch(`${baseUrl.replace(/\/$/, '')}/api/tags`, { 
-          method: 'GET', 
-          signal: AbortSignal.timeout(5000) 
-        });
-        if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
-        return { ok: true, model: model || 'unknown', provider: provider || 'ollama' };
+      // Connectivity check — same health endpoint per provider as the analyzer uses.
+      const healthUrl = kind === 'openai' ? `${normalizedBase}/v1/models` : `${normalizedBase}/api/tags`;
+      const res = await fetch(healthUrl, {
+        headers: kind === 'openai' && apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
+        signal: AbortSignal.timeout(5000),
+      });
+      if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
+
+      // Best-effort context-window detection — never fails the connection test.
+      let contextWindow: number | null = null;
+      let contextWindowSource = 'unknown';
+      if (model) {
+        const resolved = await resolveContextWindow({ provider: kind, baseUrl, model, apiKey });
+        contextWindow = resolved.contextWindow;
+        contextWindowSource = resolved.source;
       }
+
+      return { ok: true, model: model || 'unknown', provider: kind, contextWindow, contextWindowSource };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
+  });
+
+  // ---------------------------------------------------------------
+  // API: Detected context window for every enabled model
+  // ---------------------------------------------------------------
+  fastify.get('/api/context-windows', async () => {
+    const appCfg = getAppConfig();
+    const slots = [appCfg.main, ...appCfg.judges].filter((s) => s.enabled);
+    const models = await Promise.all(
+      slots.map(async (slot) => {
+        if (!validateLlmBaseUrl(slot.baseUrl)) {
+          return { id: slot.id, label: slot.label, model: slot.model, contextWindow: null, source: 'unknown', error: 'Invalid or disallowed base URL' };
+        }
+        const resolved = await resolveContextWindow({
+          provider: slot.provider,
+          baseUrl: slot.baseUrl,
+          model: slot.model,
+          apiKey: slot.apiKey,
+          override: slot.contextWindow,
+        });
+        return { id: slot.id, label: slot.label, model: slot.model, ...resolved };
+      }),
+    );
+    return { models };
   });
 
   // ---------------------------------------------------------------
