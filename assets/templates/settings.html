@@ -67,7 +67,7 @@
                             </div>
                             <div class="form-group">
                                 <label for="main-max-tokens">Max Tokens</label>
-                                <input type="number" id="main-max-tokens" min="1000" step="1000" value="32000">
+                                <input type="number" id="main-max-tokens" min="1000" step="1" value="32000">
                             </div>
                             <div class="form-group">
                                 <label for="main-batch-size">Batch Size</label>
@@ -130,7 +130,7 @@
                             </div>
                             <div class="form-group">
                                 <label for="judge1-max-tokens">Max Tokens</label>
-                                <input type="number" id="judge1-max-tokens" min="1000" step="1000" value="32000">
+                                <input type="number" id="judge1-max-tokens" min="1000" step="1" value="32000">
                             </div>
                             <div class="form-group">
                                 <label for="judge1-batch-size">Batch Size</label>
@@ -193,7 +193,7 @@
                             </div>
                             <div class="form-group">
                                 <label for="judge2-max-tokens">Max Tokens</label>
-                                <input type="number" id="judge2-max-tokens" min="1000" step="1000" value="32000">
+                                <input type="number" id="judge2-max-tokens" min="1000" step="1" value="32000">
                             </div>
                             <div class="form-group">
                                 <label for="judge2-batch-size">Batch Size</label>
@@ -734,7 +734,7 @@ function readModelCard(slotId, label) {
     const model = select.style.display !== 'none' ? select.value : manual.value.trim();
     const provider = document.getElementById(`${slotId}-provider`).value;
 
-    return {
+    const slot = {
         id: slotId,
         label: label,
         enabled: slotId === 'main' ? true : document.getElementById(`${slotId}-enabled`).checked,
@@ -746,6 +746,11 @@ function readModelCard(slotId, label) {
         batchSize: Number(document.getElementById(`${slotId}-batch-size`).value) || 20,
         temperature: (() => { const v = parseFloat(document.getElementById(`${slotId}-temperature`).value); return isNaN(v) ? 0.3 : v; })(),
     };
+    // Preserve a context-window override set outside the UI (config.json). The UI
+    // auto-detects the window on "Test connection" and has no dedicated input for it.
+    const prior = slotId === 'main' ? appConfig?.main : (appConfig?.judges || []).find(j => j.id === slotId);
+    if (prior && typeof prior.contextWindow === 'number') slot.contextWindow = prior.contextWindow;
+    return slot;
 }
 
 // ── Toggle judge card visibility ───────────────────────────────
@@ -784,6 +789,13 @@ async function loadModelsForSlot(slotId) {
     const select = document.getElementById(`${slotId}-model-select`);
     const manual = document.getElementById(`${slotId}-model-manual`);
 
+    // Capture the model currently in effect BEFORE the list is rebuilt, so
+    // reloading options (e.g. after Test) never resets the user's choice.
+    // Prefer the live dropdown value; fall back to the manual/saved value.
+    const currentModel = (select.style.display !== 'none' && select.value)
+        ? select.value
+        : (manual.value || '').trim();
+
     try {
         const provider = document.getElementById(`${slotId}-provider`)?.value || 'ollama';
         const resp = await fetch(`/api/models?ollama_url=${encodeURIComponent(url)}&provider=${encodeURIComponent(provider)}`);
@@ -800,15 +812,23 @@ async function loadModelsForSlot(slotId) {
             select.style.display = '';
             manual.style.display = 'none';
 
-            // Restore saved model selection
-            const savedModel = manual.value;
-            if (savedModel) {
+            // Restore the model that was in effect before the list reloaded.
+            if (currentModel) {
+                let matched = false;
                 for (const opt of select.options) {
-                    if (opt.value === savedModel) {
-                        opt.selected = true;
-                        break;
-                    }
+                    if (opt.value === currentModel) { opt.selected = true; matched = true; break; }
                 }
+                // If this endpoint doesn't advertise the chosen model, keep it as an
+                // option rather than silently switching to the first entry.
+                if (!matched) {
+                    const opt = document.createElement('option');
+                    opt.value = currentModel;
+                    opt.textContent = `${currentModel} (not listed)`;
+                    select.insertBefore(opt, select.firstChild);
+                    opt.selected = true;
+                }
+                // Keep the manual mirror in sync so a later reload restores the same value.
+                manual.value = currentModel;
             }
         } else {
             select.style.display = 'none';
@@ -830,19 +850,38 @@ async function testSlotConnection(slotId) {
 
     const baseUrl = getSlotUrl(slotId);
     const provider = document.getElementById(`${slotId}-provider`).value;
+    const select = document.getElementById(`${slotId}-model-select`);
+    const manual = document.getElementById(`${slotId}-model-manual`);
+    const model = select && select.style.display !== 'none' ? select.value : (manual ? manual.value.trim() : '');
 
     try {
         const resp = await fetch('/api/test-connection', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ baseUrl, provider }),
+            body: JSON.stringify({ baseUrl, provider, model }),
         });
         const data = await resp.json();
 
         if (data.ok) {
             statusEl.classList.add('connected');
-            textEl.textContent = 'Connected';
-            toastSuccess(`${slotId}: Connection successful`);
+            // Show the detected context window inline; note the source when it's not a live probe.
+            const ctx = typeof data.contextWindow === 'number'
+                ? ` · ${data.contextWindow.toLocaleString()} ctx${data.contextWindowSource && data.contextWindowSource !== 'probe' ? ` (${data.contextWindowSource})` : ''}`
+                : '';
+            textEl.textContent = `Connected${ctx}`;
+            // Push the detected window into Max Tokens so the model's real budget is
+            // used instead of the 32k default. maxTokens is the output cap: fine to
+            // set to the full window on Ollama, but a hosted OpenAI model caps output
+            // below its context — lower it manually there if the provider rejects it.
+            let tokenNote = '';
+            if (typeof data.contextWindow === 'number') {
+                const tokensField = document.getElementById(`${slotId}-max-tokens`);
+                if (tokensField) {
+                    tokensField.value = data.contextWindow;
+                    tokenNote = `, Max Tokens → ${data.contextWindow.toLocaleString()} (Save to keep)`;
+                }
+            }
+            toastSuccess(`${slotId}: Connected${typeof data.contextWindow === 'number' ? ` — context window ${data.contextWindow.toLocaleString()}${tokenNote}` : ''}`);
             loadModelsForSlot(slotId);
         } else {
             statusEl.classList.add('error');

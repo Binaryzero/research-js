@@ -20,6 +20,8 @@ export const ModelSlotSchema = z.object({
   maxTokens: z.number().min(100),
   temperature: z.number().min(0).max(2),
   batchSize: z.number().min(1).max(50).optional(),
+  /** Operator override for the model's context window; auto-detected when unset. */
+  contextWindow: z.number().min(1).optional(),
 });
 
 /**
