@@ -1,0 +1,53 @@
+name: "CodeQL"
+
+# Advanced CodeQL setup, scoped to JavaScript/TypeScript only.
+#
+# Why this exists: the repo's CodeQL *default setup* also enabled the "actions"
+# language. Its analysis is diff-informed on PRs and extracts only workflow
+# files the PR touches, so any PR that doesn't edit .github/workflows/** sees
+# "no source code" and the "Analyze (actions)" check fails. This advanced-setup
+# workflow replaces default setup and analyzes only javascript-typescript,
+# dropping the actions language entirely.
+#
+# REQUIRED one-time step (an advanced workflow is IGNORED, and errors on upload,
+# while default setup is still enabled):
+#   repo Settings -> Code security -> Code scanning -> CodeQL analysis ->
+#   disable "Default" setup.
+# After that, this workflow is the single source of CodeQL analysis: its
+# "Analyze (javascript-typescript)" check uploads cleanly and the failing
+# "Analyze (actions)" check disappears with default setup.
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  schedule:
+    - cron: '30 5 * * 1'
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      packages: read
+      actions: read
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        language: ['javascript-typescript']
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"
