@@ -7,6 +7,7 @@ import staticPlugin from '@fastify/static';
 import viewPlugin from '@fastify/view';
 import multipartPlugin from '@fastify/multipart';
 import corsPlugin from '@fastify/cors';
+import rateLimitPlugin from '@fastify/rate-limit';
 import { join, dirname, basename } from 'path';
 import { tmpdir } from 'os';
 import { fileURLToPath } from 'url';
@@ -239,6 +240,18 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
   });
   
   // Register plugins
+
+  // Global rate limit — applied to every route (per client IP) before any
+  // handler runs. Guards the file-system-touching API routes against abuse
+  // (CodeQL js/missing-rate-limiting). Registered first so it covers all
+  // routes, including static assets. The default max is high enough that
+  // normal single-user traffic never hits it (see config.rateLimit).
+  await fastify.register(rateLimitPlugin, {
+    global: true,
+    max: config.rateLimit.max,
+    timeWindow: config.rateLimit.timeWindowMs,
+  });
+
   await fastify.register(staticPlugin, {
     root: join(__dirname, '..', 'assets', 'static'),
     prefix: '/static/',
