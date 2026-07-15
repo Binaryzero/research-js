@@ -92,6 +92,13 @@ class ScanTaskEmitter extends EventEmitter {
   }
 
   complete(result: AnalysisResult, summary?: Record<string, unknown>) {
+    // First terminal state wins. Without this, a scan cancelled during the
+    // final report-generation phase (which has no cancel checkpoint) would run
+    // complete() after cancel(), overwriting donePayload — so the SSE reattach
+    // would replay 'complete' while the job store (whose own guard blocks the
+    // downgrade) and the task tray still show 'cancelled'. The two surfaces
+    // must never disagree.
+    if (this.donePayload) return;
     this.status = 'complete';
     this.result = result;
     this.progress = 1;
@@ -121,6 +128,10 @@ class ScanTaskEmitter extends EventEmitter {
 
   /** User-initiated cancel: stops the worker instead of orphaning it. */
   cancel() {
+    // A cancel arriving after the task already finished (e.g. a click racing
+    // completion) must not flip a real 'complete' to 'cancelled' or emit a
+    // second 'done' onto an already-ended SSE response.
+    if (this.donePayload) return;
     this.cancelled = true;
     this.status = 'cancelled';
     this.abort.abort();
