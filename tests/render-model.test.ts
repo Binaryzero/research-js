@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest';
-import { toRenderModel, truncateEvidence, EVIDENCE_RENDER_LIMIT } from '../src/analyzer/render-model.js';
+import { describe, it, expect, beforeEach } from 'vitest';
+import { toRenderModel, truncateEvidence } from '../src/analyzer/render-model.js';
+import { getAnalysisLimits, setAnalysisLimits, DEFAULT_ANALYSIS_LIMITS } from '../src/analyzer/analysis-limits.js';
 import { makeFinding, makeAnalysisResult } from './fixtures.js';
 import type { EndpointFilteringConfig } from '../src/analyzer/patterns.js';
 
@@ -9,7 +10,12 @@ const emptyFilterConfig: EndpointFilteringConfig = {
   endpoint_classification: [],
 };
 
+// Evidence is bounded by the active analysisLimits.maxEvidenceChars.
+const EVIDENCE_LIMIT = DEFAULT_ANALYSIS_LIMITS.maxEvidenceChars;
+
 describe('toRenderModel', () => {
+  // Isolate from any other suite that mutated the module-level limits.
+  beforeEach(() => setAnalysisLimits(DEFAULT_ANALYSIS_LIMITS));
   it('produces a payload with score and generatedAt', () => {
     const result = makeAnalysisResult();
     const payload = toRenderModel(result, { score: 42, filterConfig: emptyFilterConfig });
@@ -48,20 +54,39 @@ describe('toRenderModel', () => {
     expect(payload.result.endpointExcludedCount).toBe(1);
   });
 
-  it('slims findings to render fields and bounds evidence length', () => {
-    const bigEvidence = 'x'.repeat(EVIDENCE_RENDER_LIMIT * 3);
+  it('slims findings to render fields and bounds evidence to the configured limit', () => {
+    const bigEvidence = 'x'.repeat(EVIDENCE_LIMIT * 3);
     const result = makeAnalysisResult({
       findings: [makeFinding({ evidence: bigEvidence, context: 'never rendered', lineStart: 5, lineEnd: 9 })],
     });
     const payload = toRenderModel(result, { score: null, filterConfig: emptyFilterConfig });
     const f = payload.result.findings[0];
 
-    expect(f.evidence.length).toBeLessThanOrEqual(EVIDENCE_RENDER_LIMIT);
+    expect(f.evidence.length).toBeLessThanOrEqual(EVIDENCE_LIMIT);
     expect(f.evidenceTruncated).toBe(true);
     expect(f.evidenceFullLength).toBe(bigEvidence.length);
     expect(f).not.toHaveProperty('context');
     expect(f).not.toHaveProperty('lineStart');
     expect(f).not.toHaveProperty('neighboringImports');
+  });
+
+  it('ships the full captured evidence when the operator raises maxEvidenceChars', () => {
+    // The screen showed only 4K before, regardless of config — the double cap.
+    setAnalysisLimits({ ...DEFAULT_ANALYSIS_LIMITS, maxEvidenceChars: 400_000 });
+    const bigEvidence = 'x'.repeat(120_000); // > old 4K cap, < new 400K limit
+    const result = makeAnalysisResult({ findings: [makeFinding({ evidence: bigEvidence })] });
+    const f = toRenderModel(result, { score: null, filterConfig: emptyFilterConfig }).result.findings[0];
+
+    expect(f.evidence.length).toBe(120_000);
+    expect(f.evidenceTruncated).toBe(false);
+  });
+
+  it('strips control/binary bytes from displayed evidence (readable minified source)', () => {
+    const dirty = 'const a=1;\x00\x01 const b=2;�';
+    const result = makeAnalysisResult({ findings: [makeFinding({ evidence: dirty })] });
+    const f = toRenderModel(result, { score: null, filterConfig: emptyFilterConfig }).result.findings[0];
+
+    expect(f.evidence).toBe('const a=1; const b=2;');
   });
 
   it('marks short evidence as untruncated', () => {
@@ -94,7 +119,7 @@ describe('toRenderModel', () => {
 
   it('does not mutate the input result', () => {
     const result = makeAnalysisResult({
-      findings: [makeFinding({ evidence: 'y'.repeat(EVIDENCE_RENDER_LIMIT * 2) })],
+      findings: [makeFinding({ evidence: 'y'.repeat(EVIDENCE_LIMIT * 2) })],
     });
     const snapshot = JSON.parse(JSON.stringify(result));
     toRenderModel(result, { score: null, filterConfig: emptyFilterConfig });

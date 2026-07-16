@@ -74,6 +74,10 @@
     panel.style.display = 'none';
     var header = el('div', 'task-tray-header');
     header.appendChild(el('span', null, 'Tasks'));
+    // Direct path from "what is running" to "what is it doing": the live log.
+    var logsLink = el('a', 'task-tray-refresh-btn', 'Logs');
+    logsLink.href = '/logs';
+    header.appendChild(logsLink);
     var refresh = el('button', 'task-tray-refresh-btn', 'Refresh');
     refresh.type = 'button';
     refresh.addEventListener('click', this.poll.bind(this));

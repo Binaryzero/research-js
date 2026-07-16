@@ -407,8 +407,61 @@ export function buildSourceFiles(findings: Finding[], extensionPath: string): st
 }
 
 /**
- * Split source files into chunks that fit within context limits.
- * Each chunk contains complete files (never splits mid-file) so no content is lost.
+ * Hard ceiling on the characters of prompt content sent in ONE LLM request,
+ * independent of the (much larger) model context window.
+ *
+ * Empirically, the Ollama-cloud `/v1/responses` endpoint accepts ~1 MB requests
+ * but rejects ~2.8 MB ones with a generic `400 Bad Request (ref: …)` — a body
+ * limit on the cloud proxy, hit well before the model's token context window
+ * (deepseek-v4-flash reports 1 M tokens ≈ 4 M chars). With a cranked-up
+ * `execSummaryChunkChars` (operators set 5 M to "send everything"), a single
+ * minified bundle became one oversized request and 400'd, so the executive
+ * summary never generated. Chunking against this ceiling splits the work across
+ * more, smaller calls that each fit — the summary always generates.
+ *
+ * 500 K chars ≈ a ~0.5 MB request body, comfortably under the observed limit
+ * with headroom for the system prompt, JSON overhead, and lower-limit models.
+ */
+export const SAFE_LLM_REQUEST_CHARS = 500_000;
+
+/**
+ * Split a source section larger than `maxChars` into sub-chunks no larger than
+ * `maxChars`, breaking on line boundaries where possible. A single line longer
+ * than the budget (minified bundles are one enormous line) is hard-sliced so no
+ * sub-chunk can exceed the bound.
+ */
+export function splitOversizedSection(section: string, maxChars: number): string[] {
+  if (section.length <= maxChars) return [section];
+  const out: string[] = [];
+  let buf = '';
+  const flush = () => {
+    if (buf) {
+      out.push(buf);
+      buf = '';
+    }
+  };
+  for (const line of section.split('\n')) {
+    // A single line longer than the whole budget (minified): flush what we have,
+    // then hard-slice the line so every emitted piece fits.
+    if (line.length > maxChars) {
+      flush();
+      for (let i = 0; i < line.length; i += maxChars) {
+        out.push(line.slice(i, i + maxChars));
+      }
+      continue;
+    }
+    // +1 accounts for the '\n' we re-insert when joining lines into `buf`.
+    if (buf && buf.length + line.length + 1 > maxChars) flush();
+    buf = buf ? `${buf}\n${line}` : line;
+  }
+  flush();
+  return out;
+}
+
+/**
+ * Split source files into chunks that fit within context limits. Whole files are
+ * kept together when they fit; a file larger than the chunk budget is split
+ * internally (see splitOversizedSection) rather than sent whole.
  */
 export function chunkSourceFiles(findings: Finding[], extensionPath: string): string[] {
   if (findings.length === 0) return [''];
@@ -416,7 +469,12 @@ export function chunkSourceFiles(findings: Finding[], extensionPath: string): st
   const files = readFindingSourceFiles(findings, extensionPath);
   if (files.length === 0) return [''];
 
-  const EXEC_SUMMARY_CHUNK_SIZE = getAnalysisLimits().execSummaryChunkChars;
+  // Cap the operator-configured chunk size at the per-request ceiling: a chunk
+  // the endpoint would 400 on is useless, so never build one that big.
+  const EXEC_SUMMARY_CHUNK_SIZE = Math.min(
+    getAnalysisLimits().execSummaryChunkChars,
+    SAFE_LLM_REQUEST_CHARS,
+  );
   const totalSize = files.reduce((sum, f) => sum + f.section.length, 0);
   if (totalSize <= EXEC_SUMMARY_CHUNK_SIZE) {
     return [files.map(f => f.section).join('\n')];
@@ -429,14 +487,17 @@ export function chunkSourceFiles(findings: Finding[], extensionPath: string): st
   for (const file of files) {
     const fileSize = file.section.length;
 
-    // Single file exceeding chunk size gets its own chunk
+    // Single file exceeding chunk size: flush the pending chunk, then split the
+    // file internally so no chunk overruns the model's input context.
     if (fileSize > EXEC_SUMMARY_CHUNK_SIZE) {
       if (currentChunk.length > 0) {
         chunks.push(currentChunk.join('\n'));
         currentChunk = [];
         currentSize = 0;
       }
-      chunks.push(file.section);
+      for (const sub of splitOversizedSection(file.section, EXEC_SUMMARY_CHUNK_SIZE)) {
+        chunks.push(sub);
+      }
       continue;
     }
 
