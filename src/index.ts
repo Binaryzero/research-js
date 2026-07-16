@@ -30,6 +30,7 @@ import { toRenderModel } from './analyzer/render-model.js';
 import { generateHtmlReport } from './analyzer/report-html.js';
 import { getEndpointFiltering } from './analyzer/patterns.js';
 import { resolveContextWindow } from './analyzer/model-context.js';
+import { getDetectedOutputLimit, OUTPUT_PROBE_TOKENS } from './providers/output-token-limit.js';
 import { calculateSuspicionScore, getRiskLabel, getRiskColor, type ScoreBreakdown } from './analyzer/scoring.js';
 import { downloadExtension, parseMarketplaceUrl, isMarketplaceUrl } from './services/download.js';
 import { searchExtensions } from './services/marketplace.js';
@@ -221,6 +222,19 @@ function validateLlmBaseUrl(url: string): boolean {
   }
 }
 
+/**
+ * Extract a short reason from a provider/AI-SDK error, used to explain why a
+ * model is unusable (e.g. "... was retired ...") — /api/tags still lists retired
+ * models, so a plain health check can't tell they can't generate.
+ */
+function summarizeProviderError(err: unknown): string {
+  const e = err as { responseBody?: unknown; message?: unknown } | null;
+  const body = e && typeof e.responseBody === 'string' ? e.responseBody : '';
+  const match = /"error"\s*:\s*"([^"]+)"/.exec(body);
+  const msg = match ? match[1] : (e && typeof e.message === 'string' ? e.message : 'model unavailable');
+  return msg.length > 200 ? `${msg.slice(0, 197)}…` : msg;
+}
+
 export async function createServer(configOverride?: Partial<Awaited<ReturnType<typeof getConfig>>>) {
   const defaultConfig = await getConfig();
   const config = { ...defaultConfig, ...configOverride };
@@ -238,6 +252,11 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
     logger: process.env.NODE_ENV !== 'production'
       ? { transport: { target: 'pino-pretty', options: { colorize: true } } }
       : true,
+    // The task tray polls /api/jobs every 2s, so Fastify's default per-request
+    // logging ("incoming request"/"request completed") floods the console with
+    // noise that buries real messages. Real statuses live in the job store/UI,
+    // not the request log — so turn the automatic request logging off.
+    disableRequestLogging: true,
   });
   
   // Register plugins
@@ -1128,7 +1147,38 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
         contextWindowSource = resolved.source;
       }
 
-      return { ok: true, model: model || 'unknown', provider: kind, contextWindow, contextWindowSource };
+      // Probe the model's real max OUTPUT tokens so Max Tokens can be set to it —
+      // this is the value that governs how much the model may generate. Send one
+      // oversized request; the model rejects it with its true cap, which the
+      // provider captures. Best-effort: a retired/unavailable model yields null.
+      // The probe is also a real generate test: /api/tags lists retired models, so
+      // the health check alone can't tell you the model can't actually run. If the
+      // generate fails for a reason other than the token cap, report it as unusable.
+      let maxOutputTokens: number | null = null;
+      let canGenerate = true;
+      let unusableReason: string | null = null;
+      if (model) {
+        maxOutputTokens = getDetectedOutputLimit(baseUrl, model) ?? null;
+        if (maxOutputTokens === null) {
+          try {
+            const probe = createProvider(
+              kind,
+              { id: 'probe', model },
+              { baseUrl, timeout: 20000, apiKey },
+              { maxTokens: OUTPUT_PROBE_TOKENS, temperature: 0, maxRetries: 0 },
+            );
+            await probe.generate('.');
+          } catch (e) {
+            canGenerate = false;
+            unusableReason = summarizeProviderError(e);
+          }
+          maxOutputTokens = getDetectedOutputLimit(baseUrl, model) ?? null;
+          // A learned cap means the generate reached the model — it IS usable.
+          if (maxOutputTokens !== null) { canGenerate = true; unusableReason = null; }
+        }
+      }
+
+      return { ok: true, model: model || 'unknown', provider: kind, contextWindow, contextWindowSource, maxOutputTokens, canGenerate, unusableReason };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }

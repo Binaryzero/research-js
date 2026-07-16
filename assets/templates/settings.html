@@ -653,13 +653,17 @@ async function loadAppConfig() {
 
         if (judge1 && judge1.enabled) {
             document.getElementById('judge1-enabled').checked = true;
-            toggleJudgeCard('judge1');
+            // Set the model/URL BEFORE revealing the card: toggleJudgeCard() loads the
+            // model list, which restores the saved model — so it must run after
+            // populateModelCard, or the list defaults to the first option and the
+            // configured (possibly not-listed/retired) model is lost.
             populateModelCard('judge1', judge1);
+            toggleJudgeCard('judge1');
         }
         if (judge2 && judge2.enabled) {
             document.getElementById('judge2-enabled').checked = true;
-            toggleJudgeCard('judge2');
             populateModelCard('judge2', judge2);
+            toggleJudgeCard('judge2');
         }
 
         // Consensus & scan options
@@ -863,25 +867,38 @@ async function testSlotConnection(slotId) {
         const data = await resp.json();
 
         if (data.ok) {
+            // Endpoint reachable != model usable — /api/tags lists retired models.
+            // If the model can't generate, say so honestly (short); full reason on hover.
+            if (data.canGenerate === false) {
+                statusEl.classList.add('error');
+                textEl.textContent = "Model can't generate";
+                statusEl.title = data.unusableReason || '';
+                toastWarning(`${slotId}: model can't generate — pick a live model`);
+                loadModelsForSlot(slotId);
+                return;
+            }
+            statusEl.title = '';
             statusEl.classList.add('connected');
-            // Show the detected context window inline; note the source when it's not a live probe.
+            // Badge shows context window (info) and the detected max OUTPUT tokens.
             const ctx = typeof data.contextWindow === 'number'
                 ? ` · ${data.contextWindow.toLocaleString()} ctx${data.contextWindowSource && data.contextWindowSource !== 'probe' ? ` (${data.contextWindowSource})` : ''}`
                 : '';
-            textEl.textContent = `Connected${ctx}`;
-            // Push the detected window into Max Tokens so the model's real budget is
-            // used instead of the 32k default. maxTokens is the output cap: fine to
-            // set to the full window on Ollama, but a hosted OpenAI model caps output
-            // below its context — lower it manually there if the provider rejects it.
+            const out = typeof data.maxOutputTokens === 'number'
+                ? ` · ${data.maxOutputTokens.toLocaleString()} max out`
+                : '';
+            textEl.textContent = `Connected${ctx}${out}`;
+            // Set Max Tokens to the model's REAL output limit so we use the model's
+            // full output capacity. maxOutputTokens is the correct OUTPUT cap (probed
+            // from the model); the context window is info-only and must NOT go here.
             let tokenNote = '';
-            if (typeof data.contextWindow === 'number') {
+            if (typeof data.maxOutputTokens === 'number') {
                 const tokensField = document.getElementById(`${slotId}-max-tokens`);
                 if (tokensField) {
-                    tokensField.value = data.contextWindow;
-                    tokenNote = `, Max Tokens → ${data.contextWindow.toLocaleString()} (Save to keep)`;
+                    tokensField.value = data.maxOutputTokens;
+                    tokenNote = `, Max Tokens → ${data.maxOutputTokens.toLocaleString()} (Save to keep)`;
                 }
             }
-            toastSuccess(`${slotId}: Connected${typeof data.contextWindow === 'number' ? ` — context window ${data.contextWindow.toLocaleString()}${tokenNote}` : ''}`);
+            toastSuccess(`${slotId}: Connected${typeof data.maxOutputTokens === 'number' ? ` — max output ${data.maxOutputTokens.toLocaleString()}${tokenNote}` : ''}`);
             loadModelsForSlot(slotId);
         } else {
             statusEl.classList.add('error');

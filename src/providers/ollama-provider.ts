@@ -11,6 +11,7 @@ import { createOpenAI } from '@ai-sdk/openai';
 import type { ZodSchema } from 'zod';
 import type { LlmProvider } from './llm-provider.js';
 import type { ProviderConnection, ProviderInference, ProviderIdentity } from './types.js';
+import { withOutputLimit } from './output-token-limit.js';
 
 export class OllamaProvider implements LlmProvider {
   readonly id: string;
@@ -47,34 +48,40 @@ export class OllamaProvider implements LlmProvider {
 
   async generate(prompt: string, system?: string): Promise<string> {
     const client = this.createClient();
-    const { text } = await generateText({
-      model: client(this.model),
-      messages: [
-        ...(system ? [{ role: 'system' as const, content: system }] : []),
-        { role: 'user' as const, content: prompt },
-      ],
-      maxOutputTokens: this.infer.maxTokens,
-      temperature: this.infer.temperature,
-      maxRetries: this.infer.maxRetries ?? 5,
-      abortSignal: AbortSignal.timeout(this.connection.timeout),
-    });
+    const { text } = await withOutputLimit(
+      this.connection.baseUrl, this.model, this.infer.maxTokens,
+      (maxOutputTokens) => generateText({
+        model: client(this.model),
+        messages: [
+          ...(system ? [{ role: 'system' as const, content: system }] : []),
+          { role: 'user' as const, content: prompt },
+        ],
+        maxOutputTokens,
+        temperature: this.infer.temperature,
+        maxRetries: this.infer.maxRetries ?? 5,
+        abortSignal: AbortSignal.timeout(this.connection.timeout),
+      }),
+    );
     return text ?? '';
   }
 
   async generateObject<T>(schema: ZodSchema<T>, prompt: string, system?: string): Promise<T> {
     const client = this.createClient();
-    const { object } = await aiGenerateObject({
-      model: client(this.model),
-      schema,
-      messages: [
-        ...(system ? [{ role: 'system' as const, content: system }] : []),
-        { role: 'user' as const, content: prompt },
-      ],
-      maxOutputTokens: this.infer.maxTokens,
-      temperature: this.infer.temperature,
-      maxRetries: this.infer.maxRetries ?? 5,
-      abortSignal: AbortSignal.timeout(this.connection.timeout),
-    });
+    const { object } = await withOutputLimit(
+      this.connection.baseUrl, this.model, this.infer.maxTokens,
+      (maxOutputTokens) => aiGenerateObject({
+        model: client(this.model),
+        schema,
+        messages: [
+          ...(system ? [{ role: 'system' as const, content: system }] : []),
+          { role: 'user' as const, content: prompt },
+        ],
+        maxOutputTokens,
+        temperature: this.infer.temperature,
+        maxRetries: this.infer.maxRetries ?? 5,
+        abortSignal: AbortSignal.timeout(this.connection.timeout),
+      }),
+    );
     return object;
   }
 }
