@@ -10,20 +10,22 @@
  *     (a full AnalysisResult carries file lists, the VSIX manifest, pattern
  *     scan state, etc. — megabytes the report page never renders)
  *   - evidence bounding: evidence is attacker-controlled source code from the
- *     scanned extension; its rendered size is capped independently of the
- *     scan-time capture limit (analysisLimits.maxEvidenceChars is
- *     operator-configurable up to 1MB)
+ *     scanned extension, already bounded once at scan time by
+ *     analysisLimits.maxEvidenceChars. The renderer shows that full captured
+ *     evidence (the report page puts it in a height-capped, scrollable block),
+ *     rather than re-truncating to a smaller display cap that starved the
+ *     screen of context. Control/binary bytes are stripped so minified source
+ *     stays readable on screen.
  */
 
 import type { AnalysisResult, BinaryInfo, FileStats, Finding } from '../types/index.js';
 import type { EndpointFilteringConfig } from './patterns.js';
 import { filterEndpoints } from './endpoint-filter.js';
 import { truncateEvidence } from './evidence.js';
+import { getAnalysisLimits } from './analysis-limits.js';
+import { sanitizeForLlm } from '../providers/sanitize.js';
 
 export { truncateEvidence };
-
-/** Max evidence characters embedded per finding in the HTML render model. */
-export const EVIDENCE_RENDER_LIMIT = 4000;
 
 export interface RenderEndpoint {
   url: string;
@@ -86,8 +88,11 @@ export interface RenderModelOptions {
 }
 
 function toRenderFinding(f: Finding): RenderFinding {
-  const evidence = String(f.evidence || '');
-  const { text, truncated } = truncateEvidence(evidence, f.matchHighlight, EVIDENCE_RENDER_LIMIT);
+  // Strip control/binary bytes (minified bundles read as UTF-8 leave them) so
+  // the evidence renders as readable code, then show the full captured amount —
+  // bounded once, at scan time, by analysisLimits.maxEvidenceChars.
+  const evidence = sanitizeForLlm(String(f.evidence || ''));
+  const { text, truncated } = truncateEvidence(evidence, f.matchHighlight, getAnalysisLimits().maxEvidenceChars);
   return {
     category: f.category,
     title: f.title,
