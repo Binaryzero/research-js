@@ -58,7 +58,7 @@
             <div class="batch-filter-group">
                 <div class="form-group">
                     <label for="filter-scan-status">Scan Status</label>
-                    <select id="filter-scan-status" class="filter-select" onchange="applyResultFilters()">
+                    <select id="filter-scan-status" class="filter-select" onchange="applyResultFiltersAndFill()">
                         <option value="">All Results</option>
                         <option value="scanned">Scanned Only</option>
                         <option value="unscanned">Unscanned Only</option>
@@ -66,7 +66,7 @@
                 </div>
                 <div class="form-group">
                     <label for="filter-verdict">Verdict</label>
-                    <select id="filter-verdict" class="filter-select" onchange="applyResultFilters()">
+                    <select id="filter-verdict" class="filter-select" onchange="applyResultFiltersAndFill()">
                         <option value="">All Verdicts</option>
                         <option value="MALICIOUS">Malicious</option>
                         <option value="SUSPICIOUS">Suspicious</option>
@@ -76,7 +76,7 @@
                 </div>
                 <div class="form-group">
                     <label for="filter-llm">LLM Status</label>
-                    <select id="filter-llm" class="filter-select" onchange="applyResultFilters()">
+                    <select id="filter-llm" class="filter-select" onchange="applyResultFiltersAndFill()">
                         <option value="">LLM: All</option>
                         <option value="llm">With LLM</option>
                         <option value="no-llm">Without LLM</option>
@@ -84,7 +84,7 @@
                 </div>
                 <div class="form-group">
                     <label for="filter-risk">Risk Level</label>
-                    <select id="filter-risk" class="filter-select" onchange="applyResultFilters()">
+                    <select id="filter-risk" class="filter-select" onchange="applyResultFiltersAndFill()">
                         <option value="">All Risk Levels</option>
                         <option value="Very Suspicious">Very Suspicious</option>
                         <option value="Suspicious">Suspicious</option>
@@ -274,23 +274,84 @@ function doSearch(e) {
     return false;
 }
 
+// Count means "items I want to SEE": filters hide results client-side, so a
+// single marketplace page of `count` can render far fewer. After each search
+// (and each filter change) we keep fetching subsequent pages until the
+// filtered view reaches `count`, results run out, or the page cap is hit.
+const AUTOFILL_MAX_EXTRA_PAGES = 9;
+
+// State of the active search's auto-fill; regenerated per search so a stale
+// in-flight top-up can never append into a newer search's results.
+let searchFill = null;
+
+async function fetchSearchPage(baseForm, page) {
+    const formData = new FormData();
+    for (const [k, v] of baseForm.entries()) formData.append(k, v);
+    formData.set('page', String(page));
+    const resp = await fetch('/api/search', { method: 'POST', body: formData });
+    if (!resp.ok) {
+        let detail = 'Search failed (' + resp.status + ')';
+        try { const err = await resp.json(); detail = err.error || err.detail || detail; } catch {}
+        throw new Error(detail);
+    }
+    const data = await resp.json();
+    // Guard against a malformed/empty body so a bad response can't throw
+    // inside the filter/render path and blank the page with no explanation.
+    return Array.isArray(data.results) ? data.results : [];
+}
+
 async function executeSearch(formData) {
+    const startPage = parseInt(formData.get('page'), 10) || 1;
+    const pageSize = parseInt(formData.get('page_size'), 10) || 50;
+    const fill = {
+        baseForm: formData,
+        nextPage: startPage + 1,
+        pagesFetched: 1,
+        target: pageSize,
+        exhausted: false,
+        fetching: false,
+    };
     try {
-        const resp = await fetch('/api/search', { method: 'POST', body: formData });
-        if (!resp.ok) {
-            let detail = 'Search failed (' + resp.status + ')';
-            try { const err = await resp.json(); detail = err.error || err.detail || detail; } catch {}
-            throw new Error(detail);
-        }
-        const data = await resp.json();
-        // Guard against a malformed/empty body so a bad response can't throw
-        // inside the filter/render path and blank the page with no explanation.
-        searchResults = Array.isArray(data.results) ? data.results : [];
+        const first = await fetchSearchPage(formData, startPage);
+        searchFill = fill;
+        fill.exhausted = first.length < pageSize;
+        searchResults = first;
         selectedExtensions.clear();
         updateBulkActions();
-        applyResultFilters();
+        applyResultFiltersAndFill();
     } catch(err) {
         toastError('Search error: ' + err.message);
+    }
+}
+
+/** Top up the visible (filtered) list to the requested count. */
+async function fillToCount() {
+    const fill = searchFill;
+    if (!fill || fill.fetching) return;
+    fill.fetching = true;
+    try {
+        while (
+            searchFill === fill &&
+            !fill.exhausted &&
+            fill.pagesFetched <= AUTOFILL_MAX_EXTRA_PAGES &&
+            filterResults(searchResults).length < fill.target
+        ) {
+            const more = await fetchSearchPage(fill.baseForm, fill.nextPage);
+            if (searchFill !== fill) return; // a newer search took over
+            fill.nextPage++;
+            fill.pagesFetched++;
+            if (more.length < fill.target) fill.exhausted = true;
+            if (more.length === 0) break;
+            // Marketplace pagination can shift between requests — dedupe.
+            const seen = new Set(searchResults.map(r => r.extensionId));
+            searchResults = searchResults.concat(more.filter(r => !seen.has(r.extensionId)));
+            applyResultFilters();
+        }
+    } catch (err) {
+        toastError('Search error: ' + err.message);
+    } finally {
+        fill.fetching = false;
+        if (searchFill === fill) applyResultFilters(); // final render clears the loading note
     }
 }
 
@@ -308,6 +369,7 @@ function renderResults(results) {
     const hiddenByFilters = Math.max(0, searchResults.length - results.length);
     let titleText = `${results.length} results (${scannedCount} scanned, ${unscanned.length} new, ${unanalyzed.length} LLM-ready)`;
     if (hiddenByFilters > 0) titleText += ` · ${hiddenByFilters} hidden by filters`;
+    if (searchFill && searchFill.fetching) titleText += ' · loading more…';
     document.getElementById('results-title').textContent = titleText;
 
     const scanAllBtn = document.getElementById('scan-all-btn');
@@ -636,14 +698,14 @@ function startLlmAnalysis(ext) {
         });
 }
 
-function applyResultFilters() {
-    saveFilterSettings();
+/** Apply the current filter selections to a result list (pure — no render). */
+function filterResults(results) {
     const scanStatus = document.getElementById('filter-scan-status').value;
     const verdict = document.getElementById('filter-verdict').value;
     const llm = document.getElementById('filter-llm').value;
     const risk = document.getElementById('filter-risk').value;
 
-    let filtered = searchResults;
+    let filtered = results;
 
     if (scanStatus === 'scanned') filtered = filtered.filter(r => r.scan);
     else if (scanStatus === 'unscanned') filtered = filtered.filter(r => !r.scan);
@@ -657,7 +719,20 @@ function applyResultFilters() {
     else if (llm === 'no-llm') filtered = filtered.filter(r => r.scan && !r.scan.llm_analyzed);
     if (risk) filtered = filtered.filter(r => r.scan && r.scan.risk_label === risk);
 
-    renderResults(filtered);
+    return filtered;
+}
+
+function applyResultFilters() {
+    saveFilterSettings();
+    renderResults(filterResults(searchResults));
+}
+
+/** Filter-change entry point: re-render, then top up the visible list to the
+    requested count from the next marketplace pages. Kept separate from
+    applyResultFilters so the fill loop's own re-renders can't recurse. */
+function applyResultFiltersAndFill() {
+    applyResultFilters();
+    fillToCount();
 }
 
 function cancelBatchScan() {
