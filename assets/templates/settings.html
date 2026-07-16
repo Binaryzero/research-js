@@ -863,7 +863,7 @@ async function testSlotConnection(slotId) {
         const data = await resp.json();
 
         if (data.ok) {
-            const modelDead = !!data.generateError && typeof data.maxOutputTokens !== 'number';
+            statusEl.classList.add('connected');
             // Badge shows context window (info) and the detected max OUTPUT tokens.
             const ctx = typeof data.contextWindow === 'number'
                 ? ` · ${data.contextWindow.toLocaleString()} ctx${data.contextWindowSource && data.contextWindowSource !== 'probe' ? ` (${data.contextWindowSource})` : ''}`
@@ -871,15 +871,6 @@ async function testSlotConnection(slotId) {
             const out = typeof data.maxOutputTokens === 'number'
                 ? ` · ${data.maxOutputTokens.toLocaleString()} max out`
                 : '';
-            if (modelDead) {
-                // Endpoint reachable but the model itself can't generate (e.g. retired).
-                statusEl.classList.add('error');
-                textEl.textContent = `Model can't generate — ${data.generateError}`;
-                toastWarning(`${slotId}: ${data.generateError} — pick a live model`);
-                loadModelsForSlot(slotId);
-                return;
-            }
-            statusEl.classList.add('connected');
             textEl.textContent = `Connected${ctx}${out}`;
             // Set Max Tokens to the model's REAL output limit so we use the model's
             // full output capacity. maxOutputTokens is the correct OUTPUT cap (probed
