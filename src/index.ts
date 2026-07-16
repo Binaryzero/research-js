@@ -8,7 +8,7 @@ import viewPlugin from '@fastify/view';
 import multipartPlugin from '@fastify/multipart';
 import corsPlugin from '@fastify/cors';
 import rateLimitPlugin from '@fastify/rate-limit';
-import { join, dirname, basename } from 'path';
+import { join, dirname, basename, resolve as resolvePath, sep } from 'path';
 import { tmpdir } from 'os';
 import { fileURLToPath } from 'url';
 import { EventEmitter } from 'events';
@@ -643,6 +643,20 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
     return !name.includes('..') && !name.includes('/') && !name.includes('\\') && name.endsWith('.md');
   }
 
+  /**
+   * Resolve a report-derived file name inside reportsDir, guaranteeing
+   * containment. isValidReportName already blocks traversal characters; this
+   * adds the canonical resolve-and-prefix-check barrier so the guarantee is
+   * explicit at the filesystem boundary (and recognized by static analysis)
+   * instead of implied by the name filter. Returns null if the resolved path
+   * would escape reportsDir.
+   */
+  function resolveReportFile(fileName: string): string | null {
+    const root = resolvePath(reportsDir);
+    const candidate = resolvePath(root, fileName);
+    return candidate.startsWith(root + sep) ? candidate : null;
+  }
+
   // ---------------------------------------------------------------
   // API: List reports
   // ---------------------------------------------------------------
@@ -740,7 +754,10 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
     }
 
     const extensionId = name.slice(0, -'.md'.length);
-    const htmlPath = join(reportsDir, extensionId + '.html');
+    const htmlPath = resolveReportFile(extensionId + '.html');
+    if (!htmlPath) {
+      return reply.status(400).send({ error: 'Invalid report name' });
+    }
 
     // Regenerate from the persisted result whenever it exists, so the download
     // always reflects the current renderer and the operator's current limits —
