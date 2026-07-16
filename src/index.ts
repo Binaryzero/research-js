@@ -1622,10 +1622,26 @@ interface ExtensionScanOutcome {
  * Returns null if cancelled mid-flight. Callers own temp-dir cleanup
  * (paths are appended to options.tempDirs).
  */
+/**
+ * Human-readable scan subject for log lines: the canonical extension id when
+ * known, else the file/URL basename. Batch runs interleave many extensions in
+ * one log — without this, [Static]/[LLM] lines are unattributable.
+ */
+function scanSubject(
+  inputSource: string,
+  options: Pick<ExtensionScanOptions, 'extensionInfo' | 'forceExtensionId'>
+): string {
+  if (options.forceExtensionId) return options.forceExtensionId;
+  if (options.extensionInfo) return `${options.extensionInfo.publisher}.${options.extensionInfo.extension}`;
+  return basename(inputSource);
+}
+
 async function runExtensionScan(
   inputSource: string,
   options: ExtensionScanOptions
 ): Promise<ExtensionScanOutcome | null> {
+  const subject = scanSubject(inputSource, options);
+  getComponentLogger('Scan').info(`Started: ${subject}`);
   let result: AnalysisResult;
   // Empty when reusing stored findings — the exec-summary source reader tolerates
   // a missing path (walkExtensionFiles swallows it) and builds from findings alone.
@@ -1680,6 +1696,7 @@ async function runExtensionScan(
     patternsFile: options.config.patternsFile,
     signal: options.signal,
     timeoutMs: STATIC_ANALYSIS_TIMEOUT_MS,
+    label: subject,
     // Static analysis owns 0.15 → 0.40 of the overall scan.
     onProgress: (fraction, message) => options.onProgress(0.15 + fraction * 0.25, message),
   });
@@ -1838,6 +1855,9 @@ async function runExtensionScan(
     verdict: result.verdict || null,
   });
 
+  getComponentLogger('Scan').info(
+    `Complete: ${subject} — score ${score} (${getRiskLabel(score)}), ${result.findings.length} findings`
+  );
   return { result, score, breakdown, reportPath, reportName, markdown, llmAnalyzed };
 }
 
@@ -1952,6 +1972,12 @@ async function runScan(
     // failTask no-ops on cancel: a user cancel aborts the worker, which rejects
     // with ScanCancelledError, and that must stay 'cancelled' — not be
     // overwritten to 'failed' in the task, the SSE replay, and the job store.
+    if (!task.cancelled && !(error instanceof ScanCancelledError)) {
+      getComponentLogger('Scan').warn(
+        { err: error },
+        `Failed: ${scanSubject(inputSource, { extensionInfo: options.extensionInfo })}`
+      );
+    }
     failTask(task, error);
     cleanupOldScans();
   } finally {
@@ -2019,6 +2045,7 @@ async function runBatchLlmAnalysis(
       scannedCount++;
       task.emitProgress(i / total, `[${i + 1}/${total}] ${extensionId}: score ${outcome.score} (${getRiskLabel(outcome.score)})`);
     } catch (error) {
+      getComponentLogger('Scan').warn({ err: error }, `Failed: ${extensionId}`);
       task.emitProgress(i / total, `[${i + 1}/${total}] Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       cleanupTempDirs(tempDirs);
@@ -2125,6 +2152,7 @@ async function runBatchScan(
       scannedCount++;
       task.emitProgress(i / total, `[${i + 1}/${total}] ${extensionId}: score ${outcome.score} (${getRiskLabel(outcome.score)})`);
     } catch (error) {
+      getComponentLogger('Scan').warn({ err: error }, `Failed: ${extensionId}`);
       task.emitProgress(i / total, `[${i + 1}/${total}] Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       cleanupTempDirs(tempDirs);

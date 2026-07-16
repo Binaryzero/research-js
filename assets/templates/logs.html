@@ -106,12 +106,27 @@
       if (!matchesSearch(e, needle)) return;
       var line = document.createElement('span');
       line.className = 'log-line ' + e.level;
+      // A `scan` field identifies which extension a record belongs to (worker
+      // logs in batch runs) — show it in the component bracket, not as JSON.
+      var extraText = e.extra || '';
+      var scanTag = null;
+      if (extraText) {
+        try {
+          var ex = JSON.parse(extraText);
+          if (ex && typeof ex.scan === 'string') {
+            scanTag = ex.scan;
+            delete ex.scan;
+            extraText = Object.keys(ex).length ? JSON.stringify(ex) : '';
+          }
+        } catch (ignored) { /* not JSON (truncated blob) — show as-is */ }
+      }
       var t = document.createElement('span'); t.className = 'lt'; t.textContent = fmtTime(e.time) + ' ';
       var l = document.createElement('span'); l.className = 'll'; l.textContent = e.level.toUpperCase().padEnd(5) + ' ';
-      var c = document.createElement('span'); c.className = 'lc'; c.textContent = '[' + e.component + '] ';
+      var c = document.createElement('span'); c.className = 'lc';
+      c.textContent = '[' + e.component + (scanTag ? ' · ' + scanTag : '') + '] ';
       line.append(t, l, c, document.createTextNode(e.msg));
-      if (e.extra && e.extra !== '{}') {
-        var x = document.createElement('span'); x.className = 'lx'; x.textContent = '  ' + e.extra;
+      if (extraText && extraText !== '{}') {
+        var x = document.createElement('span'); x.className = 'lx'; x.textContent = '  ' + extraText;
         line.append(x);
       }
       line.append(document.createTextNode('\n'));

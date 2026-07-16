@@ -23,7 +23,10 @@ export function loadPatterns(patternsFile: string): PatternsConfig {
   try {
     const content = readFileSync(patternsFile, 'utf-8');
     const config = load(content) as PatternsConfig;
-    getComponentLogger('Patterns').info(`Loaded ${patternsFile} (version: ${config.version || 'unknown'})`);
+    // debug: patterns load on every scan (and in every analysis worker), so at
+    // info this line dominates the log without saying anything new. The version
+    // is still visible with LOG_LEVEL=debug when hot-reload debugging needs it.
+    getComponentLogger('Patterns').debug(`Loaded ${patternsFile} (version: ${config.version || 'unknown'})`);
     return config;
   } catch (error) {
     throw new Error(`Failed to load patterns file ${patternsFile}: ${error}`);
