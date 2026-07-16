@@ -295,3 +295,34 @@ body.rv-page .report-view { padding: 20px 26px 80px; max-width: 1560px; margin: 
 @media (prefers-reduced-motion: reduce) {
   .report-view .rv-chevron, .report-view .rv-chip { transition: none; }
 }
+
+/* Collapsible section nav — collapsing lets the report content flex full-width. */
+.report-view.rv-nav-collapsed .rv-sidebar { display: none; }
+
+.report-view .rv-nav-toggle {
+  position: fixed;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 60;
+  width: 22px;
+  height: 64px;
+  padding: 0;
+  border: 1px solid var(--rv-border);
+  border-left: none;
+  border-radius: 0 8px 8px 0;
+  background: var(--rv-bg-surface);
+  color: var(--rv-fg-muted);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.report-view .rv-nav-toggle:hover { color: var(--rv-fg); background: var(--rv-bg-elevated); }
+
+@media print {
+  .report-view .rv-nav-toggle { display: none; }
+}

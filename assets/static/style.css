@@ -1743,3 +1743,43 @@ td.risk-low { color: var(--success); }
     width: 100%;
   }
 }
+
+/* ---------------------------------------------------------------
+   Collapsible sidebar (Batch/Analyze pages)
+   Collapsing frees the column so the result list flexes full-width.
+   --------------------------------------------------------------- */
+.analyze-layout.sidebar-collapsed {
+  grid-template-columns: 1fr;
+}
+
+.analyze-layout.sidebar-collapsed .sidebar {
+  display: none;
+}
+
+/* Floating edge handle — stays reachable when the sidebar is hidden. */
+.sidebar-toggle {
+  position: fixed;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 60;
+  width: 22px;
+  height: 64px;
+  padding: 0;
+  border: 1px solid var(--border-subtle);
+  border-left: none;
+  border-radius: 0 8px 8px 0;
+  background: var(--bg-surface);
+  color: var(--fg-muted);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sidebar-toggle:hover {
+  color: var(--fg);
+  background: var(--bg-hover);
+}

@@ -341,12 +341,10 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
   // ---------------------------------------------------------------
   // Page routes - render HTML templates with Nunjucks
   // ---------------------------------------------------------------
+  // Batch is the primary workflow, so it IS the homepage; the single-extension
+  // Analyze page lives at /analyze. Old bookmarks to /batch keep working.
   fastify.get('/', async (request, reply) => {
-    return reply.view('index', { request });
-  });
-  
-  fastify.get('/batch', async (request, reply) => {
-    return reply.view('batch', { 
+    return reply.view('batch', {
       request,
       categories: Object.keys({
         'All categories': '',
@@ -373,9 +371,17 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
       }),
     });
   });
-  
+
+  fastify.get('/analyze', async (request, reply) => {
+    return reply.view('index', { request });
+  });
+
+  fastify.get('/batch', async (_request, reply) => {
+    return reply.redirect('/');
+  });
+
   fastify.get('/history', async (_request, reply) => {
-    return reply.redirect('/batch');
+    return reply.redirect('/');
   });
   
   fastify.get('/settings', async (request, reply) => {

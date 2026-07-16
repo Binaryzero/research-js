@@ -24,6 +24,9 @@
     <div id="tab-models" class="settings-tab-content">
         <form id="settings-form" onsubmit="return saveAllSettings(event)">
             <div class="settings-grid">
+                <!-- Left column: model cards pack top-down with no dead space,
+                     independent of the (much taller) options column. -->
+                <div class="settings-col">
                 <!-- Main Model -->
                 <div class="settings-card" id="card-main">
                     <div class="settings-card-header">
@@ -206,6 +209,7 @@
                         </div>
                     </div>
                 </div>
+                </div><!-- /.settings-col -->
 
                 <!-- Consensus Options -->
                 <div class="settings-card" id="card-consensus">
@@ -469,11 +473,26 @@
     min-width: 0;
 }
 
-/* Grid placement: All models left, options right */
-#card-main       { grid-column: 1; grid-row: 1; }
-#card-judge1     { grid-column: 1; grid-row: 2; }
-#card-judge2     { grid-column: 1; grid-row: 3; }
-#card-consensus  { grid-column: 2; grid-row: 1 / 4; }
+/* Two independent columns: model cards pack top-down on the left while the
+   taller options card fills the right — no shared grid rows, so the tall
+   card can't stretch row heights and leave dead space under the model cards. */
+.settings-col {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+    min-width: 0;
+}
+
+/* Keep the tab bar (and the path back to Models/Prompts) in reach while
+   scrolled deep into the long options column. */
+.settings-tabs {
+    position: sticky;
+    top: var(--nav-height);
+    z-index: 30;
+    background: var(--bg-base);
+    padding-top: var(--space-2);
+    padding-bottom: var(--space-2);
+}
 
 .btn-test {
     white-space: nowrap;

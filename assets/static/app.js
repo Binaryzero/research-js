@@ -280,3 +280,36 @@ window.renderMarkdown = renderMarkdown;
 window.startScan = startScan;
 window.cancelCurrentScan = cancelCurrentScan;
 window.createScanTracker = createScanTracker;
+
+// ---------------------------------------------------------------
+// Collapsible sidebar: pages using .analyze-layout (Batch, Analyze)
+// get a floating edge handle; collapsing lets the content column
+// flex into the freed space. State persists across visits.
+// ---------------------------------------------------------------
+(function () {
+    const layout = document.querySelector('.analyze-layout');
+    if (!layout || !layout.querySelector('.sidebar')) return;
+
+    const STORAGE_KEY = 'sidebarCollapsed';
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'sidebar-toggle';
+    btn.setAttribute('aria-label', 'Toggle sidebar');
+
+    function apply(collapsed) {
+        layout.classList.toggle('sidebar-collapsed', collapsed);
+        btn.textContent = collapsed ? '❯' : '❮';
+        btn.title = collapsed ? 'Show sidebar' : 'Hide sidebar';
+    }
+
+    btn.addEventListener('click', () => {
+        const collapsed = !layout.classList.contains('sidebar-collapsed');
+        try { localStorage.setItem(STORAGE_KEY, collapsed ? '1' : ''); } catch (e) { /* private mode */ }
+        apply(collapsed);
+    });
+
+    let saved = false;
+    try { saved = localStorage.getItem(STORAGE_KEY) === '1'; } catch (e) { /* private mode */ }
+    apply(saved);
+    document.body.appendChild(btn);
+})();

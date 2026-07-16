@@ -34,7 +34,10 @@
 
 <!-- Report content -->
 <div id="report-area" style="display:none" role="main" aria-label="Report content">
-    <div class="report-card" style="margin-bottom: var(--space-4)">
+    <!-- Sticky: the report is long — Back to Batch / downloads must not require
+         scrolling back to the top. -->
+    <div class="report-card" id="report-action-bar"
+         style="margin-bottom: var(--space-4); position: sticky; top: var(--nav-height); z-index: 40; background: var(--bg-base)">
         <div class="report-header" style="border-bottom: none">
             <span id="report-title" role="heading" aria-level="1"></span>
             <div class="report-actions">
@@ -134,15 +137,27 @@ try {
 let _reportView = null; // handle returned by ReportView.render, for cleanup
 
 function initReportPage() {
-    // Set up back button based on referrer
+    // Batch is the homepage — back always returns there.
     const backBtn = document.getElementById('back-btn');
-    const referrer = document.referrer;
-    if (referrer.includes('/batch')) {
-        backBtn.textContent = 'Back to Batch';
-        backBtn.onclick = () => window.location.href = '/batch';
-    } else {
-        backBtn.textContent = 'Back to History';
-        backBtn.onclick = () => window.location.href = '/history';
+    backBtn.textContent = 'Back to Batch';
+    backBtn.onclick = () => window.location.href = '/';
+
+    // The action bar is sticky below the nav, so the report's own sticky
+    // toolbar/sections must offset past BOTH. Measured (not hardcoded):
+    // the bar's height depends on how the extension name wraps.
+    const actionBar = document.getElementById('report-action-bar');
+    const interactiveHost = document.getElementById('report-interactive');
+    if (actionBar && interactiveHost) {
+        const setStickyTop = () => {
+            // The bar lives inside #report-area, which is hidden until the
+            // report loads — skip the zero measurement, the observer fires
+            // again once it becomes visible.
+            if (actionBar.offsetHeight === 0) return;
+            interactiveHost.style.setProperty(
+                '--rv-sticky-top', `calc(var(--nav-height) + ${actionBar.offsetHeight + 6}px)`);
+        };
+        new ResizeObserver(setStickyTop).observe(actionBar);
+        setStickyTop();
     }
 
     if (reportName.startsWith('_scan_')) {

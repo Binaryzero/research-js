@@ -150,6 +150,25 @@
     var main = el('div', { class: 'rv-main' });
     root.append(sidebar, main);
 
+    // Collapsible section nav: a floating edge handle toggles the sidebar so
+    // the report content can flex into the freed space. State persists.
+    var NAV_KEY = 'rvNavCollapsed';
+    var navToggle = el('button', { class: 'rv-nav-toggle', type: 'button', 'aria-label': 'Toggle section navigation' });
+    function applyNavCollapsed(collapsed) {
+      root.classList.toggle('rv-nav-collapsed', collapsed);
+      navToggle.textContent = collapsed ? '❯' : '❮';
+      navToggle.title = collapsed ? 'Show section navigation' : 'Hide section navigation';
+    }
+    navToggle.addEventListener('click', function () {
+      var collapsed = !root.classList.contains('rv-nav-collapsed');
+      try { localStorage.setItem(NAV_KEY, collapsed ? '1' : ''); } catch (e) { /* private mode */ }
+      applyNavCollapsed(collapsed);
+    });
+    var navSaved = false;
+    try { navSaved = localStorage.getItem(NAV_KEY) === '1'; } catch (e) { /* private mode */ }
+    applyNavCollapsed(navSaved);
+    root.append(navToggle);
+
     // ═══ Header ═══
     var verdict = R.verdict || 'NONE';
     var verdictDesc = {
