@@ -356,7 +356,7 @@ async function fillToCount() {
 }
 
 // -- Render results --
-function renderResults(results) {
+function renderResults(results, matchedCount) {
     const area = document.getElementById('results-area');
     const list = document.getElementById('ext-list');
     area.style.display = '';
@@ -366,7 +366,9 @@ function renderResults(results) {
     const unanalyzed = results.filter(r => r.scan && !r.scan.llm_analyzed);
     const scannedCount = results.length - unscanned.length;
 
-    const hiddenByFilters = Math.max(0, searchResults.length - results.length);
+    // "Hidden by filters" counts filter-rejected items only — not matches
+    // trimmed to the requested count (those are buffered, not hidden).
+    const hiddenByFilters = Math.max(0, searchResults.length - (matchedCount ?? results.length));
     let titleText = `${results.length} results (${scannedCount} scanned, ${unscanned.length} new, ${unanalyzed.length} LLM-ready)`;
     if (hiddenByFilters > 0) titleText += ` · ${hiddenByFilters} hidden by filters`;
     if (searchFill && searchFill.fetching) titleText += ' · loading more…';
@@ -724,7 +726,12 @@ function filterResults(results) {
 
 function applyResultFilters() {
     saveFilterSettings();
-    renderResults(filterResults(searchResults));
+    const matched = filterResults(searchResults);
+    // Count is exact: the fill fetches whole pages so matches can overshoot
+    // the requested count — show exactly `count`, keep the extras buffered
+    // (they appear instantly when filters change).
+    const target = searchFill ? searchFill.target : matched.length;
+    renderResults(matched.slice(0, target), matched.length);
 }
 
 /** Filter-change entry point: re-render, then top up the visible list to the
