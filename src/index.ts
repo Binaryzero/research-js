@@ -222,6 +222,19 @@ function validateLlmBaseUrl(url: string): boolean {
   }
 }
 
+/**
+ * Extract a short, human-readable reason from a provider/AI-SDK error — used to
+ * tell the user WHY a model couldn't generate (e.g. "... was retired ..."),
+ * since /api/tags still lists retired models so a health check alone can't.
+ */
+function summarizeProviderError(err: unknown): string {
+  const e = err as { responseBody?: unknown; message?: unknown } | null;
+  const body = e && typeof e.responseBody === 'string' ? e.responseBody : '';
+  const match = /"error"\s*:\s*"([^"]+)"/.exec(body);
+  const msg = match ? match[1] : (e && typeof e.message === 'string' ? e.message : 'model unavailable');
+  return msg.length > 140 ? `${msg.slice(0, 137)}…` : msg;
+}
+
 export async function createServer(configOverride?: Partial<Awaited<ReturnType<typeof getConfig>>>) {
   const defaultConfig = await getConfig();
   const config = { ...defaultConfig, ...configOverride };
@@ -1137,8 +1150,12 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
       // Probe the model's real max OUTPUT tokens so Max Tokens can be set to it —
       // this is the value that governs how much the model may generate. Send one
       // oversized request; the model rejects it with its true cap, which the
-      // provider captures. Best-effort: a retired/unavailable model yields null.
+      // provider captures. This is also a real generate test: if it fails for a
+      // reason other than the token cap (e.g. the model was retired), we surface
+      // that, because /api/tags still lists retired models so the health check
+      // alone can't tell you the model can't actually generate.
       let maxOutputTokens: number | null = null;
+      let generateError: string | null = null;
       if (model) {
         maxOutputTokens = getDetectedOutputLimit(baseUrl, model) ?? null;
         if (maxOutputTokens === null) {
@@ -1150,14 +1167,16 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
               { maxTokens: OUTPUT_PROBE_TOKENS, temperature: 0, maxRetries: 0 },
             );
             await probe.generate('.');
-          } catch {
-            // Non-limit error (e.g. a retired model) — nothing learned.
+          } catch (e) {
+            generateError = summarizeProviderError(e);
           }
           maxOutputTokens = getDetectedOutputLimit(baseUrl, model) ?? null;
+          // A learned cap means the probe succeeded — not a real failure.
+          if (maxOutputTokens !== null) generateError = null;
         }
       }
 
-      return { ok: true, model: model || 'unknown', provider: kind, contextWindow, contextWindowSource, maxOutputTokens };
+      return { ok: true, model: model || 'unknown', provider: kind, contextWindow, contextWindowSource, maxOutputTokens, generateError };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
