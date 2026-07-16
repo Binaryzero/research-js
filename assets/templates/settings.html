@@ -864,17 +864,26 @@ async function testSlotConnection(slotId) {
 
         if (data.ok) {
             statusEl.classList.add('connected');
-            // Show the detected context window inline; note the source when it's not a live probe.
+            // Badge shows context window (info) and the detected max OUTPUT tokens.
             const ctx = typeof data.contextWindow === 'number'
                 ? ` · ${data.contextWindow.toLocaleString()} ctx${data.contextWindowSource && data.contextWindowSource !== 'probe' ? ` (${data.contextWindowSource})` : ''}`
                 : '';
-            textEl.textContent = `Connected${ctx}`;
-            // Context window is shown as info only — it must NOT be written into Max
-            // Tokens. Max Tokens is the OUTPUT cap; setting it to the (much larger)
-            // context window makes hosted models reject every request. The provider
-            // now auto-detects each model's real output limit from the API and clamps
-            // to it, so no manual Max Tokens value is needed.
-            toastSuccess(`${slotId}: Connected${typeof data.contextWindow === 'number' ? ` — context window ${data.contextWindow.toLocaleString()}` : ''}`);
+            const out = typeof data.maxOutputTokens === 'number'
+                ? ` · ${data.maxOutputTokens.toLocaleString()} max out`
+                : '';
+            textEl.textContent = `Connected${ctx}${out}`;
+            // Set Max Tokens to the model's REAL output limit so we use the model's
+            // full output capacity. maxOutputTokens is the correct OUTPUT cap (probed
+            // from the model); the context window is info-only and must NOT go here.
+            let tokenNote = '';
+            if (typeof data.maxOutputTokens === 'number') {
+                const tokensField = document.getElementById(`${slotId}-max-tokens`);
+                if (tokensField) {
+                    tokensField.value = data.maxOutputTokens;
+                    tokenNote = `, Max Tokens → ${data.maxOutputTokens.toLocaleString()} (Save to keep)`;
+                }
+            }
+            toastSuccess(`${slotId}: Connected${typeof data.maxOutputTokens === 'number' ? ` — max output ${data.maxOutputTokens.toLocaleString()}${tokenNote}` : ''}`);
             loadModelsForSlot(slotId);
         } else {
             statusEl.classList.add('error');

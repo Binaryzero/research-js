@@ -14,6 +14,13 @@
 
 import { getComponentLogger } from '../services/logger.js';
 
+/**
+ * An output request larger than any real model's cap. Sending it forces the
+ * model to reveal its true limit via the "maximum output tokens (N)" rejection —
+ * used to proactively probe a model's output cap before running an analysis.
+ */
+export const OUTPUT_PROBE_TOKENS = 100_000_000;
+
 /** In-memory cache of detected output limits, keyed by `${baseUrl}::${model}`. */
 const detectedLimits = new Map<string, number>();
 

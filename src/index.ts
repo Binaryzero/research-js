@@ -30,6 +30,7 @@ import { toRenderModel } from './analyzer/render-model.js';
 import { generateHtmlReport } from './analyzer/report-html.js';
 import { getEndpointFiltering } from './analyzer/patterns.js';
 import { resolveContextWindow } from './analyzer/model-context.js';
+import { getDetectedOutputLimit, OUTPUT_PROBE_TOKENS } from './providers/output-token-limit.js';
 import { calculateSuspicionScore, getRiskLabel, getRiskColor, type ScoreBreakdown } from './analyzer/scoring.js';
 import { downloadExtension, parseMarketplaceUrl, isMarketplaceUrl } from './services/download.js';
 import { searchExtensions } from './services/marketplace.js';
@@ -1133,7 +1134,30 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
         contextWindowSource = resolved.source;
       }
 
-      return { ok: true, model: model || 'unknown', provider: kind, contextWindow, contextWindowSource };
+      // Probe the model's real max OUTPUT tokens so Max Tokens can be set to it —
+      // this is the value that governs how much the model may generate. Send one
+      // oversized request; the model rejects it with its true cap, which the
+      // provider captures. Best-effort: a retired/unavailable model yields null.
+      let maxOutputTokens: number | null = null;
+      if (model) {
+        maxOutputTokens = getDetectedOutputLimit(baseUrl, model) ?? null;
+        if (maxOutputTokens === null) {
+          try {
+            const probe = createProvider(
+              kind,
+              { id: 'probe', model },
+              { baseUrl, timeout: 20000, apiKey },
+              { maxTokens: OUTPUT_PROBE_TOKENS, temperature: 0, maxRetries: 0 },
+            );
+            await probe.generate('.');
+          } catch {
+            // Non-limit error (e.g. a retired model) — nothing learned.
+          }
+          maxOutputTokens = getDetectedOutputLimit(baseUrl, model) ?? null;
+        }
+      }
+
+      return { ok: true, model: model || 'unknown', provider: kind, contextWindow, contextWindowSource, maxOutputTokens };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
