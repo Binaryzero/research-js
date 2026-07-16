@@ -149,6 +149,19 @@
         bar.appendChild(fill);
         item.appendChild(bar);
         if (job.message) item.appendChild(el('div', 'task-tray-msg', job.message));
+        // Stop works from ANY page at ANY time — the in-page Cancel button
+        // dies with a reload, but the job keeps running server-side.
+        var stopBtn = el('button', 'task-tray-stop', 'Stop');
+        stopBtn.type = 'button';
+        var tray = this;
+        stopBtn.addEventListener('click', function () {
+          stopBtn.disabled = true;
+          stopBtn.textContent = 'Stopping…';
+          fetch('/api/scan/' + encodeURIComponent(job.id), { method: 'DELETE' })
+            .catch(function () { /* poll below shows the real state either way */ })
+            .then(function () { setTimeout(tray.poll.bind(tray), 300); });
+        });
+        item.appendChild(stopBtn);
       } else {
         var sub = el('div', 'task-tray-sub');
         var when = job.finishedAt || job.updatedAt;

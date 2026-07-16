@@ -57,11 +57,13 @@
             <div class="sidebar-header">Filters</div>
             <div class="batch-filter-group">
                 <div class="form-group">
-                    <label for="filter-scan-status">Scan Status</label>
-                    <select id="filter-scan-status" class="filter-select" onchange="applyResultFiltersAndFill()">
-                        <option value="">All Results</option>
-                        <option value="scanned">Scanned Only</option>
-                        <option value="unscanned">Unscanned Only</option>
+                    <label for="filter-stage">Analysis Stage</label>
+                    <!-- One progression, one filter: new → static scanned → LLM reviewed -->
+                    <select id="filter-stage" class="filter-select" onchange="applyResultFiltersAndFill()">
+                        <option value="">All stages</option>
+                        <option value="new">New — not scanned yet</option>
+                        <option value="static">Static scanned — no LLM yet</option>
+                        <option value="llm">LLM reviewed</option>
                     </select>
                 </div>
                 <div class="form-group">
@@ -72,14 +74,6 @@
                         <option value="SUSPICIOUS">Suspicious</option>
                         <option value="CLEAN">Clean</option>
                         <option value="NO_VERDICT">No Verdict</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label for="filter-llm">LLM Status</label>
-                    <select id="filter-llm" class="filter-select" onchange="applyResultFiltersAndFill()">
-                        <option value="">LLM: All</option>
-                        <option value="llm">With LLM</option>
-                        <option value="no-llm">Without LLM</option>
                     </select>
                 </div>
                 <div class="form-group">
@@ -188,9 +182,8 @@ function saveFilterSettings() {
 }
 
 function clearResultFilters() {
-    document.getElementById('filter-scan-status').value = '';
+    document.getElementById('filter-stage').value = '';
     document.getElementById('filter-verdict').value = '';
-    document.getElementById('filter-llm').value = '';
     document.getElementById('filter-risk').value = '';
     applyResultFilters();
 }
@@ -702,23 +695,22 @@ function startLlmAnalysis(ext) {
 
 /** Apply the current filter selections to a result list (pure — no render). */
 function filterResults(results) {
-    const scanStatus = document.getElementById('filter-scan-status').value;
+    const stage = document.getElementById('filter-stage').value;
     const verdict = document.getElementById('filter-verdict').value;
-    const llm = document.getElementById('filter-llm').value;
     const risk = document.getElementById('filter-risk').value;
 
     let filtered = results;
 
-    if (scanStatus === 'scanned') filtered = filtered.filter(r => r.scan);
-    else if (scanStatus === 'unscanned') filtered = filtered.filter(r => !r.scan);
+    // Stage is the pipeline position: new → static scanned → LLM reviewed.
+    if (stage === 'new') filtered = filtered.filter(r => !r.scan);
+    else if (stage === 'static') filtered = filtered.filter(r => r.scan && !r.scan.llm_analyzed);
+    else if (stage === 'llm') filtered = filtered.filter(r => r.scan && r.scan.llm_analyzed);
 
     if (verdict === 'NO_VERDICT') {
         filtered = filtered.filter(r => r.scan && !r.scan.verdict);
     } else if (verdict) {
         filtered = filtered.filter(r => r.scan && r.scan.verdict === verdict);
     }
-    if (llm === 'llm') filtered = filtered.filter(r => r.scan && r.scan.llm_analyzed);
-    else if (llm === 'no-llm') filtered = filtered.filter(r => r.scan && !r.scan.llm_analyzed);
     if (risk) filtered = filtered.filter(r => r.scan && r.scan.risk_label === risk);
 
     return filtered;

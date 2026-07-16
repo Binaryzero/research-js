@@ -163,3 +163,25 @@
   .task-tray { right: 12px; bottom: 12px; }
   .task-tray-panel { width: calc(100vw - 24px); }
 }
+
+/* Stop button on running jobs — the reload-proof cancel. */
+.task-tray-stop {
+  margin-top: 6px;
+  align-self: flex-start;
+  padding: 3px 10px;
+  font-size: 11px;
+  border: 1px solid rgba(248, 81, 73, 0.4);
+  border-radius: 6px;
+  background: transparent;
+  color: #f85149;
+  cursor: pointer;
+}
+
+.task-tray-stop:hover:not(:disabled) {
+  background: rgba(248, 81, 73, 0.12);
+}
+
+.task-tray-stop:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
