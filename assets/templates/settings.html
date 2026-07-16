@@ -863,6 +863,17 @@ async function testSlotConnection(slotId) {
         const data = await resp.json();
 
         if (data.ok) {
+            // Endpoint reachable != model usable — /api/tags lists retired models.
+            // If the model can't generate, say so honestly (short); full reason on hover.
+            if (data.canGenerate === false) {
+                statusEl.classList.add('error');
+                textEl.textContent = "Model can't generate";
+                statusEl.title = data.unusableReason || '';
+                toastWarning(`${slotId}: model can't generate — pick a live model`);
+                loadModelsForSlot(slotId);
+                return;
+            }
+            statusEl.title = '';
             statusEl.classList.add('connected');
             // Badge shows context window (info) and the detected max OUTPUT tokens.
             const ctx = typeof data.contextWindow === 'number'

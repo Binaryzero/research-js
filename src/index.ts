@@ -222,6 +222,19 @@ function validateLlmBaseUrl(url: string): boolean {
   }
 }
 
+/**
+ * Extract a short reason from a provider/AI-SDK error, used to explain why a
+ * model is unusable (e.g. "... was retired ...") — /api/tags still lists retired
+ * models, so a plain health check can't tell they can't generate.
+ */
+function summarizeProviderError(err: unknown): string {
+  const e = err as { responseBody?: unknown; message?: unknown } | null;
+  const body = e && typeof e.responseBody === 'string' ? e.responseBody : '';
+  const match = /"error"\s*:\s*"([^"]+)"/.exec(body);
+  const msg = match ? match[1] : (e && typeof e.message === 'string' ? e.message : 'model unavailable');
+  return msg.length > 200 ? `${msg.slice(0, 197)}…` : msg;
+}
+
 export async function createServer(configOverride?: Partial<Awaited<ReturnType<typeof getConfig>>>) {
   const defaultConfig = await getConfig();
   const config = { ...defaultConfig, ...configOverride };
@@ -1138,7 +1151,12 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
       // this is the value that governs how much the model may generate. Send one
       // oversized request; the model rejects it with its true cap, which the
       // provider captures. Best-effort: a retired/unavailable model yields null.
+      // The probe is also a real generate test: /api/tags lists retired models, so
+      // the health check alone can't tell you the model can't actually run. If the
+      // generate fails for a reason other than the token cap, report it as unusable.
       let maxOutputTokens: number | null = null;
+      let canGenerate = true;
+      let unusableReason: string | null = null;
       if (model) {
         maxOutputTokens = getDetectedOutputLimit(baseUrl, model) ?? null;
         if (maxOutputTokens === null) {
@@ -1150,14 +1168,17 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
               { maxTokens: OUTPUT_PROBE_TOKENS, temperature: 0, maxRetries: 0 },
             );
             await probe.generate('.');
-          } catch {
-            // Non-limit error (e.g. a retired model) — nothing learned.
+          } catch (e) {
+            canGenerate = false;
+            unusableReason = summarizeProviderError(e);
           }
           maxOutputTokens = getDetectedOutputLimit(baseUrl, model) ?? null;
+          // A learned cap means the generate reached the model — it IS usable.
+          if (maxOutputTokens !== null) { canGenerate = true; unusableReason = null; }
         }
       }
 
-      return { ok: true, model: model || 'unknown', provider: kind, contextWindow, contextWindowSource, maxOutputTokens };
+      return { ok: true, model: model || 'unknown', provider: kind, contextWindow, contextWindowSource, maxOutputTokens, canGenerate, unusableReason };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
