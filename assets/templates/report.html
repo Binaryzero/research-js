@@ -71,10 +71,10 @@
 <div id="llm-rescan-modal" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="llm-rescan-title">
     <div class="settings-card" style="max-width: 480px; margin: 10vh auto;">
         <div class="settings-card-header">
-            <h3 id="llm-rescan-title">Re-scan with LLM</h3>
+            <h3 id="llm-rescan-title">Analyze with LLM</h3>
         </div>
         <div class="settings-card-body">
-            <p style="color: var(--fg-secondary); margin-bottom: var(--space-4);">Re-analyze this extension with LLM to get deeper insights and false positive detection.</p>
+            <p style="color: var(--fg-secondary); margin-bottom: var(--space-4);">Analyze this extension with LLM (using the existing static findings) to get deeper insights and false positive detection.</p>
 
             <div class="form-group">
                 <label for="rescan-model">Model</label>
@@ -399,7 +399,7 @@ async function startLlmRescan() {
     })
     .then(data => {
         if (data.scan_id) {
-            toastSuccess('LLM re-analysis started. Check History for results.');
+            toastSuccess('LLM analysis started. Check History for results.');
         } else {
             throw new Error(data.detail || 'No scan ID returned');
         }
