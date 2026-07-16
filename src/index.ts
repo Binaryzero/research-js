@@ -1293,7 +1293,7 @@ ${indent(prompts.triage_batch?.user || '')}
     const task = new ScanTaskEmitter({
       kind: 'llm-analyze',
       target: `${publisher}.${extensionName}`,
-      label: `LLM re-analysis: ${publisher}.${extensionName}`,
+      label: `LLM analysis: ${publisher}.${extensionName}`,
     });
     scans.set(task.id, task);
 
@@ -1394,7 +1394,7 @@ ${indent(prompts.triage_batch?.user || '')}
     const task = new ScanTaskEmitter({
       kind: 'batch',
       target: `${extensions.length} extensions`,
-      label: `Batch LLM re-analysis (${extensions.length})`,
+      label: `Batch LLM analysis (${extensions.length})`,
     });
     scans.set(task.id, task);
 
