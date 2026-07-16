@@ -12,6 +12,7 @@ import type { ZodSchema } from 'zod';
 import type { LlmProvider } from './llm-provider.js';
 import type { ProviderConnection, ProviderInference, ProviderIdentity } from './types.js';
 import { withOutputLimit } from './output-token-limit.js';
+import { sanitizeForLlm, sanitizeOptional } from './sanitize.js';
 
 export class OllamaProvider implements LlmProvider {
   readonly id: string;
@@ -48,13 +49,15 @@ export class OllamaProvider implements LlmProvider {
 
   async generate(prompt: string, system?: string): Promise<string> {
     const client = this.createClient();
+    const cleanPrompt = sanitizeForLlm(prompt);
+    const cleanSystem = sanitizeOptional(system);
     const { text } = await withOutputLimit(
       this.connection.baseUrl, this.model, this.infer.maxTokens,
       (maxOutputTokens) => generateText({
         model: client(this.model),
         messages: [
-          ...(system ? [{ role: 'system' as const, content: system }] : []),
-          { role: 'user' as const, content: prompt },
+          ...(cleanSystem ? [{ role: 'system' as const, content: cleanSystem }] : []),
+          { role: 'user' as const, content: cleanPrompt },
         ],
         maxOutputTokens,
         temperature: this.infer.temperature,
@@ -67,14 +70,16 @@ export class OllamaProvider implements LlmProvider {
 
   async generateObject<T>(schema: ZodSchema<T>, prompt: string, system?: string): Promise<T> {
     const client = this.createClient();
+    const cleanPrompt = sanitizeForLlm(prompt);
+    const cleanSystem = sanitizeOptional(system);
     const { object } = await withOutputLimit(
       this.connection.baseUrl, this.model, this.infer.maxTokens,
       (maxOutputTokens) => aiGenerateObject({
         model: client(this.model),
         schema,
         messages: [
-          ...(system ? [{ role: 'system' as const, content: system }] : []),
-          { role: 'user' as const, content: prompt },
+          ...(cleanSystem ? [{ role: 'system' as const, content: cleanSystem }] : []),
+          { role: 'user' as const, content: cleanPrompt },
         ],
         maxOutputTokens,
         temperature: this.infer.temperature,

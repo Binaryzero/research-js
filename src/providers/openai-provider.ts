@@ -9,6 +9,7 @@ import type { ZodSchema } from 'zod';
 import type { LlmProvider } from './llm-provider.js';
 import type { ProviderConnection, ProviderInference, ProviderIdentity } from './types.js';
 import { withOutputLimit } from './output-token-limit.js';
+import { sanitizeForLlm, sanitizeOptional } from './sanitize.js';
 
 export class OpenAIProvider implements LlmProvider {
   readonly id: string;
@@ -45,13 +46,15 @@ export class OpenAIProvider implements LlmProvider {
       apiKey: this.connection.apiKey || 'ollama',
     });
 
+    const cleanPrompt = sanitizeForLlm(prompt);
+    const cleanSystem = sanitizeOptional(system);
     const { text } = await withOutputLimit(
       this.connection.baseUrl, this.model, this.infer.maxTokens,
       (maxOutputTokens) => generateText({
         model: client(this.model),
         messages: [
-          ...(system ? [{ role: 'system' as const, content: system }] : []),
-          { role: 'user' as const, content: prompt },
+          ...(cleanSystem ? [{ role: 'system' as const, content: cleanSystem }] : []),
+          { role: 'user' as const, content: cleanPrompt },
         ],
         maxOutputTokens,
         temperature: this.infer.temperature,
@@ -69,14 +72,16 @@ export class OpenAIProvider implements LlmProvider {
       apiKey: this.connection.apiKey || 'ollama',
     });
 
+    const cleanPrompt = sanitizeForLlm(prompt);
+    const cleanSystem = sanitizeOptional(system);
     const { object } = await withOutputLimit(
       this.connection.baseUrl, this.model, this.infer.maxTokens,
       (maxOutputTokens) => aiGenerateObject({
         model: client(this.model),
         schema,
         messages: [
-          ...(system ? [{ role: 'system' as const, content: system }] : []),
-          { role: 'user' as const, content: prompt },
+          ...(cleanSystem ? [{ role: 'system' as const, content: cleanSystem }] : []),
+          { role: 'user' as const, content: cleanPrompt },
         ],
         maxOutputTokens,
         temperature: this.infer.temperature,
