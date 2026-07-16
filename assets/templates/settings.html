@@ -869,19 +869,12 @@ async function testSlotConnection(slotId) {
                 ? ` · ${data.contextWindow.toLocaleString()} ctx${data.contextWindowSource && data.contextWindowSource !== 'probe' ? ` (${data.contextWindowSource})` : ''}`
                 : '';
             textEl.textContent = `Connected${ctx}`;
-            // Push the detected window into Max Tokens so the model's real budget is
-            // used instead of the 32k default. maxTokens is the output cap: fine to
-            // set to the full window on Ollama, but a hosted OpenAI model caps output
-            // below its context — lower it manually there if the provider rejects it.
-            let tokenNote = '';
-            if (typeof data.contextWindow === 'number') {
-                const tokensField = document.getElementById(`${slotId}-max-tokens`);
-                if (tokensField) {
-                    tokensField.value = data.contextWindow;
-                    tokenNote = `, Max Tokens → ${data.contextWindow.toLocaleString()} (Save to keep)`;
-                }
-            }
-            toastSuccess(`${slotId}: Connected${typeof data.contextWindow === 'number' ? ` — context window ${data.contextWindow.toLocaleString()}${tokenNote}` : ''}`);
+            // Context window is shown as info only — it must NOT be written into Max
+            // Tokens. Max Tokens is the OUTPUT cap; setting it to the (much larger)
+            // context window makes hosted models reject every request. The provider
+            // now auto-detects each model's real output limit from the API and clamps
+            // to it, so no manual Max Tokens value is needed.
+            toastSuccess(`${slotId}: Connected${typeof data.contextWindow === 'number' ? ` — context window ${data.contextWindow.toLocaleString()}` : ''}`);
             loadModelsForSlot(slotId);
         } else {
             statusEl.classList.add('error');

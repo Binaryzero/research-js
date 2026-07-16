@@ -238,6 +238,11 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
     logger: process.env.NODE_ENV !== 'production'
       ? { transport: { target: 'pino-pretty', options: { colorize: true } } }
       : true,
+    // The task tray polls /api/jobs every 2s, so Fastify's default per-request
+    // logging ("incoming request"/"request completed") floods the console with
+    // noise that buries real messages. Real statuses live in the job store/UI,
+    // not the request log — so turn the automatic request logging off.
+    disableRequestLogging: true,
   });
   
   // Register plugins
