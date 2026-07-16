@@ -653,13 +653,17 @@ async function loadAppConfig() {
 
         if (judge1 && judge1.enabled) {
             document.getElementById('judge1-enabled').checked = true;
-            toggleJudgeCard('judge1');
+            // Set the model/URL BEFORE revealing the card: toggleJudgeCard() loads the
+            // model list, which restores the saved model — so it must run after
+            // populateModelCard, or the list defaults to the first option and the
+            // configured (possibly not-listed/retired) model is lost.
             populateModelCard('judge1', judge1);
+            toggleJudgeCard('judge1');
         }
         if (judge2 && judge2.enabled) {
             document.getElementById('judge2-enabled').checked = true;
-            toggleJudgeCard('judge2');
             populateModelCard('judge2', judge2);
+            toggleJudgeCard('judge2');
         }
 
         // Consensus & scan options
