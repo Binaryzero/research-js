@@ -19,6 +19,7 @@ import { parentPort, workerData } from 'worker_threads';
 import type { AnalysisResult, AnalysisLimits } from '../types/index.js';
 import { StaticAnalyzer } from './static.js';
 import { setAnalysisLimits } from './analysis-limits.js';
+import { setLogForwarder } from '../services/log-buffer.js';
 
 export interface StaticWorkerInput {
   extensionPath: string;
@@ -30,6 +31,7 @@ export interface StaticWorkerInput {
 
 export type StaticWorkerMessage =
   | { type: 'progress'; fraction: number; message: string }
+  | { type: 'log'; record: Record<string, unknown> }
   | { type: 'done'; result: AnalysisResult }
   | { type: 'error'; error: string };
 
@@ -40,6 +42,15 @@ async function main(): Promise<void> {
   if (input.analysisLimits) {
     setAnalysisLimits(input.analysisLimits);
   }
+
+  // The worker's log-buffer instance is a separate module singleton the UI never
+  // sees — relay every record to the main thread so 'Static'/'Patterns' logs
+  // show up in /logs like everything else.
+  const port = parentPort;
+  setLogForwarder((record) => {
+    const msg: StaticWorkerMessage = { type: 'log', record };
+    port.postMessage(msg);
+  });
 
   const analyzer = new StaticAnalyzer(input.extensionPath, {
     verbose: input.verbose ?? false,

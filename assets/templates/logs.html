@@ -1,0 +1,207 @@
+{% extends "base.html" %}
+{% block title %}Logs — Extension Security Analyzer{% endblock %}
+
+{% block content %}
+<style>
+  .logs-page { display: flex; flex-direction: column; gap: 12px; }
+  .logs-toolbar {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 10px 14px; border: 1px solid var(--border, #2a2f3a); border-radius: 10px;
+    background: var(--surface, #12151c);
+  }
+  .logs-toolbar label { font-size: 12px; opacity: .75; display: flex; align-items: center; gap: 6px; }
+  .logs-toolbar select, .logs-toolbar input[type="search"] {
+    background: var(--bg, #0b0e14); color: inherit; border: 1px solid var(--border, #2a2f3a);
+    border-radius: 6px; padding: 4px 8px; font-size: 12px;
+  }
+  .logs-toolbar input[type="search"] { min-width: 220px; }
+  .logs-toolbar .spacer { flex: 1; }
+  .logs-toolbar .logs-count { font-size: 12px; opacity: .6; }
+  .logs-toolbar button {
+    background: var(--bg, #0b0e14); color: inherit; border: 1px solid var(--border, #2a2f3a);
+    border-radius: 6px; padding: 4px 12px; font-size: 12px; cursor: pointer;
+  }
+  .logs-toolbar button.active { border-color: #6ea8fe; color: #6ea8fe; }
+  #log-output {
+    font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 12px; line-height: 1.55;
+    background: #0a0e13; border: 1px solid var(--border, #2a2f3a); border-radius: 10px;
+    padding: 12px 14px; height: calc(100vh - 240px); min-height: 320px; overflow: auto;
+    white-space: pre-wrap; word-break: break-word;
+  }
+  .log-line { display: block; }
+  .log-line .lt { color: #8b949e; }
+  .log-line .lc { color: #79c0ff; }
+  .log-line .lx { color: #8b949e; }
+  .log-line.warn .ll { color: #e3b341; font-weight: 600; }
+  .log-line.error .ll, .log-line.fatal .ll { color: #f85149; font-weight: 700; }
+  .log-line.error, .log-line.fatal { background: rgba(248, 81, 73, .07); border-radius: 4px; }
+  .log-line.warn { background: rgba(227, 179, 65, .06); border-radius: 4px; }
+  .log-line.info .ll { color: #3fb950; }
+  .log-line.debug .ll, .log-line.trace .ll { color: #8b949e; }
+</style>
+
+<div class="logs-page">
+  <div class="logs-toolbar">
+    <label>Level
+      <select id="log-level">
+        <option value="">All</option>
+        <option value="debug">Debug+</option>
+        <option value="info">Info+</option>
+        <option value="warn">Warn+</option>
+        <option value="error">Error+</option>
+      </select>
+    </label>
+    <label>Component
+      <select id="log-component"><option value="">All</option></select>
+    </label>
+    <input type="search" id="log-search" placeholder="Filter text…" />
+    <button id="log-pause" title="Pause live tail">Pause</button>
+    <button id="log-clear" title="Clear the view (server keeps its buffer)">Clear view</button>
+    <span class="spacer"></span>
+    <span class="logs-count" id="log-count">0 entries</span>
+  </div>
+  <div id="log-output" role="log" aria-live="polite" aria-label="Application logs"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  'use strict';
+  var POLL_MS = 2000;
+  var MAX_DOM_LINES = 3000;
+
+  var output = document.getElementById('log-output');
+  var levelSel = document.getElementById('log-level');
+  var compSel = document.getElementById('log-component');
+  var searchBox = document.getElementById('log-search');
+  var pauseBtn = document.getElementById('log-pause');
+  var clearBtn = document.getElementById('log-clear');
+  var countEl = document.getElementById('log-count');
+
+  var cursor = 0;          // last seq we've rendered
+  var paused = false;
+  var shown = 0;
+  var knownComponents = [];
+  var generation = 0;      // bumped on every filter reset — stale responses are dropped
+  var inFlight = false;    // one request at a time; the 2s tick skips while pending
+
+  function fmtTime(ms) {
+    var d = new Date(ms);
+    function p(n, w) { return String(n).padStart(w || 2, '0'); }
+    return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds()) + '.' + p(d.getMilliseconds(), 3);
+  }
+
+  function matchesSearch(e, needle) {
+    if (!needle) return true;
+    var hay = (e.msg + ' ' + (e.extra || '') + ' ' + e.component).toLowerCase();
+    return hay.indexOf(needle) >= 0;
+  }
+
+  function render(entries) {
+    var needle = searchBox.value.trim().toLowerCase();
+    var follow = output.scrollTop + output.clientHeight >= output.scrollHeight - 40;
+    var frag = document.createDocumentFragment();
+    entries.forEach(function (e) {
+      if (!matchesSearch(e, needle)) return;
+      var line = document.createElement('span');
+      line.className = 'log-line ' + e.level;
+      var t = document.createElement('span'); t.className = 'lt'; t.textContent = fmtTime(e.time) + ' ';
+      var l = document.createElement('span'); l.className = 'll'; l.textContent = e.level.toUpperCase().padEnd(5) + ' ';
+      var c = document.createElement('span'); c.className = 'lc'; c.textContent = '[' + e.component + '] ';
+      line.append(t, l, c, document.createTextNode(e.msg));
+      if (e.extra && e.extra !== '{}') {
+        var x = document.createElement('span'); x.className = 'lx'; x.textContent = '  ' + e.extra;
+        line.append(x);
+      }
+      line.append(document.createTextNode('\n'));
+      frag.append(line);
+      shown++;
+    });
+    output.append(frag);
+    while (output.childNodes.length > MAX_DOM_LINES) output.removeChild(output.firstChild);
+    countEl.textContent = shown + ' entries';
+    if (follow) output.scrollTop = output.scrollHeight;
+  }
+
+  function refreshComponents(components) {
+    if (JSON.stringify(components) === JSON.stringify(knownComponents)) return;
+    knownComponents = components;
+    var current = compSel.value;
+    while (compSel.options.length > 1) compSel.remove(1);
+    components.forEach(function (name) {
+      var opt = document.createElement('option');
+      opt.value = name; opt.textContent = name;
+      compSel.append(opt);
+    });
+    compSel.value = current; // keep selection if still present
+  }
+
+  function poll() {
+    if (paused || inFlight) return;
+    inFlight = true;
+    var gen = generation;
+    var params = new URLSearchParams({ since: String(cursor) });
+    if (levelSel.value) params.set('level', levelSel.value);
+    if (compSel.value) params.set('component', compSel.value);
+    fetch('/api/logs?' + params.toString())
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (gen !== generation) return; // response for old filters — drop it
+        refreshComponents(data.components || []);
+        if (typeof data.lastSeq === 'number' && data.lastSeq < cursor) {
+          // Sequence went backwards: the server restarted and its counter
+          // reset. Start over so the new process's logs appear.
+          output.textContent = '';
+          shown = 0;
+          cursor = 0;
+          countEl.textContent = '0 entries';
+          return;
+        }
+        if (data.entries && data.entries.length) {
+          cursor = data.entries[data.entries.length - 1].seq;
+          render(data.entries);
+        } else if (typeof data.lastSeq === 'number' && data.lastSeq > cursor) {
+          // Filtered out — still advance so we don't refetch the same window.
+          cursor = data.lastSeq;
+        }
+      })
+      .catch(function () { /* transient; next poll retries */ })
+      .finally(function () {
+        if (gen === generation) inFlight = false;
+      });
+  }
+
+  function resetAndReload() {
+    generation++;      // any in-flight response is now stale and gets dropped
+    inFlight = false;  // the stale request no longer owns the slot
+    output.textContent = '';
+    shown = 0;
+    cursor = 0;
+    poll();
+  }
+
+  var searchDebounce = null;
+  levelSel.addEventListener('change', resetAndReload);
+  compSel.addEventListener('change', resetAndReload);
+  searchBox.addEventListener('input', function () {
+    clearTimeout(searchDebounce);
+    searchDebounce = setTimeout(resetAndReload, 250);
+  });
+  pauseBtn.addEventListener('click', function () {
+    paused = !paused;
+    pauseBtn.textContent = paused ? 'Resume' : 'Pause';
+    pauseBtn.classList.toggle('active', paused);
+    if (!paused) poll();
+  });
+  clearBtn.addEventListener('click', function () {
+    output.textContent = '';
+    shown = 0;
+    countEl.textContent = '0 entries';
+  });
+
+  poll();
+  setInterval(poll, POLL_MS);
+})();
+</script>
+{% endblock %}

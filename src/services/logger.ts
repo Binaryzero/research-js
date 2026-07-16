@@ -1,4 +1,6 @@
-import { pino } from 'pino';
+import { pino, multistream } from 'pino';
+import pretty from 'pino-pretty';
+import { logBufferStream } from './log-buffer.js';
 
 const logLevel = process.env.LOG_LEVEL || 'info';
 const isDevelopment = process.env.NODE_ENV !== 'production';
@@ -12,7 +14,7 @@ const MAX_RESPONSE_BODY_CHARS = 800;
  * AI SDK errors (`AI_APICallError`) attach the ENTIRE request to the error object
  * via `requestBodyValues` — for our LLM calls that is the full prompt, often
  * several megabytes. pino's default error serializer copies every own-enumerable
- * property, so a single failed call dumps the whole prompt to the log (a 19-finding
+ * property, so a single failed call dumped the whole prompt to the log (a 19-finding
  * scan produced a 2.7 MB log line from one failed summary call). This keeps the
  * fields that matter for diagnosis — type, message, status, url, a capped response
  * body, and the stack — and drops the payload-bearing ones (`requestBodyValues`,
@@ -37,20 +39,29 @@ function compactErrSerializer(err: unknown): unknown {
   return out;
 }
 
-export const logger = pino({
-  level: logLevel,
-  serializers: { err: compactErrSerializer },
-  transport: isDevelopment
-    ? {
-        target: 'pino-pretty',
-        options: {
-          colorize: true,
-          translateTime: 'HH:MM:ss Z',
-          ignore: 'pid,hostname',
-        },
-      }
-    : undefined,
-});
+/**
+ * Two destinations, one logger:
+ *  - console: pino-pretty in development, raw NDJSON to stdout in production
+ *  - the in-memory log buffer that backs the /logs page (see log-buffer.ts)
+ *
+ * pino-pretty runs as an in-process stream (not a worker transport) because a
+ * transport cannot be combined with additional destination streams. Fastify is
+ * given this same logger instance, so HTTP-layer messages land in the buffer too.
+ */
+const consoleStream = isDevelopment
+  ? pretty({ colorize: true, translateTime: 'HH:MM:ss Z', ignore: 'pid,hostname' })
+  : process.stdout;
+
+export const logger = pino(
+  {
+    level: logLevel,
+    serializers: { err: compactErrSerializer },
+  },
+  multistream([
+    { level: logLevel, stream: consoleStream },
+    { level: logLevel, stream: logBufferStream },
+  ]),
+);
 
 /**
  * Creates a child logger for a specific component.

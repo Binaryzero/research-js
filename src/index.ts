@@ -38,6 +38,7 @@ import { loadHistory, updateHistory, saveHistory } from './history.js';
 import type { AnalysisResult, ScanTask } from './types/index.js';
 import type { PromptConfig } from './config.js';
 import { logger, getComponentLogger } from "./services/logger.js";
+import { getLogs, getLogComponents } from './services/log-buffer.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const TEMPLATES_DIR = join(__dirname, '..', 'assets', 'templates');
@@ -249,9 +250,11 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
   let prompts = getPrompts();
   
   const fastify = Fastify({
-    logger: process.env.NODE_ENV !== 'production'
-      ? { transport: { target: 'pino-pretty', options: { colorize: true } } }
-      : true,
+    // The app logger (pretty console + the in-memory buffer behind /logs) —
+    // one pipeline for everything, so HTTP-layer messages are visible in the
+    // UI log viewer alongside LLM/scan messages instead of a second,
+    // uncapturable pino instance.
+    loggerInstance: logger,
     // The task tray polls /api/jobs every 2s, so Fastify's default per-request
     // logging ("incoming request"/"request completed") floods the console with
     // noise that buries real messages. Real statuses live in the job store/UI,
@@ -378,10 +381,30 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
   fastify.get('/settings', async (request, reply) => {
     return reply.view('settings', { request });
   });
-  
+
+  fastify.get('/logs', async (request, reply) => {
+    return reply.view('logs', { request });
+  });
+
   fastify.get('/report/:name', async (request, reply) => {
     const params = request.params as { name: string };
     return reply.view('report', { request, report_name: params.name });
+  });
+
+  // ---------------------------------------------------------------
+  // API: Application logs (backs the /logs page)
+  // ---------------------------------------------------------------
+  fastify.get('/api/logs', async (request) => {
+    const q = request.query as { since?: string; level?: string; component?: string; limit?: string };
+    const since = q.since !== undefined ? parseInt(q.since, 10) : 0;
+    const limit = q.limit !== undefined ? parseInt(q.limit, 10) : undefined;
+    const { entries, lastSeq } = getLogs({
+      since: Number.isFinite(since) && since > 0 ? since : 0,
+      ...(q.level && { minLevel: q.level }),
+      ...(q.component && { component: q.component }),
+      ...(limit !== undefined && Number.isFinite(limit) && { limit }),
+    });
+    return { entries, lastSeq, components: getLogComponents() };
   });
   
   // ---------------------------------------------------------------
@@ -716,7 +739,53 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
       return reply.status(400).send({ error: 'Invalid report name' });
     }
 
-    const htmlPath = join(reportsDir, name.slice(0, -'.md'.length) + '.html');
+    const extensionId = name.slice(0, -'.md'.length);
+    const htmlPath = join(reportsDir, extensionId + '.html');
+
+    // Regenerate from the persisted result whenever it exists, so the download
+    // always reflects the current renderer and the operator's current limits —
+    // a stored .html generated under an older display cap would otherwise keep
+    // serving truncated evidence forever. The refreshed artifact is written
+    // back so the on-disk sibling stays current too. Any regeneration failure
+    // (e.g. an operator-broken patterns.yaml) falls through to the stored
+    // artifact rather than turning a previously-working download into a 500.
+    const persisted = loadPersistedResult(reportsDir, extensionId);
+    if (persisted) {
+      try {
+        let score: number | null = null;
+        try {
+          const scans = loadHistory(config.historyFile);
+          const entry = findScanByExtensionId(scans, persisted.extensionId || extensionId);
+          if (entry) {
+            const data = entry.data as Record<string, unknown>;
+            score = (data.llm_adjusted_score as number) ?? (data.suspicion_score as number) ?? null;
+          }
+        } catch (err) {
+          logger.warn({ err }, 'Failed to look up score from history');
+        }
+        const filterConfig = getEndpointFiltering(join(__dirname, '..', 'docs', 'patterns.yaml'));
+        const freshHtml = generateHtmlReport(toRenderModel(persisted, { score, filterConfig }));
+        try {
+          // Skip the write when nothing changed — repeated downloads (or a
+          // CSRF-style GET loop) shouldn't churn the disk.
+          const current = existsSync(htmlPath) ? readFileSync(htmlPath, 'utf-8') : null;
+          if (current !== freshHtml) writeFileSync(htmlPath, freshHtml);
+        } catch (err) {
+          logger.warn({ err, path: htmlPath }, 'Failed to refresh HTML report sibling');
+        }
+        const headerSafeName = basename(htmlPath).replace(/[^\x20-\x7e]|"/g, '_');
+        return reply
+          .header('Content-Type', 'text/html; charset=utf-8')
+          .header('X-Content-Type-Options', 'nosniff')
+          .header('Content-Disposition', `attachment; filename="${headerSafeName}"`)
+          .send(freshHtml);
+      } catch (err) {
+        logger.warn({ err, extensionId }, 'HTML regeneration failed; serving stored artifact');
+      }
+    }
+
+    // Legacy scans without persisted JSON (or a failed regeneration): serve
+    // the stored artifact if any.
     if (!existsSync(htmlPath)) {
       return reply.status(404).send({ error: 'No HTML report for this scan' });
     }

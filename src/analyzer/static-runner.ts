@@ -12,6 +12,7 @@ import { getAnalysisLimits } from './analysis-limits.js';
 import type { AnalysisResult } from '../types/index.js';
 import type { StaticWorkerInput, StaticWorkerMessage } from './static-worker.js';
 import { getComponentLogger } from '../services/logger.js';
+import { appendLogRecord } from '../services/log-buffer.js';
 
 export class ScanCancelledError extends Error {
   constructor() {
@@ -116,6 +117,10 @@ export function runStaticAnalysis(
     worker.on('message', (msg: StaticWorkerMessage) => {
       if (msg.type === 'progress') {
         options.onProgress?.(msg.fraction, msg.message);
+      } else if (msg.type === 'log') {
+        // Relayed from the worker's isolated logger — append to the main
+        // thread's buffer so scan-time logs are visible in /logs.
+        appendLogRecord(msg.record);
       } else if (msg.type === 'done') {
         settle(() => resolve(msg.result));
       } else if (msg.type === 'error') {
