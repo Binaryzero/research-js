@@ -287,6 +287,16 @@ export interface AnalysisLimits {
   zeroHitBytesBudget: number;     // byte budget for that zero-hit sampling (default 60000)
 }
 
+/** Automatic marketplace sweep + high-risk alerting. See AutoScanConfigSchema. */
+export interface AutoScanConfig {
+  enabled: boolean;
+  intervalMinutes: number;
+  count: number;
+  alertMinScore: number;
+  /** Only alert at/under this install count (malware is near-zero installs). */
+  alertMaxInstalls: number;
+}
+
 export interface AppConfig {
   version: string;
   main: ModelSlotConfig;
@@ -298,6 +308,7 @@ export interface AppConfig {
   llmTuning: LlmTuning;
   scoring: ScoringConfig;
   analysisLimits: AnalysisLimits;
+  autoScan: AutoScanConfig;
   defaultNoLlm: boolean;
   defaultFull: boolean;
 }

@@ -74,6 +74,7 @@
     panel.style.display = 'none';
     var header = el('div', 'task-tray-header');
     header.appendChild(el('span', null, 'Tasks'));
+    var alertsEl = el('div', 'task-tray-alerts');
     // Direct path from "what is running" to "what is it doing": the live log.
     var logsLink = el('a', 'task-tray-refresh-btn', 'Logs');
     logsLink.href = '/logs';
@@ -83,6 +84,7 @@
     refresh.addEventListener('click', this.poll.bind(this));
     header.appendChild(refresh);
     panel.appendChild(header);
+    panel.appendChild(alertsEl);
     var listEl = el('div', 'task-tray-list');
     panel.appendChild(listEl);
 
@@ -92,8 +94,11 @@
 
     this.badge = badge;
     this.panel = panel;
+    this.alertsEl = alertsEl;
     this.listEl = listEl;
     this.toggleBtn = btn;
+    this.alerts = [];
+    this.alertCount = 0;
   };
 
   TaskTray.prototype.toggle = function () {
@@ -103,20 +108,84 @@
     if (this.open) this.poll();
   };
 
+  TaskTray.prototype.renderAlerts = function () {
+    this.alertsEl.textContent = '';
+    if (!this.alerts.length) return;
+    var tray = this;
+
+    var head = el('div', 'task-tray-alerts-head');
+    head.appendChild(el('span', null, '⚠ High-risk detections'));
+    var dismissAll = el('button', 'task-tray-stop', 'Dismiss all');
+    dismissAll.type = 'button';
+    dismissAll.addEventListener('click', function () {
+      fetch('/api/alerts/ack-all', { method: 'POST' })
+        .catch(function () {})
+        .then(function () { tray.poll(); });
+    });
+    head.appendChild(dismissAll);
+    this.alertsEl.appendChild(head);
+
+    this.alerts.forEach(function (alert) {
+      var item = el('div', 'task-tray-alert-item');
+      var top = el('div', 'task-tray-item-top');
+      top.appendChild(el('span', 'task-tray-alert-score', String(alert.score)));
+      top.appendChild(el('span', 'task-tray-item-label', alert.extensionId));
+      item.appendChild(top);
+      var why = (alert.topFindings && alert.topFindings.length)
+        ? alert.riskLabel + ' — ' + alert.topFindings.join(', ')
+        : alert.riskLabel;
+      item.appendChild(el('div', 'task-tray-msg', why));
+
+      var actions = el('div', 'task-tray-alert-actions');
+      if (alert.reportName) {
+        var link = el('a', 'task-tray-open', 'Open report →');
+        link.href = '/report/' + encodeURIComponent(alert.reportName);
+        actions.appendChild(link);
+      }
+      var dismiss = el('button', 'task-tray-stop', 'Dismiss');
+      dismiss.type = 'button';
+      dismiss.addEventListener('click', function () {
+        dismiss.disabled = true;
+        fetch('/api/alerts/' + encodeURIComponent(alert.id) + '/ack', { method: 'POST' })
+          .catch(function () {})
+          .then(function () { tray.poll(); });
+      });
+      actions.appendChild(dismiss);
+      item.appendChild(actions);
+      tray.alertsEl.appendChild(item);
+    });
+  };
+
   TaskTray.prototype.poll = function () {
     fetch('/api/jobs')
       .then(function (r) { return r.ok ? r.json() : { jobs: [] }; })
       .then(function (data) {
         this.jobs = data.jobs || [];
-        this.render(data.activeCount || 0);
+        this.alertCount = data.alertCount || 0;
+        if (this.alertCount === 0) this.alerts = [];
+        // Alert details are only needed when the panel is showing them.
+        if (this.open && this.alertCount > 0) {
+          fetch('/api/alerts')
+            .then(function (r) { return r.ok ? r.json() : { alerts: [] }; })
+            .then(function (a) {
+              this.alerts = (a.alerts || []).filter(function (x) { return !x.acknowledged; });
+              this.render(data.activeCount || 0);
+            }.bind(this))
+            .catch(function () { this.render(data.activeCount || 0); }.bind(this));
+        } else {
+          this.render(data.activeCount || 0);
+        }
       }.bind(this))
       .catch(function () { /* server briefly unreachable; keep last state */ });
   };
 
   TaskTray.prototype.render = function (activeCount) {
-    // Badge shows the count of in-flight jobs and pulses while any is running.
-    if (activeCount > 0) {
-      this.badge.textContent = String(activeCount);
+    // Badge: unacknowledged high-risk alerts take priority (red) over the
+    // in-flight job count — a malware hit must not hide behind "2 running".
+    var badgeCount = this.alertCount > 0 ? this.alertCount : activeCount;
+    this.badge.classList.toggle('alert', this.alertCount > 0);
+    if (badgeCount > 0) {
+      this.badge.textContent = String(badgeCount);
       this.badge.style.display = '';
       this.toggleBtn.classList.add('active');
     } else {
@@ -125,6 +194,8 @@
     }
 
     if (!this.open) return;
+
+    this.renderAlerts();
 
     this.listEl.textContent = '';
     if (this.jobs.length === 0) {

@@ -39,6 +39,9 @@ import type { AnalysisResult, ScanTask } from './types/index.js';
 import type { PromptConfig } from './config.js';
 import { logger, getComponentLogger } from "./services/logger.js";
 import { getLogs, getLogComponents } from './services/log-buffer.js';
+import { AlertStore } from './services/alerts.js';
+import { AutoScanScheduler, type SweepCandidate } from './services/auto-scan.js';
+import { notifyDesktop } from './services/notify.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const TEMPLATES_DIR = join(__dirname, '..', 'assets', 'templates');
@@ -337,6 +340,81 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
     await jobStore?.flush();
     jobStore?.stop();
   });
+
+  // ---------------------------------------------------------------
+  // High-risk alerts + automatic marketplace sweeps
+  // ---------------------------------------------------------------
+  const alertStore = new AlertStore(join(reportsDir, 'alerts.json'));
+  alertStore.load();
+
+  /** Alert (tray + desktop) when a sweep result crosses the operator's bar. */
+  function maybeRaiseAlert(extensionId: string, outcome: ExtensionScanOutcome, installCount: number): void {
+    const { alertMinScore, alertMaxInstalls } = getAppConfig().autoScan;
+    if (outcome.score < alertMinScore) return;
+    // Static score is an unbounded sum, so huge legitimate extensions cross
+    // any threshold (ms-python: 1228). Real marketplace malware is near-zero
+    // installs — the install cap keeps alerts pointed at it.
+    if (installCount > alertMaxInstalls) {
+      getComponentLogger('Alerts').info(
+        `Skipping alert for ${extensionId} (score ${outcome.score}): ${installCount.toLocaleString()} installs exceeds the ${alertMaxInstalls.toLocaleString()} alert cap`,
+      );
+      return;
+    }
+    const topFindings = outcome.result.findings
+      .filter(f => !f.isFalsePositive && (f.riskLevel === 'critical' || f.riskLevel === 'high'))
+      .slice(0, 3)
+      .map(f => f.title);
+    const alert = alertStore.raise({
+      extensionId,
+      version: outcome.result.version || 'unknown',
+      score: outcome.score,
+      riskLabel: getRiskLabel(outcome.score),
+      reportName: outcome.reportName ?? null,
+      topFindings,
+    });
+    if (!alert) return; // this version already alerted
+    getComponentLogger('Alerts').warn(
+      `HIGH RISK: ${extensionId} scored ${outcome.score} (${alert.riskLabel}) — see /report/${alert.reportName ?? ''}`,
+    );
+    notifyDesktop(
+      'High-risk extension detected',
+      `${extensionId} scored ${outcome.score} (${alert.riskLabel}). Open the analyzer to review.`,
+    );
+  }
+
+  const autoScanScheduler = new AutoScanScheduler({
+    async findNewExtensions(count: number): Promise<SweepCandidate[]> {
+      const results = await searchExtensions({
+        searchText: '',
+        category: '',
+        sortBy: 'publishedDate',
+        page: 1,
+        pageSize: count,
+      });
+      const scanHistory = loadHistory(historyPath);
+      return results.filter(ext => !findScanByExtensionId(scanHistory, ext.extensionId));
+    },
+    async startSweep(extensions: SweepCandidate[]): Promise<void> {
+      const task = new ScanTaskEmitter({
+        kind: 'batch',
+        target: 'auto-sweep',
+        label: `Auto sweep (${extensions.length} new)`,
+      });
+      scans.set(task.id, task);
+      const installCounts = new Map(
+        extensions.map(e => [e.extensionId, e.statistics?.installCount ?? 0]),
+      );
+      await runBatchScan(task, extensions, {
+        reportsDir,
+        config,
+        prompts: getPrompts(),
+        onItemComplete: (extensionId, outcome) =>
+          maybeRaiseAlert(extensionId, outcome, installCounts.get(extensionId) ?? 0),
+      });
+    },
+  });
+  autoScanScheduler.configure(getAppConfig().autoScan);
+  fastify.addHook('onClose', async () => autoScanScheduler.stop());
   
   // ---------------------------------------------------------------
   // Page routes - render HTML templates with Nunjucks
@@ -582,7 +660,40 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
     const all = active === '1' || active === 'true'
       ? jobStore?.listActive() ?? []
       : jobStore?.list() ?? [];
-    return { jobs: all, activeCount: jobStore?.listActive().length ?? 0 };
+    return {
+      jobs: all,
+      activeCount: jobStore?.listActive().length ?? 0,
+      // Piggybacked so the task tray's existing 2s poll powers the alert
+      // badge without a second polling loop.
+      alertCount: alertStore.unacknowledgedCount(),
+    };
+  });
+
+  // ---------------------------------------------------------------
+  // API: High-risk alerts
+  // ---------------------------------------------------------------
+  fastify.get('/api/alerts', async () => {
+    return { alerts: alertStore.list(), unacknowledged: alertStore.unacknowledgedCount() };
+  });
+
+  fastify.post('/api/alerts/:id/ack', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    if (!alertStore.acknowledge(id)) {
+      return reply.status(404).send({ error: 'Alert not found' });
+    }
+    return { acknowledged: true };
+  });
+
+  fastify.post('/api/alerts/ack-all', async () => {
+    return { acknowledged: alertStore.acknowledgeAll() };
+  });
+
+  // ---------------------------------------------------------------
+  // API: Trigger an automatic sweep immediately ("Run sweep now")
+  // ---------------------------------------------------------------
+  fastify.post('/api/auto-scan/run', async () => {
+    const result = await autoScanScheduler.runSweep();
+    return result;
   });
 
   fastify.get('/api/jobs/:id', async (request, reply) => {
@@ -1194,11 +1305,15 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
         thresholds: { ...current.scoring.thresholds, ...(body.scoring?.thresholds ?? {}) },
       },
       analysisLimits: { ...current.analysisLimits, ...body.analysisLimits },
+      autoScan: { ...current.autoScan, ...body.autoScan },
       defaultNoLlm: body.defaultNoLlm ?? current.defaultNoLlm,
       defaultFull: body.defaultFull ?? current.defaultFull,
     };
 
     saveAppConfig(updated);
+
+    // Apply the (possibly changed) sweep schedule immediately.
+    autoScanScheduler.configure(updated.autoScan);
 
     // Sync main model back to legacy ServerConfig for backward compat
     config.llm = slotToLlmConfig(updated.main, updated);
@@ -2109,6 +2224,8 @@ async function runBatchScan(
     reportsDir: string;
     config: Awaited<ReturnType<typeof getConfig>>;
     prompts?: PromptConfig;
+    /** Called per successful item — automatic sweeps hook alerting here. */
+    onItemComplete?: (extensionId: string, outcome: ExtensionScanOutcome) => void;
   }
 ): Promise<void> {
   task.status = 'running';
@@ -2154,8 +2271,8 @@ async function runBatchScan(
         return;
       }
 
-
       scannedCount++;
+      options.onItemComplete?.(extensionId, outcome);
       task.emitProgress(i / total, `[${i + 1}/${total}] ${extensionId}: score ${outcome.score} (${getRiskLabel(outcome.score)})`);
     } catch (error) {
       getComponentLogger('Scan').warn({ err: error }, `Failed: ${extensionId}`);

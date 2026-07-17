@@ -185,6 +185,7 @@ function defaultAppConfig(): AppConfig {
     },
     scoring: DEFAULT_SCORING,
     analysisLimits: DEFAULT_ANALYSIS_LIMITS,
+    autoScan: { enabled: false, intervalMinutes: 60, count: 50, alertMinScore: 150, alertMaxInstalls: 10000 },
     defaultNoLlm: false,
     defaultFull: false,
   };

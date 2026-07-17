@@ -95,6 +95,26 @@ export const AnalysisLimitsSchema = z.object({
 });
 
 /**
+ * Automatic marketplace sweeps: every `intervalMinutes`, static-scan the
+ * newest `count` extensions that have never been scanned. Any result at or
+ * above `alertMinScore` raises a persistent high-risk alert (task tray +
+ * desktop notification). Off by default — the operator opts in via Settings.
+ */
+export const AutoScanConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  intervalMinutes: z.number().min(5).max(1440).default(60),
+  count: z.number().min(5).max(200).default(50),
+  alertMinScore: z.number().min(1).max(100000).default(150),
+  /**
+   * Only alert on extensions AT or UNDER this install count. Static score is
+   * an unbounded sum, so big legitimate extensions (ms-python scored 1228)
+   * cross any score threshold — but real marketplace malware is almost always
+   * near-zero installs. Raise this to widen the net.
+   */
+  alertMaxInstalls: z.number().min(0).max(1000000000).default(10000),
+});
+
+/**
  * Full application configuration schema
  */
 export const AppConfigSchema = z.object({
@@ -108,6 +128,7 @@ export const AppConfigSchema = z.object({
   llmTuning: LlmTuningSchema.default({}),
   scoring: ScoringConfigSchema.default({}),
   analysisLimits: AnalysisLimitsSchema.default({}),
+  autoScan: AutoScanConfigSchema.default({}),
   defaultNoLlm: z.boolean(),
   defaultFull: z.boolean(),
 });

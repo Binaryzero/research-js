@@ -209,6 +209,51 @@
                         </div>
                     </div>
                 </div>
+
+                <!-- Automatic Scanning -->
+                <div class="settings-card" id="card-autoscan">
+                    <div class="settings-card-header">
+                        <div class="judge-header-left">
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="auto-enabled">
+                                <span class="toggle-slider"></span>
+                            </label>
+                            <h3>Automatic Scanning</h3>
+                        </div>
+                        <button type="button" class="btn btn-outline btn-sm" onclick="runSweepNow(this)">Run sweep now</button>
+                    </div>
+                    <div class="settings-card-body">
+                        <p class="form-hint" style="margin-top:0">
+                            Periodically static-scans the newest marketplace extensions that have
+                            never been scanned. Anything scoring at or above the alert threshold
+                            raises a high-risk alert (task tray + desktop notification).
+                        </p>
+                        <div class="form-row form-row-3">
+                            <div class="form-group">
+                                <label for="auto-interval">Interval (minutes)</label>
+                                <input type="number" id="auto-interval" min="5" max="1440" step="5" value="60">
+                            </div>
+                            <div class="form-group">
+                                <label for="auto-count">Newest to check</label>
+                                <input type="number" id="auto-count" min="5" max="200" step="5" value="50">
+                            </div>
+                            <div class="form-group">
+                                <label for="auto-alert-score">Alert at score ≥</label>
+                                <input type="number" id="auto-alert-score" min="1" step="5" value="150">
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group form-group-grow">
+                                <label for="auto-alert-installs">Only alert at/under N installs</label>
+                                <input type="number" id="auto-alert-installs" min="0" step="1000" value="10000">
+                            </div>
+                        </div>
+                        <p class="form-hint">
+                            Big legitimate extensions accumulate huge static scores; real
+                            marketplace malware is almost always near-zero installs.
+                        </p>
+                    </div>
+                </div>
                 </div><!-- /.settings-col -->
 
                 <!-- Consensus Options -->
@@ -718,6 +763,12 @@ async function loadAppConfig() {
         document.getElementById('limit-summary-chunk').value = al.execSummaryChunkChars ?? 50000;
         document.getElementById('limit-zerohit-samples').value = al.zeroHitSampleLimit ?? 6;
         document.getElementById('limit-zerohit-bytes').value = al.zeroHitBytesBudget ?? 60000;
+        const auto = appConfig.autoScan || {};
+        document.getElementById('auto-enabled').checked = auto.enabled || false;
+        document.getElementById('auto-interval').value = auto.intervalMinutes ?? 60;
+        document.getElementById('auto-count').value = auto.count ?? 50;
+        document.getElementById('auto-alert-score').value = auto.alertMinScore ?? 150;
+        document.getElementById('auto-alert-installs').value = auto.alertMaxInstalls ?? 10000;
         document.getElementById('default-no-llm').checked = appConfig.defaultNoLlm || false;
         document.getElementById('default-full').checked = appConfig.defaultFull || false;
         document.getElementById('prompt-profile').value = appConfig.promptProfile || 'default';
@@ -942,6 +993,27 @@ function updateSlotStatus(slotId, status, message) {
 }
 
 // ── Save all settings to server ────────────────────────────────
+async function runSweepNow(btn) {
+    setButtonLoading(btn, true, 'Sweeping…');
+    try {
+        const resp = await fetch('/api/auto-scan/run', { method: 'POST' });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.error || 'Sweep failed');
+        if (!data.started) {
+            toastInfo('A sweep is already in progress');
+        } else if (data.newCount === 0) {
+            toastInfo('No new extensions since the last check');
+        } else {
+            toastSuccess(`Sweep started: static-scanning ${data.newCount} new extension(s) — watch the task tray`);
+            window.dispatchEvent(new Event('task-tray-refresh'));
+        }
+    } catch (err) {
+        toastError('Sweep error: ' + err.message);
+    } finally {
+        setButtonLoading(btn, false);
+    }
+}
+
 async function saveAllSettings(e) {
     e.preventDefault();
 
@@ -1036,6 +1108,13 @@ async function saveAllSettings(e) {
             execSummaryChunkChars: numVal('limit-summary-chunk', 50000),
             zeroHitSampleLimit: numVal('limit-zerohit-samples', 6),
             zeroHitBytesBudget: numVal('limit-zerohit-bytes', 60000),
+        },
+        autoScan: {
+            enabled: document.getElementById('auto-enabled').checked,
+            intervalMinutes: numVal('auto-interval', 60),
+            count: numVal('auto-count', 50),
+            alertMinScore: numVal('auto-alert-score', 150),
+            alertMaxInstalls: numVal('auto-alert-installs', 10000),
         },
         defaultNoLlm: document.getElementById('default-no-llm').checked,
         defaultFull: document.getElementById('default-full').checked,
