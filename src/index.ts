@@ -376,10 +376,17 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
     getComponentLogger('Alerts').warn(
       `HIGH RISK: ${extensionId} scored ${outcome.score} (${alert.riskLabel}) — see /report/${alert.reportName ?? ''}`,
     );
-    notifyDesktop(
-      'High-risk extension detected',
-      `${extensionId} scored ${outcome.score} (${alert.riskLabel}). Open the analyzer to review.`,
-    );
+    // Clicking the banner opens this report (when terminal-notifier is present).
+    // 0.0.0.0 binds all interfaces but isn't a routable click target — use loopback.
+    const linkHost = config.host === '0.0.0.0' ? '127.0.0.1' : config.host;
+    const reportUrl = alert.reportName
+      ? `http://${linkHost}:${config.port}/report/${encodeURIComponent(alert.reportName)}`
+      : undefined;
+    notifyDesktop({
+      title: 'High-risk extension detected',
+      message: `${extensionId} scored ${outcome.score} (${alert.riskLabel}).`,
+      openUrl: reportUrl,
+    });
   }
 
   const autoScanScheduler = new AutoScanScheduler({
