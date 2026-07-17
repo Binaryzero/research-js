@@ -118,7 +118,7 @@
     var dismissAll = el('button', 'task-tray-stop', 'Dismiss all');
     dismissAll.type = 'button';
     dismissAll.addEventListener('click', function () {
-      fetch('/api/alerts/ack-all', { method: 'POST' })
+      fetch('/api/alerts/ack-all', { method: 'POST', headers: { 'X-Analyzer-CSRF': '1' } })
         .catch(function () {})
         .then(function () { tray.poll(); });
     });
@@ -146,7 +146,7 @@
       dismiss.type = 'button';
       dismiss.addEventListener('click', function () {
         dismiss.disabled = true;
-        fetch('/api/alerts/' + encodeURIComponent(alert.id) + '/ack', { method: 'POST' })
+        fetch('/api/alerts/' + encodeURIComponent(alert.id) + '/ack', { method: 'POST', headers: { 'X-Analyzer-CSRF': '1' } })
           .catch(function () {})
           .then(function () { tray.poll(); });
       });
@@ -157,9 +157,14 @@
   };
 
   TaskTray.prototype.poll = function () {
+    // Generation token: a dismiss triggers an immediate re-poll, and a stale
+    // in-flight response (e.g. the pre-ack /api/alerts payload) must not
+    // overwrite the newer state and resurrect a dismissed alert.
+    var gen = (this._pollGen = (this._pollGen || 0) + 1);
     fetch('/api/jobs')
       .then(function (r) { return r.ok ? r.json() : { jobs: [] }; })
       .then(function (data) {
+        if (gen !== this._pollGen) return; // superseded by a newer poll
         this.jobs = data.jobs || [];
         this.alertCount = data.alertCount || 0;
         if (this.alertCount === 0) this.alerts = [];
@@ -168,6 +173,7 @@
           fetch('/api/alerts')
             .then(function (r) { return r.ok ? r.json() : { alerts: [] }; })
             .then(function (a) {
+              if (gen !== this._pollGen) return;
               this.alerts = (a.alerts || []).filter(function (x) { return !x.acknowledged; });
               this.render(data.activeCount || 0);
             }.bind(this))

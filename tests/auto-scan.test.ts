@@ -76,4 +76,20 @@ describe('AutoScanScheduler', () => {
     await vi.advanceTimersByTimeAsync(60 * 60_000);
     expect(sweeps).toBe(2); // no further runs
   });
+
+  it('re-applying the SAME config does not reset the interval countdown', async () => {
+    vi.useFakeTimers();
+    let sweeps = 0;
+    const scheduler = new AutoScanScheduler({
+      findNewExtensions: async () => { sweeps++; return []; },
+      startSweep: async () => {},
+    });
+
+    scheduler.configure(config({ intervalMinutes: 10 }));
+    await vi.advanceTimersByTimeAsync(9 * 60_000);
+    // A save of unrelated settings re-posts the identical autoScan config.
+    scheduler.configure(config({ intervalMinutes: 10 }));
+    await vi.advanceTimersByTimeAsync(1 * 60_000);
+    expect(sweeps).toBe(1); // countdown was NOT reset by the re-config
+  });
 });

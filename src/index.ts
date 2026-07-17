@@ -387,7 +387,10 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
       const results = await searchExtensions({
         searchText: '',
         category: '',
-        sortBy: 'publishedDate',
+        // Must be a SORT_CODES key ('publishedDate' silently fell back to
+        // sort-by-Installs — the sweep scanned the most-popular extensions
+        // instead of the newest, which is the whole point of the feature).
+        sortBy: 'PublishedDate',
         page: 1,
         pageSize: count,
       });
@@ -672,11 +675,31 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
   // ---------------------------------------------------------------
   // API: High-risk alerts
   // ---------------------------------------------------------------
+
+  /**
+   * CSRF guard for the alert/sweep mutations: requiring a custom header makes
+   * these POSTs non-"simple", so a cross-origin page triggers a CORS preflight
+   * the browser will not approve — a drive-by page must not be able to
+   * suppress the very alerts this feature exists to surface (or burn CPU
+   * forcing sweeps). Same-origin app JS just sets the header.
+   */
+  function requireCsrfHeader(
+    request: { headers: Record<string, unknown> },
+    reply: { status: (code: number) => { send: (body: unknown) => unknown } },
+    done: () => void,
+  ): void {
+    if (request.headers['x-analyzer-csrf'] !== '1') {
+      reply.status(403).send({ error: 'Missing X-Analyzer-CSRF header' });
+      return;
+    }
+    done();
+  }
+
   fastify.get('/api/alerts', async () => {
     return { alerts: alertStore.list(), unacknowledged: alertStore.unacknowledgedCount() };
   });
 
-  fastify.post('/api/alerts/:id/ack', async (request, reply) => {
+  fastify.post('/api/alerts/:id/ack', { preHandler: requireCsrfHeader }, async (request, reply) => {
     const { id } = request.params as { id: string };
     if (!alertStore.acknowledge(id)) {
       return reply.status(404).send({ error: 'Alert not found' });
@@ -684,14 +707,14 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
     return { acknowledged: true };
   });
 
-  fastify.post('/api/alerts/ack-all', async () => {
+  fastify.post('/api/alerts/ack-all', { preHandler: requireCsrfHeader }, async () => {
     return { acknowledged: alertStore.acknowledgeAll() };
   });
 
   // ---------------------------------------------------------------
   // API: Trigger an automatic sweep immediately ("Run sweep now")
   // ---------------------------------------------------------------
-  fastify.post('/api/auto-scan/run', async () => {
+  fastify.post('/api/auto-scan/run', { preHandler: requireCsrfHeader }, async () => {
     const result = await autoScanScheduler.runSweep();
     return result;
   });
@@ -2208,6 +2231,7 @@ async function runBatchLlmAnalysis(
     verdict: null,
     totalScanned: scannedCount
   });
+  cleanupOldScans(); // evict this batch emitter from the in-memory scans Map
 }
 
 /**
@@ -2317,6 +2341,7 @@ async function runBatchScan(
     verdict: null,
     totalScanned: scannedCount
   });
+  cleanupOldScans(); // evict this batch emitter from the in-memory scans Map
 }
 
 /**

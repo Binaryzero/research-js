@@ -44,6 +44,11 @@ export class AutoScanScheduler {
 
   /** Apply (or re-apply) config: restarts the timer, or stops when disabled. */
   configure(config: AutoScanConfig): void {
+    // Saving unrelated settings re-posts the whole config; recreating the
+    // timer would reset the countdown each time, so frequent saves could
+    // postpone the sweep indefinitely. Unchanged schedule = keep the phase.
+    const unchanged = this.config && JSON.stringify(this.config) === JSON.stringify(config);
+    if (unchanged && (this.timer !== null || !config.enabled)) return;
     this.stop();
     this.config = config;
     if (!config.enabled) return;
