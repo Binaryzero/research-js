@@ -38,6 +38,7 @@ describe('report data + html API', () => {
 
     // Legacy scan: markdown only, no structured JSON
     writeFileSync(join(reportsDir, 'legacy.oldscan.md'), '# legacy');
+    writeFileSync(join(reportsDir, 'xss.md'), '# XSS <img src=x onerror=alert(1)>\n\n<script>alert(2)</script>\n\n[bad](javascript:alert(3))');
 
     const created = await createServer({ reportsDir, historyFile });
     server = created.fastify;
@@ -46,6 +47,19 @@ describe('report data + html API', () => {
   afterAll(async () => {
     await server.close();
     rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it('GET /api/reports/:name escapes raw HTML when rendering markdown', async () => {
+    const response = await server.inject({ method: 'GET', url: '/api/reports/xss.md' });
+
+    expect(response.statusCode).toBe(200);
+    const payload = JSON.parse(response.body);
+    expect(payload.content).toContain('<img src=x onerror=alert(1)>');
+    expect(payload.html).not.toContain('<img src=x onerror');
+    expect(payload.html).not.toContain('<script>');
+    expect(payload.html).toContain('&lt;img src=x onerror=alert(1)&gt;');
+    expect(payload.html).toContain('&lt;script&gt;alert(2)&lt;/script&gt;');
+    expect(payload.html).not.toContain('href="javascript:');
   });
 
   it('GET /api/reports/:name/data returns the render model with history score', async () => {

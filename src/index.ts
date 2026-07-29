@@ -43,6 +43,48 @@ import { getLogs, getLogComponents } from './services/log-buffer.js';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const TEMPLATES_DIR = join(__dirname, '..', 'assets', 'templates');
 
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function isSafeMarkdownUrl(value: string | undefined): boolean {
+  if (!value) return true;
+  const trimmed = value.trim().replace(/[\u0000-\u001F\u007F\s]+/g, '');
+  if (/^(?:javascript|data|vbscript):/i.test(trimmed)) return false;
+  return true;
+}
+
+function escapeHtmlTokens(tokens: any[]): void {
+  for (const token of tokens) {
+    if (token.type === 'html') {
+      const escaped = escapeHtml(String(token.text ?? token.raw ?? ''));
+      token.raw = escaped;
+      token.text = escaped;
+      token.escaped = true;
+    }
+    if ((token.type === 'link' || token.type === 'image') && !isSafeMarkdownUrl(token.href)) {
+      token.href = '';
+    }
+    if (Array.isArray(token.tokens)) escapeHtmlTokens(token.tokens);
+    if (Array.isArray(token.items)) {
+      for (const item of token.items) {
+        if (Array.isArray(item.tokens)) escapeHtmlTokens(item.tokens);
+      }
+    }
+  }
+}
+
+async function renderSafeMarkdown(content: string): Promise<string> {
+  const tokens = marked.lexer(content, { gfm: true, breaks: false });
+  escapeHtmlTokens(tokens as any[]);
+  return marked.parser(tokens, { gfm: true, breaks: false });
+}
+
 // Nunjucks will be configured by @fastify/view
 // We just need to pass the nunjucks module itself
 
@@ -706,7 +748,7 @@ export async function createServer(configOverride?: Partial<Awaited<ReturnType<t
     }
     
     const content = readFileSync(reportPath, 'utf-8');
-    const html = await marked(content, { gfm: true, breaks: false });
+    const html = await renderSafeMarkdown(content);
     return { name, content, html };
   });
 
@@ -1945,7 +1987,7 @@ async function runScan(
 
     task.emitProgress(1, `Complete - score ${outcome.score} (${getRiskLabel(outcome.score)})`);
 
-    const html = marked(outcome.markdown) as string;
+    const html = await renderSafeMarkdown(outcome.markdown);
     const clientSummary = {
       extensionId: outcome.result.extensionId,
       extensionName: outcome.result.extensionName,
