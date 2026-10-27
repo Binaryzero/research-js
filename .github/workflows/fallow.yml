@@ -1,0 +1,28 @@
+name: "Fallow"
+
+# Changed-code quality gate. `fallow audit` defaults to --gate new-only, so only
+# findings a PR introduces fail the check; existing debt never blocks a merge.
+# The action installs the fallow version pinned in package.json devDependencies.
+# Config lives in .fallowrc.json.
+
+on:
+  pull_request:
+    branches: [master]
+
+jobs:
+  audit:
+    name: Audit changed code
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          # audit diffs against the base ref, so it needs full history.
+          fetch-depth: 0
+
+      - name: Fallow audit
+        uses: fallow-rs/fallow@v3
+        with:
+          command: audit

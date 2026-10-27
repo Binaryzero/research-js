@@ -23,6 +23,5 @@ export function createProvider(
   }
 }
 
-export { OllamaProvider, OpenAIProvider };
 export type { LlmProvider };
 export * from './types.js';

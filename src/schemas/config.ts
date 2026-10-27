@@ -48,7 +48,7 @@ export const EvidenceMaxCharsSchema = z.object({
 export const LlmTuningSchema = z.object({
   tierABatchSize: z.number().min(1).max(50).default(5),
   consensusVotes: z.number().min(1).max(9).default(3),
-  evidenceMaxChars: EvidenceMaxCharsSchema.default({}),
+  evidenceMaxChars: EvidenceMaxCharsSchema.prefault({}),
 });
 
 /**
@@ -61,19 +61,19 @@ export const ScoringConfigSchema = z.object({
     high: z.number().min(0).max(1000).default(5),
     medium: z.number().min(0).max(1000).default(2),
     low: z.number().min(0).max(1000).default(1),
-  }).default({}),
+  }).prefault({}),
   injectionBoost: z.number().min(0).max(1000).default(5),
   likelyBenignFactor: z.number().min(0).max(1).default(0.5),
   binaryBoost: z.number().min(0).max(1000).default(5),
   verdictBoost: z.object({
     malicious: z.number().min(0).max(1000).default(25),
     suspicious: z.number().min(0).max(1000).default(5),
-  }).default({}),
+  }).prefault({}),
   thresholds: z.object({
     verySuspicious: z.number().min(1).max(10000).default(50),
     suspicious: z.number().min(1).max(10000).default(30),
     moderate: z.number().min(1).max(10000).default(15),
-  }).default({})
+  }).prefault({})
     // Risk labeling (getRiskLabel/getRiskColor) walks thresholds high→low, so they
     // must be descending or a band becomes unreachable and labels come out wrong.
     .refine(
@@ -105,9 +105,9 @@ export const AppConfigSchema = z.object({
   assessmentMode: z.enum(['strategic', 'bulk']),
   promptProfile: z.string(),
   concurrency: z.number().min(1).max(50),
-  llmTuning: LlmTuningSchema.default({}),
-  scoring: ScoringConfigSchema.default({}),
-  analysisLimits: AnalysisLimitsSchema.default({}),
+  llmTuning: LlmTuningSchema.prefault({}),
+  scoring: ScoringConfigSchema.prefault({}),
+  analysisLimits: AnalysisLimitsSchema.prefault({}),
   defaultNoLlm: z.boolean(),
   defaultFull: z.boolean(),
 });

@@ -1,0 +1,22 @@
+{
+  "$schema": "https://raw.githubusercontent.com/fallow-rs/fallow/main/schema.json",
+  "entry": [
+    "src/cli.ts",
+    "reproducer/*.ts"
+  ],
+  "dynamicallyLoaded": [
+    "src/analyzer/static-worker.ts",
+    "assets/static/*.{js,css}"
+  ],
+  "ignoreUnresolvedImports": [
+    "/static/**"
+  ],
+  // pino-pretty stays a devDependency on purpose: src/services/logger.ts loads it
+  // with a guarded dynamic import and falls back to raw NDJSON when it is absent.
+  "ignoreDependencies": [
+    "pino-pretty"
+  ],
+  "ignorePatterns": [
+    "reproducer/malicious-extension/**"
+  ]
+}
