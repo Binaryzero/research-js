@@ -1,5 +1,4 @@
 import { pino, multistream } from 'pino';
-import pretty from 'pino-pretty';
 import { logBufferStream } from './log-buffer.js';
 
 const logLevel = process.env.LOG_LEVEL || 'info';
@@ -47,10 +46,22 @@ function compactErrSerializer(err: unknown): unknown {
  * pino-pretty runs as an in-process stream (not a worker transport) because a
  * transport cannot be combined with additional destination streams. Fastify is
  * given this same logger instance, so HTTP-layer messages land in the buffer too.
+ *
+ * pino-pretty is a devDependency, so it is loaded lazily and falls back to raw
+ * NDJSON when absent (e.g. `npm ci --omit=dev`). `npm start` does not set
+ * NODE_ENV, so a production install still takes the development branch.
  */
-const consoleStream = isDevelopment
-  ? pretty({ colorize: true, translateTime: 'HH:MM:ss Z', ignore: 'pid,hostname' })
-  : process.stdout;
+async function createConsoleStream(): Promise<NodeJS.WritableStream> {
+  if (!isDevelopment) return process.stdout;
+  try {
+    const { default: pretty } = await import('pino-pretty');
+    return pretty({ colorize: true, translateTime: 'HH:MM:ss Z', ignore: 'pid,hostname' });
+  } catch {
+    return process.stdout;
+  }
+}
+
+const consoleStream = await createConsoleStream();
 
 export const logger = pino(
   {
