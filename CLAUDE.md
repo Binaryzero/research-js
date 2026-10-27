@@ -87,3 +87,7 @@ Vitest configuration in `vitest.config.ts`. Tests use `fastify.inject()` for HTT
 - NodeNext module resolution
 - Strict TypeScript with unused variable/parameter checking enabled
 - Pattern matching uses pre-compiled regexes with category-based risk levels
+
+<!-- fallow:agent-install v1 claude-import:start -->
+@AGENTS.md
+<!-- fallow:agent-install v1 claude-import:end -->

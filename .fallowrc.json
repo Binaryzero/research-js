@@ -1,0 +1,17 @@
+{
+  "$schema": "https://raw.githubusercontent.com/fallow-rs/fallow/main/schema.json",
+  "entry": [
+    "src/cli.ts",
+    "reproducer/*.ts"
+  ],
+  "dynamicallyLoaded": [
+    "src/analyzer/static-worker.ts",
+    "assets/static/*.{js,css}"
+  ],
+  "ignoreUnresolvedImports": [
+    "/static/**"
+  ],
+  "ignorePatterns": [
+    "reproducer/malicious-extension/**"
+  ]
+}
