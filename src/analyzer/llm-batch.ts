@@ -281,6 +281,59 @@ Respond with a JSON array of exactly ${samples.length} assessments, one per find
   return { system, user };
 }
 
+/** JSON.parse, retrying once with trailing commas before `}`/`]` removed. Null if both fail. */
+function parseLenientJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    try {
+      return JSON.parse(text.replace(/,(\s*[}\]])/g, '$1'));
+    } catch {
+      return null;
+    }
+  }
+}
+
+/** The span from the first '[' to the last ']' (strips prose around the array). */
+function parseBracketedArray(response: string): unknown {
+  const first = response.indexOf('[');
+  const last = response.lastIndexOf(']');
+  return first !== -1 && last > first ? parseLenientJson(response.slice(first, last + 1)) : null;
+}
+
+/** Index just past the '}' that balances the '{' at `start`, or -1 if unbalanced. */
+function findObjectEnd(text: string, start: number): number {
+  let depth = 0;
+  for (let i = start; i < text.length; i++) {
+    if (text[i] === '{') depth++;
+    else if (text[i] === '}' && --depth === 0) return i + 1;
+  }
+  return -1;
+}
+
+/** Parse each top-level `{...}` on its own, skipping malformed ones. */
+function parseIndividualObjects(response: string): unknown[] {
+  const objects: unknown[] = [];
+  let start = response.indexOf('{');
+  while (start !== -1) {
+    const end = findObjectEnd(response, start);
+    if (end === -1) break;
+    try {
+      const obj: unknown = JSON.parse(response.slice(start, end));
+      if (obj && typeof obj === 'object') objects.push(obj);
+    } catch { /* skip malformed */ }
+    start = response.indexOf('{', end);
+  }
+  return objects;
+}
+
+/** Tried in order until one yields a non-empty array. */
+const STRATEGIC_PARSE_STRATEGIES: Array<{ label: string; parse: (response: string) => unknown }> = [
+  { label: 'Direct parse', parse: parseLenientJson },
+  { label: 'Bracket extraction', parse: parseBracketedArray },
+  { label: 'Individual object extraction', parse: parseIndividualObjects },
+];
+
 /**
  * Parse strategic assessments from LLM response
  */
@@ -289,104 +342,32 @@ export function parseStrategicAssessments(
   samples: SampledFinding[]
 ): Map<number, LlmAssessment> {
   const assessments = new Map<number, LlmAssessment>();
+  const log = getComponentLogger('LLM');
 
-  try {
-    // Try multiple approaches to extract JSON array from response
-    let parsed: unknown[] = [];
-    let jsonStr: string | null = null;
-
-    // Helper: try to fix common JSON issues and parse
-    const tryParse = (text: string): unknown[] | null => {
-      try {
-        return JSON.parse(text) as unknown[];
-      } catch {
-        // Try fixing trailing commas before closing brackets
-        const fixed = text.replace(/,(\s*[}\]])/g, '$1');
-        try {
-          return JSON.parse(fixed) as unknown[];
-        } catch {
-          return null;
-        }
-      }
-    };
-
-    // Approach 1: Try direct parse first
-    parsed = tryParse(response) || [];
-    if (parsed.length > 0 && Array.isArray(parsed)) {
-      getComponentLogger('LLM').info(`Strategic parse: Direct parse succeeded with ${parsed.length} items`);
+  let parsed: unknown[] | null = null;
+  for (const { label, parse } of STRATEGIC_PARSE_STRATEGIES) {
+    const candidate = parse(response);
+    if (Array.isArray(candidate) && candidate.length > 0) {
+      log.info(`Strategic parse: ${label} succeeded with ${candidate.length} items`);
+      parsed = candidate;
+      break;
     }
+  }
 
-    // Approach 2: Try regex extraction if direct parse failed
-    if (parsed.length === 0 || !Array.isArray(parsed)) {
-      const arrayMatch = response.match(/\[[\s\S]*\]/);
-      if (arrayMatch) {
-        jsonStr = arrayMatch[0];
-        parsed = tryParse(jsonStr) || [];
-        if (parsed.length > 0 && Array.isArray(parsed)) {
-          getComponentLogger('LLM').info(`Strategic parse: Regex extract succeeded with ${parsed.length} items`);
-        }
-      }
-    }
+  if (!parsed) {
+    log.warn(`Failed to parse JSON array from response (${response.length} chars)`);
+    return assessments;
+  }
 
-    // Approach 3: Try to find JSON array after first '[' and before last ']'
-    if (parsed.length === 0 || !Array.isArray(parsed)) {
-      const firstBracket = response.indexOf('[');
-      const lastBracket = response.lastIndexOf(']');
-      if (firstBracket !== -1 && lastBracket !== -1 && lastBracket > firstBracket) {
-        jsonStr = response.slice(firstBracket, lastBracket + 1);
-        parsed = tryParse(jsonStr) || [];
-        if (parsed.length > 0 && Array.isArray(parsed)) {
-          getComponentLogger('LLM').info(`Strategic parse: Bracket extraction succeeded with ${parsed.length} items`);
-        }
-      }
-    }
+  if (parsed.length < samples.length) {
+    log.warn(`Response contained ${parsed.length} assessments but expected ${samples.length}`);
+  }
 
-    // Approach 4: Extract individual JSON objects when array parsing fails
-    if (parsed.length === 0 || !Array.isArray(parsed)) {
-      const objects: unknown[] = [];
-      let searchFrom = 0;
-      while (searchFrom < response.length) {
-        const objStart = response.indexOf('{', searchFrom);
-        if (objStart === -1) break;
-        let depth = 0;
-        let objEnd = -1;
-        for (let ci = objStart; ci < response.length; ci++) {
-          if (response[ci] === '{') depth++;
-          else if (response[ci] === '}') {
-            depth--;
-            if (depth === 0) { objEnd = ci + 1; break; }
-          }
-        }
-        if (objEnd === -1) break;
-        try {
-          const obj = JSON.parse(response.slice(objStart, objEnd));
-          if (obj && typeof obj === 'object') objects.push(obj);
-        } catch { /* skip malformed */ }
-        searchFrom = objEnd;
-      }
-      if (objects.length > 0) {
-        parsed = objects;
-        getComponentLogger('LLM').info(`Strategic parse: Individual object extraction salvaged ${objects.length} items`);
-      }
+  for (let i = 0; i < parsed.length && i < samples.length; i++) {
+    const result = LlmAssessmentSchema.safeParse(parsed[i]);
+    if (result.success) {
+      assessments.set(samples[i].originalIndex, result.data);
     }
-
-    if (!Array.isArray(parsed) || parsed.length === 0) {
-      getComponentLogger('LLM').warn(`Failed to parse JSON array from response (${response.length} chars)`);
-      return assessments;
-    }
-
-    if (parsed.length < samples.length) {
-      getComponentLogger('LLM').warn(`Response contained ${parsed.length} assessments but expected ${samples.length}`);
-    }
-
-    for (let i = 0; i < parsed.length && i < samples.length; i++) {
-      const result = LlmAssessmentSchema.safeParse(parsed[i]);
-      if (result.success) {
-        assessments.set(samples[i].originalIndex, result.data);
-      }
-    }
-  } catch (error) {
-    getComponentLogger('LLM').warn(`Error parsing strategic assessments: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 
   return assessments;
@@ -409,27 +390,4 @@ export function estimateStrategicLlmCalls(findings: Finding[]): { calls: number;
   }
 
   return { calls, sampled, total: findings.length };
-}
-
-/**
- * Get summary of sampling strategy for a pattern group
- */
-export function getSamplingSummary(patternGroup: PatternGroup): string {
-  const { totalCount, fileGroups } = patternGroup;
-  let totalSampled = 0;
-  let fullAssessmentFiles = 0;
-
-  for (const fg of fileGroups) {
-    const sampleSize = calculateSecuritySampleSize(patternGroup, fg);
-    totalSampled += sampleSize;
-    if (sampleSize === fg.findings.length) {
-      fullAssessmentFiles++;
-    }
-  }
-
-  if (totalSampled === totalCount) {
-    return `Full assessment (${totalCount} findings in ${fileGroups.length} files)`;
-  }
-
-  return `${totalSampled}/${totalCount} sampled across ${fileGroups.length} files (${fullAssessmentFiles} files fully assessed)`;
 }

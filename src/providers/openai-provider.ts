@@ -94,4 +94,3 @@ export class OpenAIProvider implements LlmProvider {
   }
 }
 
-export default OpenAIProvider;

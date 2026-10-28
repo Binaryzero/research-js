@@ -64,7 +64,7 @@ export function isDirectVsixUrl(url: string): boolean {
 /**
  * Get marketplace download URL for an extension
  */
-export async function getMarketplaceDownloadUrl(publisher: string, extension: string): Promise<string> {
+async function getMarketplaceDownloadUrl(publisher: string, extension: string): Promise<string> {
   // VS Code Marketplace uses a specific API endpoint for downloads
   // The URL format is: https://{publisher}.gallery.vsassets.io/_apis/public/gallery/publisher/{publisher}/extension/{extension}/latest/assetbyname/Microsoft.VisualStudio.Services.VSIXPackage
   
@@ -201,30 +201,4 @@ export async function downloadExtension(
   } catch (error) {
     throw new Error(`Download failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
-}
-
-/**
- * Resolve input source to a local path
- * Handles URLs, VSIX files, and directories
- */
-export async function resolveInputSource(
-  input: string,
-  tempDir: string
-): Promise<{ path: string; cleanup: () => void }> {
-  // Check if it's a URL
-  if (input.startsWith('http://') || input.startsWith('https://')) {
-    const result = await downloadExtension(input, tempDir);
-    return {
-      path: result.path,
-      cleanup: () => {
-        // Cleanup will be handled by caller
-      },
-    };
-  }
-  
-  // It's a local path
-  return {
-    path: input,
-    cleanup: () => {},
-  };
 }

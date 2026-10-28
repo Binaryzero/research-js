@@ -422,7 +422,7 @@ export function buildSourceFiles(findings: Finding[], extensionPath: string): st
  * 500 K chars ≈ a ~0.5 MB request body, comfortably under the observed limit
  * with headroom for the system prompt, JSON overhead, and lower-limit models.
  */
-export const SAFE_LLM_REQUEST_CHARS = 500_000;
+const SAFE_LLM_REQUEST_CHARS = 500_000;
 
 /**
  * Split a source section larger than `maxChars` into sub-chunks no larger than
@@ -463,7 +463,7 @@ export function splitOversizedSection(section: string, maxChars: number): string
  * kept together when they fit; a file larger than the chunk budget is split
  * internally (see splitOversizedSection) rather than sent whole.
  */
-export function chunkSourceFiles(findings: Finding[], extensionPath: string): string[] {
+function chunkSourceFiles(findings: Finding[], extensionPath: string): string[] {
   if (findings.length === 0) return [''];
 
   const files = readFindingSourceFiles(findings, extensionPath);

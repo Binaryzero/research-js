@@ -72,7 +72,7 @@ export function loadPrompts(promptsFile: string): PromptConfig {
 /**
  * Load configuration from environment and defaults
  */
-export async function loadConfig(): Promise<ServerConfig> {
+async function loadConfig(): Promise<ServerConfig> {
   const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 8001;
   
   const llmConfig: LlmConfig = {
@@ -215,7 +215,7 @@ let _appConfig: AppConfig | null = null;
  * Load AppConfig from config.json, with env var overrides for main model.
  * If config.json doesn't exist, builds from env vars (zero judges = single-model).
  */
-export function loadAppConfig(): AppConfig {
+function loadAppConfig(): AppConfig {
   if (_appConfig) return _appConfig;
 
   let appConfig = defaultAppConfig();
