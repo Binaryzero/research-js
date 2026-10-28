@@ -83,4 +83,3 @@ export function getComponentLogger(component: string) {
 }
 
 export { compactErrSerializer };
-export default logger;

@@ -410,26 +410,3 @@ export function estimateStrategicLlmCalls(findings: Finding[]): { calls: number;
 
   return { calls, sampled, total: findings.length };
 }
-
-/**
- * Get summary of sampling strategy for a pattern group
- */
-export function getSamplingSummary(patternGroup: PatternGroup): string {
-  const { totalCount, fileGroups } = patternGroup;
-  let totalSampled = 0;
-  let fullAssessmentFiles = 0;
-
-  for (const fg of fileGroups) {
-    const sampleSize = calculateSecuritySampleSize(patternGroup, fg);
-    totalSampled += sampleSize;
-    if (sampleSize === fg.findings.length) {
-      fullAssessmentFiles++;
-    }
-  }
-
-  if (totalSampled === totalCount) {
-    return `Full assessment (${totalCount} findings in ${fileGroups.length} files)`;
-  }
-
-  return `${totalSampled}/${totalCount} sampled across ${fileGroups.length} files (${fullAssessmentFiles} files fully assessed)`;
-}
