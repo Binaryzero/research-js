@@ -1678,25 +1678,16 @@ function scanSubject(
   return basename(inputSource);
 }
 
-async function runExtensionScan(
-  inputSource: string,
-  options: ExtensionScanOptions
-): Promise<ExtensionScanOutcome | null> {
-  const subject = scanSubject(inputSource, options);
-  getComponentLogger('Scan').info(`Started: ${subject}`);
-  let result: AnalysisResult;
-  // Empty when reusing stored findings — the exec-summary source reader tolerates
-  // a missing path (walkExtensionFiles swallows it) and builds from findings alone.
-  let extensionPath = '';
+/** Characters that are unsafe in report file names. */
+function safeReportName(extensionId: string): string {
+  return extensionId.replace(/[\x00-\x1f\x7f<>:"/\\|?*]/g, '_');
+}
 
-  if (options.precomputedResult) {
-    // LLM re-analysis: reuse the stored findings and skip download, extraction,
-    // and static analysis entirely (also avoids marketplace version drift).
-    result = options.precomputedResult;
-    options.onProgress(0.4, `Reusing ${result.findings.length} stored findings (skipped re-scan)`);
-  } else {
-  extensionPath = inputSource;
-
+/**
+ * Turn the input source into a local directory to analyze: download and/or
+ * extract VSIX inputs (registering temp dirs), or validate an existing path.
+ */
+async function resolveExtensionPath(inputSource: string, options: ExtensionScanOptions): Promise<string> {
   if (inputSource.startsWith('http://') || inputSource.startsWith('https://')) {
     options.onProgress(0.02, 'Downloading extension...');
     const tempDir = join(tmpdir(), `vsix_download_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`);
@@ -1707,33 +1698,61 @@ async function runExtensionScan(
       const dl = await downloadExtension(inputSource, tempDir);
       options.onProgress(0.08, `Downloaded: ${dl.filename}`);
       options.onProgress(0.1, 'Extracting VSIX...');
-      extensionPath = extractVsix(dl.path);
+      const extensionPath = extractVsix(dl.path);
       options.tempDirs.push(extensionPath);
+      return extensionPath;
     } catch (err) {
       throw new Error(`Failed to download extension: ${err instanceof Error ? err.message : err}`);
     }
-  } else if (inputSource.endsWith('.vsix')) {
+  }
+
+  if (inputSource.endsWith('.vsix')) {
     if (!inputSource.startsWith('/tmp/vsix_upload_') && !inputSource.startsWith('/tmp/vsix_download_')) {
       throw new Error('Only marketplace URLs, direct VSIX URLs, or uploaded files are supported');
     }
     options.onProgress(0.05, 'Extracting VSIX...');
-    extensionPath = extractVsix(inputSource);
+    const extensionPath = extractVsix(inputSource);
     options.tempDirs.push(extensionPath);
-  } else if (!existsSync(inputSource)) {
+    return extensionPath;
+  }
+
+  if (!existsSync(inputSource)) {
     // Fail loudly: analyzing a nonexistent path would produce an empty result
     // that looks like a clean scan and silently overwrites prior artifacts.
     throw new Error(
       `Input not found: "${inputSource}" is not a marketplace/VSIX URL, an uploaded .vsix, or an existing directory`,
     );
   }
+  return inputSource;
+}
 
+/**
+ * Produce the static-analysis result, either by reusing stored findings or by
+ * resolving the input and running the analyzer. Returns null if cancelled.
+ */
+async function acquireStaticResult(
+  inputSource: string,
+  options: ExtensionScanOptions,
+  subject: string
+): Promise<{ result: AnalysisResult; extensionPath: string } | null> {
+  if (options.precomputedResult) {
+    // LLM re-analysis: reuse the stored findings and skip download, extraction,
+    // and static analysis entirely (also avoids marketplace version drift).
+    // extensionPath stays empty — the exec-summary source reader tolerates a
+    // missing path (walkExtensionFiles swallows it) and builds from findings alone.
+    const result = options.precomputedResult;
+    options.onProgress(0.4, `Reusing ${result.findings.length} stored findings (skipped re-scan)`);
+    return { result, extensionPath: '' };
+  }
+
+  const extensionPath = await resolveExtensionPath(inputSource, options);
   if (options.isCancelled()) return null;
 
   options.onProgress(0.15, 'Running static analysis...');
   // Off the main thread: static analysis is synchronous and CPU-bound, so
   // running it inline froze the event loop for the whole scan (stalling SSE and
   // every other request). The worker also makes the work cancellable.
-  result = await runStaticAnalysis(extensionPath, {
+  const result = await runStaticAnalysis(extensionPath, {
     verbose: options.staticVerbose ?? true,
     patternsFile: options.config.patternsFile,
     signal: options.signal,
@@ -1751,99 +1770,146 @@ async function runExtensionScan(
   }
 
   options.onProgress(0.4, `Static analysis complete: ${result.findings.length} findings`);
+  return { result, extensionPath };
+}
+
+/** Build the main + judge clients and the consensus orchestrator from app config. */
+function buildOrchestrator(
+  options: ExtensionScanOptions,
+  modelName: string
+): { orchestrator: ConsensusOrchestrator; judgeCount: number } {
+  const appConfig = getAppConfig();
+  const profiledPrompts = getPromptsForProfile(appConfig.promptProfile, options.prompts || getPrompts());
+
+  const mainClient = new LlmClient({
+    ...options.config.llm,
+    provider: appConfig.main.provider,
+    model: modelName,
+    baseUrl: options.ollamaUrl ?? options.config.llm.baseUrl,
+  }, profiledPrompts);
+
+  const judgeClients = appConfig.judges
+    .filter(j => j.enabled)
+    .map(j => {
+      const provider = createProvider(
+        j.provider,
+        { id: j.id, model: j.model },
+        { baseUrl: j.baseUrl.replace(/\/$/, ''), timeout: j.timeout, apiKey: j.apiKey },
+        { maxTokens: j.maxTokens, temperature: j.temperature }
+      );
+      return new LlmClient(slotToLlmConfig(j, appConfig), profiledPrompts, provider);
+    });
+
+  return {
+    orchestrator: new ConsensusOrchestrator(mainClient, judgeClients, appConfig.consensus),
+    judgeCount: judgeClients.length,
+  };
+}
+
+/**
+ * Merge LLM assessments back onto the findings they were produced for
+ * (assessments[i] belongs to findings[i]; a missing entry leaves it untouched).
+ */
+function applyAssessments(
+  findings: AnalysisResult['findings'],
+  assessments: Awaited<ReturnType<ConsensusOrchestrator['batchAssessFindings']>>
+): void {
+  for (let i = 0; i < assessments.length; i++) {
+    const a = assessments[i];
+    if (!a) continue;
+    const f = findings[i];
+    f.riskLevel = a.riskLevel;
+    f.isFalsePositive = a.isFalsePositive;
+    f.falsePositiveReason = a.falsePositiveReason;
+    if (a.recommendation) f.recommendation = a.recommendation;
+    if (a.injectionDetected) f.injectionDetected = a.injectionDetected;
+    if (a.consensus) f.consensus = a.consensus;
+  }
+}
+
+/** Verify every judge is reachable, reporting the outcome as progress; rethrows on failure. */
+async function verifyJudgesWithProgress(
+  orchestrator: ConsensusOrchestrator,
+  judgeCount: number,
+  options: ExtensionScanOptions
+): Promise<void> {
+  try {
+    await orchestrator.verifyJudges();
+    options.onProgress(0.43, `${judgeCount} judge(s) verified`);
+  } catch (err) {
+    options.onProgress(0.43, `Judge verification failed: ${err instanceof Error ? err.message : err}`);
+    throw err;
+  }
+}
+
+/** Generate the executive summary and split its verdict line onto `result`. */
+async function attachExecutiveSummary(
+  orchestrator: ConsensusOrchestrator,
+  result: AnalysisResult,
+  extensionPath: string
+): Promise<void> {
+  const summary = await orchestrator.generateExecutiveSummary(result, extensionPath);
+  if (summary) {
+    const { verdict, prose } = parseVerdictFromSummary(summary);
+    result.verdict = verdict;
+    result.executiveSummary = prose;
+  } else {
+    result.executiveSummary = null;
+  }
+}
+
+type LlmPhaseOutcome = 'analyzed' | 'skipped' | 'cancelled';
+
+/**
+ * Optional LLM enhancement: verify judges, assess findings, and write the
+ * executive summary onto `result` in place.
+ */
+async function runLlmPhase(
+  result: AnalysisResult,
+  extensionPath: string,
+  options: ExtensionScanOptions
+): Promise<LlmPhaseOutcome> {
+  if (options.noLlm || !options.modelName) return 'skipped';
+
+  options.onProgress(0.42, `Connecting to LLM (${options.modelName})...`);
+  const built = buildOrchestrator(options, options.modelName);
+  // Explicit annotation lets fallow resolve the orchestrator's method calls
+  // below; through a destructured return it reports them as unused members.
+  const orchestrator: ConsensusOrchestrator = built.orchestrator;
+  const judgeCount = built.judgeCount;
+
+  if (!(await orchestrator.isAvailable())) {
+    options.onProgress(0.45, 'LLM not available');
+    return 'skipped';
   }
 
-  LlmClient.clearFastAssessmentCache();
+  if (judgeCount > 0) await verifyJudgesWithProgress(orchestrator, judgeCount, options);
 
-  if (options.isCancelled()) return null;
-
-  let orchestrator: ConsensusOrchestrator | null = null;
-  const basePrompts = options.prompts || getPrompts();
-
-  if (!options.noLlm && options.modelName) {
-    options.onProgress(0.42, `Connecting to LLM (${options.modelName})...`);
-
-    const appConfig = getAppConfig();
-    const profiledPrompts = getPromptsForProfile(appConfig.promptProfile, basePrompts);
-
-    const mainClient = new LlmClient({
-      ...options.config.llm,
-      provider: appConfig.main.provider,
-      model: options.modelName,
-      baseUrl: options.ollamaUrl ?? options.config.llm.baseUrl,
-    }, profiledPrompts);
-
-    const judgeClients = appConfig.judges
-      .filter(j => j.enabled)
-      .map(j => {
-        const provider = createProvider(
-          j.provider,
-          { id: j.id, model: j.model },
-          { baseUrl: j.baseUrl.replace(/\/$/, ''), timeout: j.timeout, apiKey: j.apiKey },
-          { maxTokens: j.maxTokens, temperature: j.temperature }
-        );
-        return new LlmClient(slotToLlmConfig(j, appConfig), profiledPrompts, provider);
-      });
-
-    orchestrator = new ConsensusOrchestrator(mainClient, judgeClients, appConfig.consensus);
-
-    const available = await orchestrator.isAvailable();
-
-    if (available) {
-      if (judgeClients.length > 0) {
-        try {
-          await orchestrator.verifyJudges();
-          options.onProgress(0.43, `${judgeClients.length} judge(s) verified`);
-        } catch (err) {
-          options.onProgress(0.43, `Judge verification failed: ${err instanceof Error ? err.message : err}`);
-          throw err;
-        }
-      }
-
-      if (result.findings.length > 0) {
-        options.onProgress(0.45, `LLM analyzing ${result.findings.length} findings...`);
-
-        const assessments = await orchestrator.batchAssessFindings(result.findings, {
-          onProgress: (p, m) => options.onProgress(0.45 + p * 0.4, m),
-          extensionName: result.extensionName,
-          extensionDescription: result.description,
-          extensionCategories: result.categories,
-        });
-
-        for (let i = 0; i < assessments.length; i++) {
-          const a = assessments[i];
-          if (a) {
-            result.findings[i].riskLevel = a.riskLevel;
-            result.findings[i].isFalsePositive = a.isFalsePositive;
-            result.findings[i].falsePositiveReason = a.falsePositiveReason;
-            if (a.recommendation) result.findings[i].recommendation = a.recommendation;
-            if (a.injectionDetected) result.findings[i].injectionDetected = a.injectionDetected;
-            if (a.consensus) result.findings[i].consensus = a.consensus;
-          }
-        }
-      }
-
-      // A cancel during the (long) batch assessment should skip the equally
-      // expensive executive-summary step rather than run it anyway.
-      if (options.isCancelled()) return null;
-
-      options.onProgress(0.88, 'Generating executive summary...');
-      const summary = await orchestrator.generateExecutiveSummary(result, extensionPath);
-      if (summary) {
-        const { verdict, prose } = parseVerdictFromSummary(summary);
-        result.verdict = verdict;
-        result.executiveSummary = prose;
-      } else {
-        result.executiveSummary = null;
-      }
-    } else {
-      options.onProgress(0.45, 'LLM not available');
-      orchestrator = null;
-    }
+  if (result.findings.length > 0) {
+    options.onProgress(0.45, `LLM analyzing ${result.findings.length} findings...`);
+    const assessments = await orchestrator.batchAssessFindings(result.findings, {
+      onProgress: (p, m) => options.onProgress(0.45 + p * 0.4, m),
+      extensionName: result.extensionName,
+      extensionDescription: result.description,
+      extensionCategories: result.categories,
+    });
+    applyAssessments(result.findings, assessments);
   }
 
-  // The analyzer can detect a wrong ID from package.json (esp. non-English
-  // extensions); the marketplace ID we already have is authoritative.
+  // A cancel during the (long) batch assessment should skip the equally
+  // expensive executive-summary step rather than run it anyway.
+  if (options.isCancelled()) return 'cancelled';
+
+  options.onProgress(0.88, 'Generating executive summary...');
+  await attachExecutiveSummary(orchestrator, result, extensionPath);
+  return 'analyzed';
+}
+
+/**
+ * The analyzer can detect a wrong ID from package.json (esp. non-English
+ * extensions); the marketplace ID we already have is authoritative.
+ */
+function applyKnownIdentity(result: AnalysisResult, options: ExtensionScanOptions): void {
   if (options.forceExtensionId) {
     result.extensionId = options.forceExtensionId;
   } else if (options.extensionInfo) {
@@ -1852,36 +1918,64 @@ async function runExtensionScan(
       result.extensionName = options.extensionInfo.extension;
     }
   }
+}
 
-  const llmAnalyzed = !!orchestrator;
-  const [score, breakdown] = calculateSuspicionScore(result, { adjustForLlm: llmAnalyzed });
-
-  options.onProgress(0.9, 'Generating report...');
-  const generator = new ReportGenerator(result, { fullOutput: true });
-  const markdown = generator.generate();
-
-  const safeName = result.extensionId.replace(/[\x00-\x1f\x7f<>:"/\\|?*]/g, '_');
-  const reportName = `${safeName}.md`;
-  const reportPath = join(options.reportsDir, reportName);
-  await writeFile(reportPath, markdown);
-
+/**
+ * Write the secondary artifacts next to the markdown report. Both are
+ * non-fatal: the .md remains the durable output.
+ */
+async function writeAuxiliaryArtifacts(
+  result: AnalysisResult,
+  score: number,
+  reportsDir: string,
+  safeName: string
+): Promise<void> {
   // Persist the structured result so LLM re-analysis can reuse the findings
   // instead of re-downloading and re-running static analysis.
   try {
-    await writeFile(join(options.reportsDir, `${safeName}.json`), JSON.stringify(result, null, 2));
+    await writeFile(join(reportsDir, `${safeName}.json`), JSON.stringify(result, null, 2));
   } catch (err) {
     logger.warn({ err }, 'Failed to persist findings JSON');
   }
 
-  // Standalone interactive HTML report next to the markdown one. Failure is
-  // non-fatal: the .md and .json remain the durable outputs.
+  // Standalone interactive HTML report.
   try {
     const filterConfig = getEndpointFiltering(join(__dirname, '..', 'docs', 'patterns.yaml'));
     const payload = toRenderModel(result, { score, filterConfig });
-    await writeFile(join(options.reportsDir, `${safeName}.html`), generateHtmlReport(payload));
+    await writeFile(join(reportsDir, `${safeName}.html`), generateHtmlReport(payload));
   } catch (err) {
     logger.warn({ err }, 'Failed to write HTML report');
   }
+}
+
+async function runExtensionScan(
+  inputSource: string,
+  options: ExtensionScanOptions
+): Promise<ExtensionScanOutcome | null> {
+  const subject = scanSubject(inputSource, options);
+  getComponentLogger('Scan').info(`Started: ${subject}`);
+
+  const acquired = await acquireStaticResult(inputSource, options, subject);
+  if (!acquired) return null;
+  const { result, extensionPath } = acquired;
+
+  LlmClient.clearFastAssessmentCache();
+  if (options.isCancelled()) return null;
+
+  const llmOutcome = await runLlmPhase(result, extensionPath, options);
+  if (llmOutcome === 'cancelled') return null;
+  const llmAnalyzed = llmOutcome === 'analyzed';
+
+  applyKnownIdentity(result, options);
+  const [score, breakdown] = calculateSuspicionScore(result, { adjustForLlm: llmAnalyzed });
+
+  options.onProgress(0.9, 'Generating report...');
+  const markdown = new ReportGenerator(result, { fullOutput: true }).generate();
+  const safeName = safeReportName(result.extensionId);
+  const reportName = `${safeName}.md`;
+  const reportPath = join(options.reportsDir, reportName);
+  await writeFile(reportPath, markdown);
+  await writeAuxiliaryArtifacts(result, score, options.reportsDir, safeName);
 
   await saveScanToHistory(options.historyPath, result.extensionId, {
     extension_name: result.extensionName,
@@ -1908,7 +2002,7 @@ async function runExtensionScan(
  * prior scan saved one. Lets LLM re-analysis reuse findings instead of re-scanning.
  */
 export function loadPersistedResult(reportsDir: string, extensionId: string): AnalysisResult | null {
-  const safeName = extensionId.replace(/[\x00-\x1f\x7f<>:"/\\|?*]/g, '_');
+  const safeName = safeReportName(extensionId);
   const dataPath = join(reportsDir, `${safeName}.json`);
   if (!existsSync(dataPath)) return null;
   try {
