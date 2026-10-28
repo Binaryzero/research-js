@@ -10,7 +10,9 @@ import { calculateSuspicionScore } from '../src/analyzer/scoring.js';
 const fs = { readdirSync };
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const TEMP_DIR = join(__dirname, '..', '.temp-test');
+// Own subdirectory: the afterEach hooks rm -rf this, and the shared .temp-test
+// root holds other test files' fixtures while they run in parallel workers.
+const TEMP_DIR = join(__dirname, '..', '.temp-test', `integration-${process.pid}`);
 const HISTORY_DIR = join(TEMP_DIR, 'reports');
 const HISTORY_FILE = join(HISTORY_DIR, 'scan_history.json');
 

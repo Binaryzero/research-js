@@ -66,10 +66,19 @@ async function main(): Promise<void> {
   parentPort.postMessage(msg);
 }
 
-main().catch((err: unknown) => {
-  const msg: StaticWorkerMessage = {
-    type: 'error',
-    error: err instanceof Error ? err.message : String(err),
-  };
-  parentPort?.postMessage(msg);
+// Deferred, not called from the module body: the import graph contains a
+// top-level await (services/logger.ts), which makes this module's evaluation
+// async. Starting the CPU-bound scan during that evaluation means a timeout's
+// worker.terminate() lands mid module-evaluation, and V8 (Node 24) aborts the
+// WHOLE process with "Check failed: (location_) != nullptr" in
+// SourceTextModule::AsyncModuleExecutionFulfilled. setImmediate runs only after
+// evaluation has settled, so terminate() interrupts ordinary JS instead.
+setImmediate(() => {
+  main().catch((err: unknown) => {
+    const msg: StaticWorkerMessage = {
+      type: 'error',
+      error: err instanceof Error ? err.message : String(err),
+    };
+    parentPort?.postMessage(msg);
+  });
 });
