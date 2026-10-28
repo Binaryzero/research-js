@@ -407,6 +407,38 @@ describe('parseStrategicAssessments', () => {
     expect(result.size).toBe(1);
     expect(result.get(0)!.falsePositiveReason).toBe('');
   });
+
+  const validItem = '{"risk_level": "high", "is_false_positive": false, "explanation": "Bad", "recommendation": "investigate"}';
+
+  it('repairs trailing commas before closing brackets', () => {
+    const samples = makeSamples(2);
+    const response = `[${validItem}, ${validItem},]`;
+
+    const result = parseStrategicAssessments(response, samples);
+    expect(result.size).toBe(2);
+  });
+
+  it('salvages individual objects when the array itself is malformed', () => {
+    const samples = makeSamples(2);
+    // Missing comma between elements: no array strategy can parse this.
+    const response = `Here you go: [${validItem} ${validItem}]`;
+
+    const result = parseStrategicAssessments(response, samples);
+    expect(result.size).toBe(2);
+    expect([...result.keys()]).toEqual([0, 10]);
+  });
+
+  it('salvages a lone object response', () => {
+    const samples = makeSamples(1);
+
+    const result = parseStrategicAssessments(validItem, samples);
+    expect(result.size).toBe(1);
+    expect(result.get(0)!.riskLevel).toBe('high');
+  });
+
+  it('returns empty map for an empty JSON array', () => {
+    expect(parseStrategicAssessments('[]', makeSamples(1)).size).toBe(0);
+  });
 });
 
 // ─── estimateStrategicLlmCalls ──────────────────────────────────
