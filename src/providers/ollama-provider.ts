@@ -91,4 +91,3 @@ export class OllamaProvider implements LlmProvider {
   }
 }
 
-export default OllamaProvider;

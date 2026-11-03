@@ -38,11 +38,6 @@ export function rememberOutputLimit(baseUrl: string, model: string, limit: numbe
   if (Number.isFinite(limit) && limit > 0) detectedLimits.set(cacheKey(baseUrl, model), limit);
 }
 
-/** All learned limits, for surfacing in the UI/config (`${baseUrl}::${model}` -> limit). */
-export function getAllDetectedOutputLimits(): Record<string, number> {
-  return Object.fromEntries(detectedLimits);
-}
-
 /**
  * Pull the model's maximum output tokens out of a provider error, if it reports
  * one. Handles the `responseBody` string (AI SDK APICallError) and a plain

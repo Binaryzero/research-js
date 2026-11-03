@@ -66,13 +66,6 @@ export function getEndpointFiltering(patternsFile: string): EndpointFilteringCon
 }
 
 /**
- * Reset endpoint filtering cache (useful for testing)
- */
-export function resetEndpointFilteringCache(): void {
-  _endpointFiltering = null;
-}
-
-/**
  * Compile a pattern string into a RegExp
  */
 export function compilePattern(pattern: PatternDefinition): RegExp {

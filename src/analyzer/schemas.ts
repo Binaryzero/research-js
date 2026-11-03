@@ -5,7 +5,7 @@
 import { z } from 'zod';
 import type { LlmAssessment } from '../types/index.js';
 
-export const AssessmentSchema = z.object({
+const AssessmentSchema = z.object({
   risk_level: z.enum(['critical', 'high', 'medium', 'low', 'none']),
   is_false_positive: z.boolean(),
   // prompts.yaml allows null when is_false_positive is false; coerce to ''
@@ -15,13 +15,9 @@ export const AssessmentSchema = z.object({
   injection_detected: z.boolean().default(false),
 });
 
-export const BatchAssessmentSchema = z.array(AssessmentSchema);
-
-export const IndexedAssessmentSchema = AssessmentSchema.extend({
+const IndexedAssessmentSchema = AssessmentSchema.extend({
   index: z.number(),
 });
-
-export const IndexedBatchAssessmentSchema = z.array(IndexedAssessmentSchema);
 
 const mapToInternal = (parsed: z.infer<typeof AssessmentSchema>): LlmAssessment => ({
   riskLevel: parsed.risk_level,
@@ -45,7 +41,3 @@ export const IndexedLlmAssessmentSchema = IndexedAssessmentSchema.transform(
   })
 );
 
-export type AssessmentOutput = z.infer<typeof AssessmentSchema>;
-export type BatchAssessmentOutput = z.infer<typeof BatchAssessmentSchema>;
-export type IndexedAssessmentOutput = z.infer<typeof IndexedAssessmentSchema>;
-export type IndexedBatchAssessmentOutput = z.infer<typeof IndexedBatchAssessmentSchema>;

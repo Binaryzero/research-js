@@ -28,7 +28,7 @@ const SORT_CODES: Record<string, number> = {
 };
 
 // Category mappings
-export const CATEGORY_MAP: Record<string, string> = {
+const CATEGORY_MAP: Record<string, string> = {
   'All categories': '',
   'Azure': 'Azure',
   'Data Science': 'Data Science',
@@ -204,93 +204,6 @@ export async function searchExtensions(
   } catch (error) {
     logger.error({ err: error }, 'Marketplace search error');
     throw error;
-  }
-}
-
-/**
- * Get extension details by ID
- */
-export async function getExtensionDetails(
-  publisher: string,
-  extension: string
-): Promise<MarketplaceExtension | null> {
-  const payload = {
-    filters: [
-      {
-        criteria: [
-          {
-            filterType: 7, // Extension ID
-            value: `${publisher}.${extension}`,
-          },
-        ],
-        pageNumber: 1,
-        pageSize: 1,
-      },
-    ],
-    assetTypes: [],
-    flags: 870,
-  };
-  
-  try {
-    const response = await fetch(MARKETPLACE_API, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json;api-version=6.1-preview.1',
-      },
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(30000),
-    });
-    
-    if (!response.ok) {
-      return null;
-    }
-    
-    const data = await response.json() as {
-      results?: Array<{
-        extensions?: Array<{
-          extensionId: string;
-          extensionName: string;
-          displayName: string;
-          publisher: {
-            publisherId: string;
-            publisherName: string;
-            displayName: string;
-          };
-          shortDescription: string;
-          versions: Array<{ version: string; lastUpdated: string }>;
-          statistics?: Array<{ statisticName: string; value: number }>;
-          categories?: string[];
-          tags?: string[];
-        }>;
-      }>;
-    };
-    
-    const ext = data.results?.[0]?.extensions?.[0];
-    if (!ext) return null;
-    
-    const stats = ext.statistics || [];
-    const installCount = stats.find(s => s.statisticName === 'install')?.value || 0;
-    const rating = stats.find(s => s.statisticName === 'averagerating')?.value || 0;
-    const ratingCount = stats.find(s => s.statisticName === 'ratingcount')?.value || 0;
-    
-    return {
-      extensionId: `${ext.publisher.publisherName}.${ext.extensionName}`,
-      extensionName: ext.extensionName,
-      displayName: ext.displayName || ext.extensionName,
-      publisher: ext.publisher,
-      shortDescription: ext.shortDescription || '',
-      versions: ext.versions || [],
-      statistics: {
-        installCount,
-        rating,
-        ratingCount,
-      },
-      categories: ext.categories || [],
-      tags: ext.tags || [],
-    };
-  } catch {
-    return null;
   }
 }
 

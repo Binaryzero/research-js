@@ -155,19 +155,6 @@ export interface ScanTask {
   error: string | null;
 }
 
-export interface ScanHistoryEntry {
-  extensionId: string;
-  extensionName: string;
-  version: string;
-  scanDate: string;
-  suspicionScore: number;
-  llmAdjustedScore: number | null;
-  llmAnalyzed: boolean;
-  findingsCount: number;
-  truePositives: number;
-  reportPath: string;
-  breakdown: Record<string, unknown>;
-}
 
 // Pattern configuration types
 export interface PatternDefinition {

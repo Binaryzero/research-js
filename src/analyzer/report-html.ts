@@ -71,11 +71,6 @@ function loadRendererAssets(): RendererAssets {
   return _assets;
 }
 
-/** Reset the asset cache (test helper for asset-change scenarios). */
-export function resetRendererAssetCache(): void {
-  _assets = null;
-}
-
 /**
  * Escape a JSON string for embedding inside a <script> element: '<' prevents
  * "</script>" breakout (and "<!--" comment-state tricks), U+2028/U+2029 are

@@ -7,7 +7,6 @@
 import type {
   Finding,
   AnalysisResult,
-  LlmAssessment,
   LlmConfig,
   AppConfig,
   ModelSlotConfig,
@@ -27,17 +26,6 @@ export function makeFinding(overrides?: Partial<Finding>): Finding {
     isFalsePositive: false,
     falsePositiveReason: '',
     riskLevel: 'medium',
-    ...overrides,
-  };
-}
-
-export function makeLlmAssessment(overrides?: Partial<LlmAssessment>): LlmAssessment {
-  return {
-    riskLevel: 'medium',
-    isFalsePositive: false,
-    falsePositiveReason: '',
-    explanation: 'Assessment explanation.',
-    recommendation: 'investigate',
     ...overrides,
   };
 }

@@ -8,7 +8,7 @@ import { z } from 'zod';
  * Model slot configuration schema
  * Represents a single LLM model configuration (main or judge)
  */
-export const ModelSlotSchema = z.object({
+const ModelSlotSchema = z.object({
   id: z.string(),
   label: z.string(),
   enabled: z.boolean(),
@@ -27,7 +27,7 @@ export const ModelSlotSchema = z.object({
 /**
  * Consensus configuration schema
  */
-export const ConsensusConfigSchema = z.object({
+const ConsensusConfigSchema = z.object({
   judgesValidateAllFindings: z.boolean(),
 });
 
@@ -35,7 +35,7 @@ export const ConsensusConfigSchema = z.object({
  * Per-mode evidence length limits (characters of finding code sent to the LLM).
  * Each field defaults to its historical hardcoded value so behavior is preserved.
  */
-export const EvidenceMaxCharsSchema = z.object({
+const EvidenceMaxCharsSchema = z.object({
   strategic: z.number().min(100).max(200000).default(600),
   triage: z.number().min(100).max(200000).default(1500),
   bulk: z.number().min(100).max(200000).default(800),
@@ -112,7 +112,3 @@ export const AppConfigSchema = z.object({
   defaultFull: z.boolean(),
 });
 
-// Type exports (mirrors from types/index.ts)
-export type ModelSlotConfig = z.infer<typeof ModelSlotSchema>;
-export type ConsensusConfig = z.infer<typeof ConsensusConfigSchema>;
-export type AppConfig = z.infer<typeof AppConfigSchema>;
